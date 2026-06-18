@@ -976,7 +976,21 @@ void SuperLIO::Propagation_Undistort(){
   auto& raw_pc = measures_.lidar.pc;
 
   std::size_t ptsize = raw_pc->points.size();
-  scan_undistort_full_->resize(ptsize); 
+  scan_undistort_full_->resize(ptsize);
+
+  const size_t M = propagate_states_.size();
+  if (M < 2) {
+    // No IMU intervals to interpolate between; copy raw points directly
+    for (size_t i = 0; i < ptsize; ++i) {
+      const auto& pt = raw_pc->points[i];
+      auto& pt_full = scan_undistort_full_->points[i];
+      pt_full.x = pt.x;
+      pt_full.y = pt.y;
+      pt_full.z = pt.z;
+      pt_full.intensity = pt.intensity;
+    }
+    return;
+  }
 
   // Pre-compute per-interval constants to avoid redundant work.
   // For each IMU interval [j, j+1], precompute:
@@ -994,7 +1008,6 @@ void SuperLIO::Propagation_Undistort(){
   //          = R_end_inv_R_h * raw + R_end_inv_R_h * hat(omega_body * tau) * raw
   //            + t_base + v_base * tau + 0.5 * acc_base * tau^2
   // The hat(omega_body*tau)*raw = omega_body*tau × raw, which is cheap.
-  const size_t M = propagate_states_.size();
 
   struct IntervalCache {
     M3 R_end_inv_R_h;    // R_inv * R_h
