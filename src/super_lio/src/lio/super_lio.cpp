@@ -1187,8 +1187,13 @@ void SuperLIO::Observe(){
         J.head<3>() = point_body_d.cross(nb);
         J.tail<3>() = normvec;
 
-        sum_HTVH += J * 1000 * J.transpose();
-        sum_HTVr -= J * 1000 * error;
+        // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
+        const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        const float abs_error = std::abs(error);
+        const float w = (abs_error <= huber_delta) ? g_obs_weight
+                                                    : g_obs_weight * huber_delta / abs_error;
+        sum_HTVH += J * w * J.transpose();
+        sum_HTVr -= J * w * error;
       }
 
       // Build compact index array for subsequent iterations
@@ -1232,8 +1237,13 @@ void SuperLIO::Observe(){
         J.head<3>() = point_body_d.cross(nb);
         J.tail<3>() = normvec;
 
-        sum_HTVH += J * 1000 * J.transpose();
-        sum_HTVr -= J * 1000 * error;
+        // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
+        const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        const float abs_error = std::abs(error);
+        const float w = (abs_error <= huber_delta) ? g_obs_weight
+                                                    : g_obs_weight * huber_delta / abs_error;
+        sum_HTVH += J * w * J.transpose();
+        sum_HTVr -= J * w * error;
       }
 
       if(!need_converge) {

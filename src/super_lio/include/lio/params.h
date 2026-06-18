@@ -131,6 +131,22 @@ namespace LI2Sup{
   /// 平面拟合阈值，值越大保留的有效点越多（退化场景下可适当放宽）
   extern double g_plane_fit_threshold;
 
+  /// 观测权重，等价于 1/σ²，其中 σ 为点到面残差的标准差(米)
+  /// 高精度雷达(如 Mid-360): 1000 (σ≈0.032m)
+  /// 低精度雷达(如 Airy):    200  (σ≈0.071m, 5m处法向偏差±0.1m)
+  extern double g_obs_weight;
+
+  /// Huber 核基础阈值(米)：点到面残差小于此值时使用满权重，超过时线性降权
+  /// 应设为 1.5~2 倍的近处(5m)残差标准差
+  /// 高精度雷达: 0.05, 低精度雷达: 0.10
+  extern double g_huber_delta_base;
+
+  /// Huber 核距离缩放系数(米/米)：阈值随点距离线性增长
+  /// delta = g_huber_delta_base + g_huber_delta_scale * point_distance
+  /// 远处点测量噪声更大，需要更大的阈值避免误降权
+  /// 推荐值: 0.003 (30m处阈值增加0.09m)
+  extern double g_huber_delta_scale;
+
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
   extern int  g_dynamic_removal_method;     // 0: Temporal, 1: Raycast
