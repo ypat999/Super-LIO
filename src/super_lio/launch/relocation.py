@@ -22,7 +22,7 @@ def generate_launch_description():
         from global_config import (
             ONLINE_LIDAR, DEFAULT_BAG_PATH, DEFAULT_RELIABILITY_OVERRIDE,
             DEFAULT_USE_SIM_TIME, MANUAL_BUILD_MAP, BUILD_TOOL, RECORD_ONLY,
-            NAV2_DEFAULT_PARAMS_FILE, LIVOX_MID360_CONFIG, LIVOX_MID360_CONFIG_NO_TILT
+            NAV2_DEFAULT_PARAMS_FILE, LIVOX_MID360_CONFIG
         )
     except ImportError as e:
         print(f"方法2导入global_config失败: {e}")
@@ -35,14 +35,14 @@ def generate_launch_description():
         BUILD_TOOL = 'octomap_server'
         RECORD_ONLY = False
         NAV2_DEFAULT_PARAMS_FILE = '/home/ztl/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/src/nav2_dog_slam/config/nav2_params.yaml'
-        LIVOX_MID360_CONFIG_NO_TILT = ''
+        LIVOX_MID360_CONFIG = ''
 
     pkg_super_lio = get_package_share_directory('super_lio')
     config_yaml = os.path.join(pkg_super_lio, 'config', 'relocation.yaml')
     rviz_config_file = os.path.join(pkg_super_lio, 'rviz', 'relocation.rviz')
 
     use_sim_time = DEFAULT_USE_SIM_TIME
-    livox_config_path = LIVOX_MID360_CONFIG_NO_TILT
+    livox_config_path = LIVOX_MID360_CONFIG
     lidar_mode = "ONLINE"
     if not ONLINE_LIDAR:
         lidar_mode = "OFFLINE"
