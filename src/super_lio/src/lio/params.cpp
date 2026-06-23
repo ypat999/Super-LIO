@@ -102,6 +102,10 @@ namespace LI2Sup{
   /// observe
   double g_plane_fit_threshold = 0.15;
 
+  double g_obs_weight = 1000.0;
+  double g_huber_delta_base = 0.05;
+  double g_huber_delta_scale = 0.003;
+
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;
   int  g_dynamic_removal_method = 0;

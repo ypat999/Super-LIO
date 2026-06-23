@@ -197,6 +197,19 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] observe/plane_fit_threshold: "
             << g_plane_fit_threshold << RESET;
 
+  node.declare_parameter<double>("lio.observe.obs_weight", 1000.0);
+  node.get_parameter("lio.observe.obs_weight", g_obs_weight);
+
+  node.declare_parameter<double>("lio.observe.huber_delta_base", 0.05);
+  node.get_parameter("lio.observe.huber_delta_base", g_huber_delta_base);
+
+  node.declare_parameter<double>("lio.observe.huber_delta_scale", 0.003);
+  node.get_parameter("lio.observe.huber_delta_scale", g_huber_delta_scale);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
+
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);
   node.get_parameter("lio.submap.submap_resolution", g_submap_resolution);
