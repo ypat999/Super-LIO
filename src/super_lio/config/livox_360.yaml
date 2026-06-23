@@ -43,11 +43,11 @@
     #   9 = ROBOSENSE_AIRY (速腾聚创AirY雷达)
     lio.sensor.lidar_type: 1
     # 最小有效距离(米)，小于此距离的点被剔除，用于去除近距离噪点/自车点
-    lio.sensor.blind: 0.3
+    lio.sensor.blind: 0.1
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 1
+    lio.sensor.filter_rate: 3
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
     # 点云体素滤波的体素大小(米)，值越大点云越稀疏，计算越快
@@ -139,7 +139,7 @@
 
     # ======================== 评估计时参数 ========================
     # 是否启用计时评估，输出各模块的运行耗时统计信息
-    lio.eva.timer: true
+    lio.eva.timer: false
     
     # ======================== 动态物体去除参数 ========================
     # 是否启用动态物体去除功能
