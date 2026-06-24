@@ -616,6 +616,9 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   if(eskf_->Predict(data, imu_state, robo_state)){
     nav_msgs::msg::Odometry odom_imu, odom_robo;
 
+    // REP 103: twist must be in child_frame (body frame)
+    const V3 v_imu_body  = imu_state.R.transpose() * imu_state.v;
+
     {
       odom_imu.pose.pose.position.x = imu_state.p(0);
       odom_imu.pose.pose.position.y = imu_state.p(1);
@@ -629,9 +632,9 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       odom_imu.pose.pose.orientation.z = q.z();
       odom_imu.pose.pose.orientation.w = q.w();
 
-      odom_imu.twist.twist.linear.x = imu_state.v(0);
-      odom_imu.twist.twist.linear.y = imu_state.v(1);
-      odom_imu.twist.twist.linear.z = imu_state.v(2);
+      odom_imu.twist.twist.linear.x = v_imu_body[0];
+      odom_imu.twist.twist.linear.y = v_imu_body[1];
+      odom_imu.twist.twist.linear.z = v_imu_body[2];
 
       odom_imu.twist.twist.angular.x = imu_state.w(0);
       odom_imu.twist.twist.angular.y = imu_state.w(1);
@@ -639,6 +642,11 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     }
 
     {
+      // robot body-frame velocity = rotated IMU body velocity + lever-arm cross term
+      const V3 r_imu_to_robo = -g_odom_robo.R_ * g_odom_robo.t_;
+      const V3 v_robo_body = g_odom_robo.R_.transpose() * (v_imu_body + imu_state.w.cross(r_imu_to_robo));
+      const V3 w_robo_body = g_odom_robo.R_.transpose() * imu_state.w;
+
       odom_robo.pose.pose.position.x = robo_state.p(0);
       odom_robo.pose.pose.position.y = robo_state.p(1);
       odom_robo.pose.pose.position.z = robo_state.p(2);
@@ -650,6 +658,14 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       odom_robo.pose.pose.orientation.y = q.y();
       odom_robo.pose.pose.orientation.z = q.z();
       odom_robo.pose.pose.orientation.w = q.w();
+
+      odom_robo.twist.twist.linear.x = v_robo_body[0];
+      odom_robo.twist.twist.linear.y = v_robo_body[1];
+      odom_robo.twist.twist.linear.z = v_robo_body[2];
+
+      odom_robo.twist.twist.angular.x = w_robo_body[0];
+      odom_robo.twist.twist.angular.y = w_robo_body[1];
+      odom_robo.twist.twist.angular.z = w_robo_body[2];
     }
 
     odom_imu.header.stamp = toRosTime(data.secs);
@@ -977,7 +993,7 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 }
 
 
-void ROSWrapper::pub_odom(const NavState& state){
+void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = g_world_frame;
   odom.child_frame_id = g_imu_frame;
@@ -993,9 +1009,15 @@ void ROSWrapper::pub_odom(const NavState& state){
   odom.pose.pose.orientation.z = temp_q[2];
   odom.pose.pose.orientation.w = temp_q[3];
 
-  odom.twist.twist.linear.x = state.v[0];
-  odom.twist.twist.linear.y = state.v[1];
-  odom.twist.twist.linear.z = state.v[2];
+  // REP 103: twist must be in child_frame (body/imu frame)
+  const V3 v_body = state.R.R_.transpose() * state.v;
+  odom.twist.twist.linear.x = v_body[0];
+  odom.twist.twist.linear.y = v_body[1];
+  odom.twist.twist.linear.z = v_body[2];
+
+  odom.twist.twist.angular.x = body_omega[0];
+  odom.twist.twist.angular.y = body_omega[1];
+  odom.twist.twist.angular.z = body_omega[2];
 
   pub_odom_->publish(odom);    // imu frame -> lidar frequency
 

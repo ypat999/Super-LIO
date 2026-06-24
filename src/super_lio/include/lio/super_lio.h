@@ -53,12 +53,13 @@ public:
 protected:
   struct OutputData {
     NavState state;
+    BASIC::V3 body_omega = BASIC::V3::Zero();  // body-frame angular velocity for twist
     BASIC::CloudPtr world_pc;
     BASIC::CloudPtr body_pc;
     bool has_world_pc = false;
     bool has_body_pc = false;
     bool is_undistort_only = false;
-    double lidar_receive_time = 0.0;  // wall-clock time (s) when lidar msg was received
+    double lidar_receive_time = 0.0;
     std::string lidar_frame;
   };
 
@@ -76,6 +77,8 @@ protected:
   virtual bool kf_init();
   virtual bool map_init();
   void Propagation_Undistort();
+  void ApplyDeltaCorrection();
+  void PublishBodyCloud();
   void DownSample();
   void DownSampleOnly();
   void Observe();
@@ -101,6 +104,7 @@ protected:
   bool flg_init_ = false;
   bool flg_first_scan_ = true;
   std::vector<DynamicState> propagate_states_;
+  BASIC::SE3 T_predicted_end_;
   BASIC::CloudPtr scan_undistort_full_;
   BASIC::CloudPtr ds_undistort_;
   BASIC::CloudPtr point_map_, world_pc_, ds_world_;

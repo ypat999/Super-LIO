@@ -391,49 +391,40 @@ bool SuperLIO::map_init(){
 /// 核心处理：IMU 前向传播 + 点云去畸变 + ESKF 观测更新
 void SuperLIO::stateProcess(){
   frame_num_++;
-  
-  // downsample_only mode has highest priority
+
+  // downsample_only mode: no deskew, no ESKF, no delta correction
   if(g_downsample_only){
     if(g_time_eva){
       time_record_.Evaluate([this]() { DownSampleOnly(); }, "[DownSampleOnly]");
     }else{
       DownSampleOnly();
     }
-    Output();
+    PublishBodyCloud();   // immediate body publish (low latency)
+    Output();              // world cloud via queue
     caceData();
     caceSCPGOData();
     return;
   }
-  
-  if(g_lio_only_undistort){
-    if(g_time_eva){
-      time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
-      time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
-      time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-      time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
-    }else{
-      Propagation_Undistort();
-      DownSample();
-      Observe();
-      UpdateMap();
-    }
-    Output();
-    caceData();
-    caceSCPGOData();
-    return;
-  }
+
+  // Normal & lio_only_undistort: both run deskew + ESKF observation,
+  // so delta correction applies to both.
+  // Body cloud emitted immediately after deskew (before ESKF) for minimal latency.
   if(g_time_eva){
-    time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
-    time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
-    time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-    time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+    time_record_.Evaluate([this](){Propagation_Undistort();},  "[Undistort]");
+    time_record_.Evaluate([this]() { PublishBodyCloud(); },    "[PublishBody]");
+    time_record_.Evaluate([this]() { DownSample(); },          "[DownSample]");
+    time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
+    time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
+    time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
   }else{
     Propagation_Undistort();
+    PublishBodyCloud();   // immediate, pre-ESKF (minimum latency)
     DownSample();
     Observe();
+    ApplyDeltaCorrection();
     UpdateMap();
   }
-  Output();
+  Output();                // world cloud via queue (high precision)
   caceData();
   caceSCPGOData();
 }
@@ -970,6 +961,7 @@ void SuperLIO::Propagation_Undistort(){
   }
 
   const SE3 T_end = kf_->GetSE3();
+  T_predicted_end_ = T_end;  // save for delta correction after ESKF update
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
   const double start_time = measures_.lidar.start_time;
@@ -1029,7 +1021,10 @@ void SuperLIO::Propagation_Undistort(){
     ic.t_base = R_inv * (s0.p - T_end_t);
     ic.v_base = R_inv * s0.v;
     ic.acc_base = 0.5 * R_inv * s1.a;
-    ic.omega_body = s0.w;  // body-frame angular velocity
+    // Use raw gyro from the IMU that drove this interval, not state-derived w.
+    // State-derived w lags by one Predict call and causes skew during
+    // direction reversals (state.w still reflects old rotation direction).
+    ic.omega_body = measures_.imu[j].gyr;
     ic.dt_inv = 1.0 / (s1.time - s0.time);
     ic.time_start = s0.time;
     ic.time_end = s1.time;
@@ -1064,29 +1059,107 @@ void SuperLIO::Propagation_Undistort(){
     const auto& ic = interval_cache[j];
     const double tau = query_time - ic.time_start;
 
-    // 标量展开，合并两次 3x3×3x1 为一次：
-    //   R*(raw + omega×raw*tau) + t_base + v_base*tau + acc_base*tau²
-    // 等价于 R*raw + R*(omega×raw*tau) + ...，但少一次矩阵向量乘
+    // 2nd-order Exp(omega*tau) approximation:
+    //   Exp(phi) = I + hat(phi) + 0.5*hat(phi)^2 + O(phi^3)
+    //   1st-order (I+hat) drops the cos term → over-rotates points during fast turns.
+    //   2nd-order residual < 0.01° at 300°/s — imperceptible even at long range.
     const float px = pt.x, py = pt.y, pz = pt.z;
     const float ox = ic.omega_body[0], oy = ic.omega_body[1], oz = ic.omega_body[2];
-    // raw + omega×raw*tau  （小角度 Exp: I + hat(omega*tau) 作用于 raw）
-    const float mx = px + (oy*pz - oz*py) * tau;
-    const float my = py + (oz*px - ox*pz) * tau;
-    const float mz = pz + (ox*py - oy*px) * tau;
+    const float tau_f = tau;
+    const float htau2 = 0.5f * tau_f * tau_f;
+    // c = omega × raw
+    const float cx = oy*pz - oz*py;
+    const float cy = oz*px - ox*pz;
+    const float cz = ox*py - oy*px;
+    // c2 = omega × (omega × raw)
+    const float c2x = oy*cz - oz*cy;
+    const float c2y = oz*cx - ox*cz;
+    const float c2z = ox*cy - oy*cx;
+    // m = raw + c*tau + 0.5*c2*tau²
+    const float mx = px + cx*tau_f + c2x*htau2;
+    const float my = py + cy*tau_f + c2y*htau2;
+    const float mz = pz + cz*tau_f + c2z*htau2;
     // R_end_inv_R_h * m  （单次 3x3×3x1）
     const M3& R = ic.R_end_inv_R_h;
     const float rx = R(0,0)*mx + R(0,1)*my + R(0,2)*mz;
     const float ry = R(1,0)*mx + R(1,1)*my + R(1,2)*mz;
     const float rz = R(2,0)*mx + R(2,1)*my + R(2,2)*mz;
     // + t_base + v_base*tau + acc_base*tau²
-    const float tau_f = tau;
-    const float tau2_f = tau * tau;
+    const float tau2_f = tau_f * tau_f;
     pt_full.x = rx + ic.t_base[0] + ic.v_base[0]*tau_f + ic.acc_base[0]*tau2_f;
     pt_full.y = ry + ic.t_base[1] + ic.v_base[1]*tau_f + ic.acc_base[1]*tau2_f;
     pt_full.z = rz + ic.t_base[2] + ic.v_base[2]*tau_f + ic.acc_base[2]*tau2_f;
   }
 }
 
+
+/// Apply ESKF correction delta to deskewed clouds.
+/// After Observe() corrects the pose, the deskewed cloud (which used
+/// IMU-predicted trajectory) is slightly misaligned with the corrected body frame.
+/// ΔT = T_corrected^{-1} * T_predicted  transforms deskewed points into the
+/// corrected body frame, making them self-consistent with the corrected pose.
+/// Also updates points_body_v3_ so UpdateMap() uses the corrected points.
+void SuperLIO::ApplyDeltaCorrection() {
+  const SE3 T_corrected = kf_->GetSE3();
+  const SE3 T_pred = T_predicted_end_;
+
+  // ΔR = R_corrected^T * R_predicted
+  // Δp = R_corrected^T * (p_predicted - p_corrected)
+  const M3  dR = T_corrected.R_.transpose() * T_pred.R_;
+  const V3  dp = T_corrected.R_.transpose() * (T_pred.t_ - T_corrected.t_);
+
+  // Apply to full-resolution cloud
+  if (scan_undistort_full_ && !scan_undistort_full_->empty()) {
+    for (auto& pt : scan_undistort_full_->points) {
+      const float px = pt.x, py = pt.y, pz = pt.z;
+      pt.x = dR(0,0)*px + dR(0,1)*py + dR(0,2)*pz + dp[0];
+      pt.y = dR(1,0)*px + dR(1,1)*py + dR(1,2)*pz + dp[1];
+      pt.z = dR(2,0)*px + dR(2,1)*py + dR(2,2)*pz + dp[2];
+    }
+  }
+
+  // Apply to downsampled cloud (subset of full cloud, corrected independently)
+  if (ds_undistort_ && !ds_undistort_->empty()) {
+    for (auto& pt : ds_undistort_->points) {
+      const float px = pt.x, py = pt.y, pz = pt.z;
+      pt.x = dR(0,0)*px + dR(0,1)*py + dR(0,2)*pz + dp[0];
+      pt.y = dR(1,0)*px + dR(1,1)*py + dR(1,2)*pz + dp[1];
+      pt.z = dR(2,0)*px + dR(2,1)*py + dR(2,2)*pz + dp[2];
+    }
+  }
+
+  // Re-sync points_body_v3_ for UpdateMap() consistency
+  const size_t ptsize = ds_undistort_->size();
+  points_body_v3_.resize(ptsize);
+  for (size_t i = 0; i < ptsize; ++i) {
+    const auto& pt = ds_undistort_->points[i];
+    points_body_v3_[i] = V3(pt.x, pt.y, pt.z);
+  }
+}
+
+/// Queue body-frame cloud for threaded publish, immediately after deskew (pre-ESKF).
+/// Pushed to output_queue_ so OutputThread handles it without blocking stateProcess().
+void SuperLIO::PublishBodyCloud() {
+  if (!g_visual_map_body) return;
+
+  static int count_body = -1;
+  count_body++;
+  if (count_body % g_pub_step != 0) return;
+  count_body = 0;
+
+  OutputData output_data;
+  output_data.body_pc.reset(new PointCloudType());
+  *output_data.body_pc = *scan_undistort_full_;
+  output_data.has_body_pc = true;
+  output_data.state.timestamp = measures_.lidar.end_time;
+
+  {
+    std::lock_guard<std::mutex> lock(output_mutex_);
+    if (output_queue_.size() > 5) output_queue_.pop();
+    output_queue_.push(std::move(output_data));
+  }
+  output_cv_.notify_one();
+}
 
 void SuperLIO::DownSample(){
   voxel_grid_fliter_.setInputCloud(scan_undistort_full_);
@@ -1289,12 +1362,13 @@ void SuperLIO::UpdateMap() {
 }
 
 
-/// 输出当前帧结果：位姿、点云、TF，发布到 ROS 话题
+/// 输出当前帧结果：世界系点云（body 系点云已在 PublishBodyCloud 立即发出）
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
   
   OutputData output_data;
   output_data.state = state;
+  output_data.body_omega = kf_->GetDynamicState().w;
   output_data.lidar_receive_time = measures_.lidar.receive_time;
   output_data.is_undistort_only = g_lio_only_undistort || g_downsample_only;
   output_data.lidar_frame = current_lidar_frame_;
@@ -1316,21 +1390,6 @@ void SuperLIO::Output(){
         output_data.has_world_pc = true;
       }
     }
-
-    if(g_visual_map_body){
-      static int count_body = -1;
-      count_body++;
-      if(count_body % g_pub_step == 0){
-        count_body = 0;
-        output_data.body_pc.reset(new PointCloudType());
-        if(g_visual_dense_body){
-          *output_data.body_pc = *scan_undistort_full_;
-        }else{
-          *output_data.body_pc = *ds_undistort_;
-        }
-        output_data.has_body_pc = true;
-      }
-    }
   }
   else if(g_lio_only_undistort){
     if(g_visual_map){
@@ -1345,21 +1404,6 @@ void SuperLIO::Output(){
           *output_data.world_pc = *ds_undistort_;
         }
         output_data.has_world_pc = true;
-      }
-    }
-
-    if(g_visual_map_body){
-      static int count_body = -1;
-      count_body++;
-      if(count_body % g_pub_step == 0){
-        count_body = 0;
-        output_data.body_pc.reset(new PointCloudType());
-        if(g_visual_dense_body){
-          *output_data.body_pc = *scan_undistort_full_;
-        }else{
-          *output_data.body_pc = *ds_undistort_;
-        }
-        output_data.has_body_pc = true;
       }
     }
   }else{
@@ -1380,21 +1424,6 @@ void SuperLIO::Output(){
         output_data.has_world_pc = true;
         // Cache transformed cloud for caceData reuse
         last_transformed_world_pc_ = output_data.world_pc;
-      }
-    }
-
-    if(g_visual_map_body){
-      static int count_body = -1;
-      count_body++;
-      if(count_body % g_pub_step == 0){
-        count_body = 0;
-        output_data.body_pc.reset(new PointCloudType());
-        if(g_visual_dense_body){
-          *output_data.body_pc = *scan_undistort_full_;
-        }else{
-          *output_data.body_pc = *ds_undistort_;
-        }
-        output_data.has_body_pc = true;
       }
     }
   }
@@ -1429,11 +1458,17 @@ void SuperLIO::OutputThread(){
       data = std::move(output_queue_.front());
       output_queue_.pop();
     }
-    
-    if(!data.is_undistort_only){
-      data_wrapper_->pub_odom(data.state);
+
+    const bool body_only = data.has_body_pc && !data.has_world_pc;
+
+    if (!body_only && !data.is_undistort_only) {
+      data_wrapper_->pub_odom(data.state, data.body_omega);
     }
-    
+
+    if (data.has_body_pc && data.body_pc) {
+      data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
+    }
+
     if(data.has_world_pc && data.world_pc){
       if(data.is_undistort_only){
         data_wrapper_->pub_cloud_world_undistort_only(data.world_pc, data.state.timestamp, data.lidar_frame);
@@ -1447,14 +1482,6 @@ void SuperLIO::OutputThread(){
             std::chrono::high_resolution_clock::now().time_since_epoch()).count();
         double lat_ms = (now_s - data.lidar_receive_time) * 1000.0;
         data_wrapper_->recordLatency("[Lidar->CloudWorld]", lat_ms);
-      }
-    }
-    
-    if(data.has_body_pc && data.body_pc){
-      if(data.is_undistort_only){
-        data_wrapper_->pub_cloud_undistort_only(data.body_pc, data.state.timestamp, data.lidar_frame);
-      }else{
-        data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
       }
     }
   }

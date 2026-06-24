@@ -78,7 +78,7 @@ public:
     last_timestamp_lidar_ = -1.0;
   }
 
-  void pub_odom(const NavState&);
+  void pub_odom(const NavState&, const BASIC::V3& body_omega = BASIC::V3::Zero());
   void pub_cloud_world(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud_body(const BASIC::CloudPtr& pc, double time);
