@@ -169,9 +169,6 @@ namespace LI2Sup{
   /// to reduce tf latency for downstream consumers.
   extern bool g_fast_tf;
 
-  /// 使用本地时钟 (this->now()) 替代话题原始时间戳，
-  /// 适用于传感器时钟不同步的场景
-  extern bool g_use_local_timestamp;
 
 }
 

@@ -126,7 +126,4 @@ namespace LI2Sup{
   /// Fast tf
   bool g_fast_tf = false;
 
-  /// 使用本地时钟替代话题原始时间戳
-  bool g_use_local_timestamp = true;
-
 }

@@ -370,13 +370,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] fast_tf: "
             << (g_fast_tf ? "true" : "false") << RESET;
 
-  // ================= use local timestamp =================
-  node.declare_parameter<bool>("lio.ros.use_local_timestamp", true);
-  node.get_parameter("lio.ros.use_local_timestamp", g_use_local_timestamp);
-
-  LOG(INFO) << GREEN << " ---> [Param] use_local_timestamp: "
-            << (g_use_local_timestamp ? "true" : "false") << RESET;
-
   // ================= lio only undistort mode =================
   node.declare_parameter<bool>("lio.lio_only_undistort", false);
   node.get_parameter("lio.lio_only_undistort", g_lio_only_undistort);
@@ -585,9 +578,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   auto t0 = std::chrono::high_resolution_clock::now();
   
   IMUData data;
-  data.secs = g_use_local_timestamp
-              ? this->now().seconds()
-              : stampToSec(msg->header.stamp);
+  data.secs = stampToSec(msg->header.stamp);
 
   V3 acc_raw(msg->linear_acceleration.x,
              msg->linear_acceleration.y,
@@ -776,9 +767,7 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
     g_filter_offset = (g_filter_osc & 1) ? (g_filter_rate - 1 - half) : half;
     g_filter_osc = (g_filter_osc + 1) % g_filter_rate;
   }
-  lidar_data.start_time = g_use_local_timestamp
-                          ? this->now().seconds()
-                          : stampToSec(msg->header.stamp);
+  lidar_data.start_time = stampToSec(msg->header.stamp);
   lidar_data.end_time   = lidar_data.start_time + offset_time;
   lidar_data.frame_id = msg->header.frame_id;
   lidar_buffer_.push_back(lidar_data);
@@ -834,9 +823,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   };
 
   lidar_data.pc->reserve(num_points / g_filter_rate + 1);
-  lidar_data.start_time = g_use_local_timestamp
-                          ? this->now().seconds()
-                          : stampToSec(msg->header.stamp);
+  lidar_data.start_time = stampToSec(msg->header.stamp);
 
   // Find min time for relative offset calculation
   double time_begin = 0.0;
