@@ -597,7 +597,7 @@ void SuperLIO::caceSCPGOData(){
     return;
   }
 
-  // Compute delta from previous pose
+  // Compute delta from previous keyframe pose (absolute difference)
   BASIC::SE3 delta = sc_pgo_pose_prev_.inverse() * current_pose;
   V3 trans = delta.t();
   float dx = std::abs(trans(0));
@@ -610,14 +610,10 @@ void SuperLIO::caceSCPGOData(){
   Eigen::Vector3f euler = R.eulerAngles(0, 1, 2);
   float drot = std::abs(euler(0)) + std::abs(euler(1)) + std::abs(euler(2));
 
-  sc_pgo_trans_accum_ += dtrans;
-  sc_pgo_rot_accum_ += drot;
-
   float kf_rad_gap = g_sc_pgo_keyframe_deg_gap * M_PI / 180.0f;
 
-  if(sc_pgo_trans_accum_ > g_sc_pgo_keyframe_gap || sc_pgo_rot_accum_ > kf_rad_gap){
-    sc_pgo_trans_accum_ = 0.0f;
-    sc_pgo_rot_accum_ = 0.0f;
+  // Use absolute difference directly (not accumulated)
+  if(dtrans > g_sc_pgo_keyframe_gap || drot > kf_rad_gap){
     sc_pgo_pose_prev_ = current_pose;
 
     std::string save_map_dir = g_save_map_dir;
