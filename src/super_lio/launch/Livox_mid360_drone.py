@@ -149,7 +149,7 @@ def generate_launch_description():
         arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'world', 'imu'],
         output='screen'
     )
-    ld.add_action(static_transform_world_to_imu)
+    # ld.add_action(static_transform_world_to_imu)
 
     imu_to_livox_frame_tf = Node(
         package='tf2_ros',
@@ -167,7 +167,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
         # arguments=['0.1', '0', '0.1', '0', '0.0', '0', 'base_link', 'livox_frame'],
         # arguments=['-0.1', '0', '-0.1', '0', str(deg_to_rad(-25)), '0', 'livox_frame', 'base_link'], # 上置雷达
-        arguments=['-0.05', '0', '-0.15', str(deg_to_rad(180)), str(deg_to_rad(210)), '0', 'livox_frame', 'base_link'],
+        arguments=['-0.05', '0', '-0.10', str(deg_to_rad(180)), str(deg_to_rad(210)), '0', 'livox_frame', 'base_link'],
         output='screen'
     )
     ld.add_action(livox_frame_to_base_link_tf)
