@@ -7,19 +7,29 @@
     lio.map.ds_size: 0.25
     lio.map.save_interval: 50
 
+    # 点云切片保存前缀，用于多雷达同时建图时区分不同雷达的切片
+    # 例如: "front_" -> 保存为 front_scans_0.pcd, front_scans_1.pcd
+    # 空字符串表示无前缀（默认）
+    lio.map.pcd_prefix: ""
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
+    lio.ros.map_save_service_topic: "/map_save"
 
     lio.sensor.lidar_type: 1
     lio.sensor.blind: 0.5
     lio.sensor.maxrange: 100.0
     lio.sensor.filter_rate: 3
+    lio.sensor.enable_filter_offset: false
     lio.sensor.enable_downsample: true
     lio.sensor.voxel_fliter_size: 0.25
 
-    lio.sensor.intensity_filter_en: true
+    lio.sensor.intensity_filter_en: false
     lio.sensor.intensity_min: 10.0
-    
+    # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
+    lio.sensor.lidar_channels: 0
+    # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
+    lio.sensor.full_column_interval: 0
+    # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
     lio.sensor.gravity_norm: 9.8066
     lio.sensor.imu_type: 1
     lio.sensor.imu_na: 0.1
@@ -53,8 +63,12 @@
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: true
     lio.output.tf_base_footprint_frame: "base_footprint"
+    # 世界坐标系的TF帧名
+    lio.output.world_frame: "world"
+    # IMU坐标系的TF帧名
+    lio.output.imu_frame: "imu"
 
-    lio.eva.timer: true
+    lio.eva.timer: false
 
     lio.dynamic_removal.enable: true            # 是否启用动态点移除(如行人、车辆等移动物体)
     lio.dynamic_removal.method: 0               # 移除方法: 0=时序法(检查前后帧占用), 1=射线法(射线穿透检测)
@@ -63,3 +77,19 @@
     lio.dynamic_removal.frame_window: 1         # [method=0时有效] 时序法检查前后各N帧的占用情况
     lio.dynamic_removal.raycast_min_hits: 2     # [method=1时有效] 射线穿透次数阈值, 需同时满足穿透比>0.5
     lio.dynamic_removal.isolated_removal: false # 是否移除孤立点(周围邻居少的点)
+    
+    # ======================== SC-PGO 离线处理参数 ========================
+    # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
+    lio.sc_pgo.enable: false
+    # 关键帧平移距离阈值(米)，累计平移超过此值抽取一帧
+    lio.sc_pgo.keyframe_gap: 0.5
+    # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
+    lio.sc_pgo.keyframe_deg_gap: 5.0
+
+    # ======================== 单核模式 ========================
+    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
+    lio.single_core: true
+
+    # ======================== 快速TF模式 ========================
+    # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
+    lio.fast_tf: false
