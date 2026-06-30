@@ -19,6 +19,7 @@
     lio.sensor.blind: 0.1
     lio.sensor.maxrange: 150.0
     lio.sensor.filter_rate: 4
+    lio.sensor.enable_filter_offset: false
     lio.sensor.enable_downsample: true
     lio.sensor.voxel_fliter_size: 0.25
     lio.sensor.intensity_filter_en: false
@@ -77,7 +78,7 @@
     lio.dynamic_removal.min_neighbors: 2
     lio.dynamic_removal.frame_window: 1
     lio.dynamic_removal.raycast_min_hits: 2
-    lio.dynamic_removal.isolated_removal: true
+    lio.dynamic_removal.isolated_removal: false
 
     # 仅做点云去畸变和降采样模式，不计算LIO
     # 启用后: 只进行IMU传播去畸变+降采样，跳过观测和地图更新
@@ -103,7 +104,7 @@
 
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
-    lio.single_core: false
+    lio.single_core: true
 
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
