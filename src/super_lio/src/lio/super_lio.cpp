@@ -605,15 +605,14 @@ void SuperLIO::caceSCPGOData(){
   float dz = std::abs(trans(2));
   float dtrans = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-  // Extract rotation angles
+  // Extract rotation angle via angle-axis representation
   Eigen::Matrix3f R = delta.R_.cast<float>();
-  Eigen::Vector3f euler = R.eulerAngles(0, 1, 2);
-  float drot = std::abs(euler(0)) + std::abs(euler(1)) + std::abs(euler(2));
+  float angle_rad = Eigen::AngleAxisf(R).angle();
 
   float kf_rad_gap = g_sc_pgo_keyframe_deg_gap * M_PI / 180.0f;
 
   // Use absolute difference directly (not accumulated)
-  if(dtrans > g_sc_pgo_keyframe_gap || drot > kf_rad_gap){
+  if(dtrans > g_sc_pgo_keyframe_gap || angle_rad > kf_rad_gap){
     sc_pgo_pose_prev_ = current_pose;
 
     std::string save_map_dir = g_save_map_dir;

@@ -124,8 +124,26 @@ def generate_launch_description():
         description='Use simulation (Gazebo) clock'
     )
     use_sim_time = LaunchConfiguration('use_sim_time')
-
     ld.add_action(declare_use_sim_time_arg)
+
+    # 从yaml配置中读取默认filter_rate，支持动态修改
+    _default_filter_rate = '3'
+    try:
+        import re
+        with open(config_yaml, 'r') as _f:
+            _match = re.search(r'lio\.sensor\.filter_rate:\s*(\d+)', _f.read())
+            if _match:
+                _default_filter_rate = _match.group(1)
+    except Exception:
+        pass
+
+    declare_filter_rate_arg = DeclareLaunchArgument(
+        'filter_rate',
+        default_value=_default_filter_rate,
+        description='Point cloud filter rate (1=no filter, 3=every 3rd point)'
+    )
+    filter_rate = LaunchConfiguration('filter_rate')
+    ld.add_action(declare_filter_rate_arg)
 
     super_lio_node = Node(
         package='super_lio',
@@ -135,6 +153,7 @@ def generate_launch_description():
         parameters=[
             config_yaml, 
             {'use_sim_time': DEFAULT_USE_SIM_TIME},
+            {'lio.sensor.filter_rate': filter_rate},
             {'lio.output.tf_base_footprint_frame': ns_base_footprint_frame},
             {'lio.output.world_frame': ns_world_frame},
             {'lio.output.imu_frame': ns_imu_frame},
