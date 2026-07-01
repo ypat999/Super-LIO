@@ -652,22 +652,12 @@ void SuperLIO::ProcessCaceMap(){
   }
 
   std::string pcd_folder = save_map_dir + "/PCD";
-  
+
   // When dynamic removal is enabled, merge filtered_ files; otherwise merge original scans_
-  std::string scan_prefix = g_dynamic_removal_enable ? 
+  std::string scan_prefix = g_dynamic_removal_enable ?
       ("filtered_" + g_pcd_prefix + "scans_") : (g_pcd_prefix + "scans_");
-  
-  std::string output_map_name;
-  if(g_dynamic_removal_enable){
-    size_t dot_pos = g_map_name.find_last_of('.');
-    if(dot_pos != std::string::npos){
-      output_map_name = save_map_dir + "/" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos);
-    } else {
-      output_map_name = save_map_dir + "/" + g_map_name + "_ori";
-    }
-  } else {
-    output_map_name = save_map_dir + "/" + g_map_name;
-  }
+
+  std::string output_map_name = save_map_dir + "/" + g_map_name;
 
   // Collect and sort matching PCD files
   std::vector<std::string> pcd_files;
@@ -848,7 +838,8 @@ void SuperLIO::saveMap(){
     }
     
     LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
-    
+
+    // Step 1: Run dynamic point removal on scans_*.pcd -> filtered_scans_*.pcd
     if(g_dynamic_removal_enable){
       LOG(INFO) << YELLOW << " ---> Running dynamic point removal (per-frame mode) ... " << RESET;
       std::string save_map_dir = g_save_map_dir;
@@ -891,9 +882,36 @@ void SuperLIO::saveMap(){
         LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret << RESET;
       }
     }
+
+    // Step 2: Merge filtered_scans_*.pcd -> test.pcd
+    if(g_dynamic_removal_enable){
+      LOG(INFO) << YELLOW << " ---> Merging filtered scans into " << g_map_name << " ... " << RESET;
+      ProcessCaceMap();  // g_dynamic_removal_enable=true -> reads filtered_scans_*.pcd -> test.pcd
+    }
     
-    LOG(INFO) << YELLOW << " ---> Process cace map ... " << RESET;
-    ProcessCaceMap();
+    // Step 3: Merge original scans_*.pcd -> test.pcd, then rename to test_ori.pcd
+    if(g_dynamic_removal_enable){
+      LOG(INFO) << YELLOW << " ---> Saving original unfiltered scans as backup ... " << RESET;
+      g_dynamic_removal_enable = false;
+      ProcessCaceMap();  // merges scans_*.pcd -> test.pcd
+
+      // Rename test.pcd -> test_ori.pcd
+      std::string resolved_dir = g_save_map_dir;
+      if (!resolved_dir.empty() && resolved_dir[0] != '/') {
+        resolved_dir = g_root_dir + resolved_dir;
+      }
+      std::string test_pcd = resolved_dir + "/" + g_map_name;
+      size_t dot_pos = g_map_name.find_last_of('.');
+      std::string test_ori_pcd = (dot_pos != std::string::npos)
+          ? resolved_dir + "/" + g_map_name.substr(0, dot_pos) + "_ori" + g_map_name.substr(dot_pos)
+          : resolved_dir + "/" + g_map_name + "_ori";
+      std::rename(test_pcd.c_str(), test_ori_pcd.c_str());
+      LOG(INFO) << GREEN << " ---> Original map saved as " 
+                << fs::path(test_ori_pcd).filename().string() << RESET;
+
+      g_dynamic_removal_enable = true;
+    }
+
     LOG(INFO) << GREEN << " ---> Process cace map success. " << RESET;
     
     // Close SC-PGO output file
