@@ -807,6 +807,7 @@ void SuperLIO::ProcessCaceMap(){
 
 
 void SuperLIO::saveMap(){
+  namespace fs = std::filesystem;
   if(!g_save_map) return;
   if(g_pcd_save_interval > 0){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
