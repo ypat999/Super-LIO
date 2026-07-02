@@ -884,14 +884,13 @@ void SuperLIO::saveMap(){
       }
     }
 
-    // Step 2: Merge filtered_scans_*.pcd -> test.pcd
+    // Step 2: Merge scans into final map
     if(g_dynamic_removal_enable){
+      // Dynamic removal enabled: merge filtered_scans_*.pcd -> test.pcd
       LOG(INFO) << YELLOW << " ---> Merging filtered scans into " << g_map_name << " ... " << RESET;
-      ProcessCaceMap();  // g_dynamic_removal_enable=true -> reads filtered_scans_*.pcd -> test.pcd
-    }
-    
-    // Step 3: Merge original scans_*.pcd -> test.pcd, then rename to test_ori.pcd
-    if(g_dynamic_removal_enable){
+      ProcessCaceMap();
+
+      // Then merge original scans_*.pcd -> test.pcd, rename to test_ori.pcd as backup
       LOG(INFO) << YELLOW << " ---> Saving original unfiltered scans as backup ... " << RESET;
       g_dynamic_removal_enable = false;
       ProcessCaceMap();  // merges scans_*.pcd -> test.pcd
@@ -911,6 +910,10 @@ void SuperLIO::saveMap(){
                 << fs::path(test_ori_pcd).filename().string() << RESET;
 
       g_dynamic_removal_enable = true;
+    } else {
+      // Dynamic removal disabled: directly merge original scans_*.pcd -> test.pcd
+      LOG(INFO) << YELLOW << " ---> Merging original scans into " << g_map_name << " ... " << RESET;
+      ProcessCaceMap();
     }
 
     LOG(INFO) << GREEN << " ---> Process cace map success. " << RESET;
