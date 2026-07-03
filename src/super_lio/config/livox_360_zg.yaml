@@ -6,7 +6,7 @@
 
     # ======================== 地图保存相关参数 ========================
     # 是否保存地图。true: 程序结束时保存点云地图; false: 不保存
-    lio.map.save_map: false
+    lio.map.save_map: true
     # 保存地图时是否进行体素滤波降采样。true: 使用体素滤波后保存; false: 保存原始点云
     lio.map.if_filter: false
     # 地图保存的根目录路径，支持绝对路径和相对路径
@@ -140,7 +140,7 @@
     
     # ======================== 动态物体去除参数 ========================
     # 是否启用动态物体去除功能
-    lio.dynamic_removal.enable: true
+    lio.dynamic_removal.enable: false
     # 动态物体去除方法:
     #   0 = Temporal (时序方法，基于多帧一致性检测)
     #   1 = Raycast (光线投射方法，基于可见性检测)
@@ -166,7 +166,7 @@
 
     # ======================== 单核模式 ========================
     # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行（Output/Save独立线程不受影响）; false: 正常并行
-    lio.single_core: false
+    lio.single_core: true
 
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
