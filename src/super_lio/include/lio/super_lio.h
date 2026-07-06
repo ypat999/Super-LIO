@@ -88,7 +88,7 @@ protected:
   void SaveThread();
   void caceData();
   void caceSCPGOData();
-  void ProcessCaceMap();
+  void ProcessCaceMap(const std::string& output_name, bool filtered);
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
