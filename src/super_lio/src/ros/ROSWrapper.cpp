@@ -703,15 +703,26 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
         else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
         else                              world_up = Eigen::Vector3f(0, 0, 1);
 
-        Eigen::Vector3f lidar_fwd_local = Eigen::Vector3f::UnitZ();
+        Eigen::Vector3f lidar_fwd_local;
+        if (g_ref_gravity_axis == 0)      lidar_fwd_local = Eigen::Vector3f::UnitZ();
+        else if (g_ref_gravity_axis == 1) lidar_fwd_local = Eigen::Vector3f::UnitZ();
+        else                              lidar_fwd_local = Eigen::Vector3f::UnitX();
         Eigen::Vector3f lidar_fwd_world = q_imu * lidar_fwd_local;
 
         Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+        if (fwd_proj.norm() < 1e-6) {
+          Eigen::Vector3f alt_local = (g_ref_gravity_axis == 2) ? Eigen::Vector3f::UnitY() : Eigen::Vector3f::UnitX();
+          Eigen::Vector3f alt_world = q_imu * alt_local;
+          fwd_proj = alt_world - (alt_world.dot(world_up)) * world_up;
+          if (fwd_proj.norm() < 1e-6) return;
+        }
         fwd_proj.normalize();
 
         Eigen::Vector3f foot_x = fwd_proj;
         Eigen::Vector3f foot_z = world_up;
         Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+        if (foot_y.norm() < 1e-6) return;
+        foot_y.normalize();
 
         Eigen::Matrix3f foot_mat;
         foot_mat.col(0) = foot_x;
@@ -1076,14 +1087,26 @@ if (g_footprint_pub_en) {
     else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
     else                              world_up = Eigen::Vector3f(0, 0, 1);
 
-    // 3. 获取雷达在世界系下的“前方”向量 (假设雷达局部 Z 为前)
-    // 如果你的雷达安装定义 X 为前，请改为 UnitX()
-    Eigen::Vector3f lidar_fwd_local = Eigen::Vector3f::UnitZ(); 
+    // 3. 获取雷达在世界系下的“前方”向量
+    // 前两个代码块中也有相同的逻辑，需要同步修改
+    // 注意：不要使用与 g_ref_gravity_axis 相同的轴，否则重力对齐后该轴与 world_up 平行
+    // 导致投影到水平面为零向量，normalize() 产生 NaN 使 TF 被丢弃
+    // 重力对齐后 g_ref_gravity_axis 对应的轴与 world_up 平行，必须避让
+    Eigen::Vector3f lidar_fwd_local;
+    if (g_ref_gravity_axis == 0)      lidar_fwd_local = Eigen::Vector3f::UnitZ();  // gravity on X -> Z
+    else if (g_ref_gravity_axis == 1) lidar_fwd_local = Eigen::Vector3f::UnitZ();  // gravity on Y -> Z
+    else                              lidar_fwd_local = Eigen::Vector3f::UnitX();  // gravity on Z -> X (default)
     Eigen::Vector3f lidar_fwd_world = Eigen::Quaternionf(state.R.R_) * lidar_fwd_local;
 
     // 4. 将“前方”投影到水平面上 (剔除掉重力方向的分量)
-    //公式: f_proj = f - (f · u) * u
     Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+    if (fwd_proj.norm() < 1e-6) {
+        // 备选：尝试另一个非重力轴
+        Eigen::Vector3f alt_local = (g_ref_gravity_axis == 2) ? Eigen::Vector3f::UnitY() : Eigen::Vector3f::UnitX();
+        Eigen::Vector3f alt_world = Eigen::Quaternionf(state.R.R_) * alt_local;
+        fwd_proj = alt_world - (alt_world.dot(world_up)) * world_up;
+        if (fwd_proj.norm() < 1e-6) return;  // 仍不可用则跳过本次发布
+    }
     fwd_proj.normalize();
 
     // 5. 构造 base_footprint 的旋转矩阵 (正交基)
@@ -1093,6 +1116,8 @@ if (g_footprint_pub_en) {
     Eigen::Vector3f foot_x = fwd_proj;
     Eigen::Vector3f foot_z = world_up;
     Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+    if (foot_y.norm() < 1e-6) return;
+    foot_y.normalize();
 
     Eigen::Matrix3f foot_mat;
     foot_mat.col(0) = foot_x;
