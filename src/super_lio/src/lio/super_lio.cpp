@@ -1141,28 +1141,13 @@ void SuperLIO::ApplyDeltaCorrection() {
   }
 }
 
-/// Queue body-frame cloud for threaded publish, immediately after deskew (pre-ESKF).
-/// Pushed to output_queue_ so OutputThread handles it without blocking stateProcess().
+/// Body cloud is now published from Output() with state.timestamp (post-ESKF),
+/// ensuring timestamp sync with lio/odom for downstream PGO consumption.
+/// PublishBodyCloud is kept as no-op to preserve call sites; low-latency
+/// visualization now uses the post-ESKF cloud (latency cost: ~5-20ms).
 void SuperLIO::PublishBodyCloud() {
-  if (!g_visual_map_body) return;
-
-  static int count_body = -1;
-  count_body++;
-  if (count_body % g_pub_step != 0) return;
-  count_body = 0;
-
-  OutputData output_data;
-  output_data.body_pc.reset(new PointCloudType());
-  *output_data.body_pc = *scan_undistort_full_;
-  output_data.has_body_pc = true;
-  output_data.state.timestamp = measures_.lidar.end_time;
-
-  {
-    std::lock_guard<std::mutex> lock(output_mutex_);
-    if (output_queue_.size() > 5) output_queue_.pop();
-    output_queue_.push(std::move(output_data));
-  }
-  output_cv_.notify_one();
+  // Body cloud publishing moved to Output() for timestamp consistency with odom.
+  return;
 }
 
 void SuperLIO::DownSample(){
@@ -1366,16 +1351,28 @@ void SuperLIO::UpdateMap() {
 }
 
 
-/// 输出当前帧结果：世界系点云（body 系点云已在 PublishBodyCloud 立即发出）
+/// 输出当前帧结果：body 系点云 + 世界系点云 + odom（统一使用 state.timestamp）
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
-  
+
   OutputData output_data;
   output_data.state = state;
   output_data.body_omega = kf_->GetDynamicState().w;
   output_data.lidar_receive_time = measures_.lidar.receive_time;
   output_data.is_undistort_only = g_lio_only_undistort || g_downsample_only;
   output_data.lidar_frame = current_lidar_frame_;
+
+  // body cloud: published with state.timestamp (same as odom) for PGO sync
+  if (g_visual_map_body) {
+    static int count_body = -1;
+    count_body++;
+    if (count_body % g_pub_step == 0) {
+      count_body = 0;
+      output_data.body_pc.reset(new PointCloudType());
+      *output_data.body_pc = *scan_undistort_full_;
+      output_data.has_body_pc = true;
+    }
+  }
 
   // downsample_only mode: output without transformation
   if(g_downsample_only){
@@ -1463,9 +1460,8 @@ void SuperLIO::OutputThread(){
       output_queue_.pop();
     }
 
-    const bool body_only = data.has_body_pc && !data.has_world_pc;
-
-    if (!body_only && !data.is_undistort_only) {
+    // odom is always published with state.timestamp (same as body/world cloud)
+    if (!data.is_undistort_only) {
       data_wrapper_->pub_odom(data.state, data.body_omega);
     }
 
