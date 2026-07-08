@@ -27,7 +27,7 @@ def generate_launch_description():
             ONLINE_LIDAR, DEFAULT_BAG_PATH, DEFAULT_RELIABILITY_OVERRIDE,
             DEFAULT_USE_SIM_TIME, MANUAL_BUILD_MAP, BUILD_TOOL, RECORD_ONLY,
             NAV2_DEFAULT_PARAMS_FILE, LIVOX_MID360_CONFIG, DEFAULT_NAMESPACE,
-            SUPER_LIO_LIDAR_X, SUPER_LIO_LIDAR_Z, SUPER_LIO_LIDAR_TILT_ANGLE,
+            SUPER_LIO_LIDAR_X, SUPER_LIO_LIDAR_Z, SUPER_LIO_LIDAR_TILT_ANGLE, AUTO_BUILD_MAP
         )
     except ImportError as e:
         print(f"方法2导入global_config失败: {e}")
@@ -37,6 +37,7 @@ def generate_launch_description():
         DEFAULT_RELIABILITY_OVERRIDE = '/home/ztl/slam_data/reliability_override.yaml'
         DEFAULT_USE_SIM_TIME = False
         MANUAL_BUILD_MAP = False
+        AUTO_BUILD_MAP = False
         BUILD_TOOL = 'octomap_server'
         RECORD_ONLY = False
         NAV2_DEFAULT_PARAMS_FILE = '/home/ztl/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/src/nav2_dog_slam/config/nav2_params.yaml'
@@ -136,6 +137,9 @@ def generate_launch_description():
                 _default_filter_rate = _match.group(1)
     except Exception:
         pass
+
+    if MANUAL_BUILD_MAP or AUTO_BUILD_MAP:
+        _default_filter_rate = '1'
 
     declare_filter_rate_arg = DeclareLaunchArgument(
         'filter_rate',

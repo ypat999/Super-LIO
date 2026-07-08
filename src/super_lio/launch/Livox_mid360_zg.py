@@ -137,6 +137,9 @@ def generate_launch_description():
     except Exception:
         pass
 
+    if MANUAL_BUILD_MAP or AUTO_BUILD_MAP:
+        _default_filter_rate = '1'
+
     declare_filter_rate_arg = DeclareLaunchArgument(
         'filter_rate',
         default_value=_default_filter_rate,
