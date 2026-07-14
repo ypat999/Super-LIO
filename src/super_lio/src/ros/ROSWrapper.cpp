@@ -473,6 +473,58 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
   LOG(INFO) << GREEN << " ---> Using Lidar type: "
             << lidarTypeToString(g_lidar_type) << RESET;
 
+  // 参数运行时修改回调
+  param_handler_ = add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & params) {
+      for (const auto & p : params) {
+        const auto & name = p.get_name();
+        if (name == "lio.map.save_map") g_save_map = p.as_bool();
+        else if (name == "lio.eva.timer") g_time_eva = p.as_bool();
+        else if (name == "lio.map.if_filter") g_if_filter = p.as_bool();
+        else if (name == "lio.map.ds_size") g_map_ds_size = p.as_double();
+        else if (name == "lio.map.save_interval") g_pcd_save_interval = p.as_int();
+        else if (name == "lio.sensor.filter_rate") g_filter_rate = p.as_int();
+        else if (name == "lio.sensor.enable_filter_offset") g_enable_filter_offset = p.as_bool();
+        else if (name == "lio.sensor.enable_downsample") g_enable_downsample = p.as_bool();
+        else if (name == "lio.sensor.voxel_fliter_size") g_voxel_fliter_size = p.as_double();
+        else if (name == "lio.sensor.intensity_filter_en") g_intensity_filter_en = p.as_bool();
+        else if (name == "lio.sensor.intensity_min") g_intensity_min = p.as_double();
+        else if (name == "lio.sensor.full_column_interval") g_full_column_interval = p.as_int();
+        else if (name == "lio.output.robot") g_2_robot = p.as_bool();
+        else if (name == "lio.output.planner") g_planner_enable = p.as_bool();
+        else if (name == "lio.output.plan_env_world") g_2_plan_env_world = p.as_bool();
+        else if (name == "lio.output.plan_env_body") g_2_plan_env_body = p.as_bool();
+        else if (name == "lio.output.ml_map") g_2_ml_map = p.as_bool();
+        else if (name == "lio.output.map") g_visual_map = p.as_bool();
+        else if (name == "lio.output.dense") g_visual_dense = p.as_bool();
+        else if (name == "lio.output.map_body") g_visual_map_body = p.as_bool();
+        else if (name == "lio.output.dense_body") g_visual_dense_body = p.as_bool();
+        else if (name == "lio.output.pub_step") g_pub_step = p.as_int();
+        else if (name == "lio.output.footprint_pub_en") g_footprint_pub_en = p.as_bool();
+        else if (name == "lio.dynamic_removal.enable") g_dynamic_removal_enable = p.as_bool();
+        else if (name == "lio.dynamic_removal.method") g_dynamic_removal_method = p.as_int();
+        else if (name == "lio.dynamic_removal.grid_size") g_dynamic_removal_grid_size = p.as_double();
+        else if (name == "lio.dynamic_removal.min_neighbors") g_dynamic_removal_min_neighbors = p.as_int();
+        else if (name == "lio.dynamic_removal.frame_window") g_dynamic_removal_frame_window = p.as_int();
+        else if (name == "lio.dynamic_removal.raycast_min_hits") g_dynamic_removal_raycast_min_hits = p.as_int();
+        else if (name == "lio.dynamic_removal.isolated_removal") g_dynamic_removal_isolated_removal = p.as_bool();
+        else if (name == "lio.sc_pgo.enable") g_sc_pgo_enable = p.as_bool();
+        else if (name == "lio.single_core") g_single_core = p.as_bool();
+        else if (name == "lio.fast_tf") g_fast_tf = p.as_bool();
+        else if (name == "lio.lio_only_undistort") g_lio_only_undistort = p.as_bool();
+        else if (name == "lio.downsample_only") g_downsample_only = p.as_bool();
+        else if (name == "lio.observe.plane_fit_threshold") g_plane_fit_threshold = p.as_double();
+        else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
+        else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
+        else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
+        else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
+        else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
+      }
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      return result;
+    });
+
   msg2uav_.header.frame_id = g_world_frame;
   path_.header.frame_id = g_world_frame;
 

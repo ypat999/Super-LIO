@@ -129,6 +129,9 @@ private:
   // 保存地图服务
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_service_;
 
+  // 参数运行时修改回调句柄
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_handler_;
+
   std::deque<IMUData>   imu_buffer_;
   std::deque<LidarData> lidar_buffer_;
   bool lidar_pushed_ = false;
