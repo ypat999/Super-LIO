@@ -49,7 +49,7 @@
     # 最大有效距离(米)，大于此距离的点被剔除，用于去除远距离噪声点
     lio.sensor.maxrange: 100.0
     # 点云采样间隔，每隔N个点取1个。1=不降采样; 3=每3个点取1个，减少计算量
-    lio.sensor.filter_rate: 3
+    lio.sensor.filter_rate: 1
     lio.sensor.enable_filter_offset: false
     # 是否对去畸变后的点云进行体素滤波降采样
     lio.sensor.enable_downsample: true
@@ -89,7 +89,7 @@
     # 里程计坐标系到机器人坐标系的外参，格式为 [tx, ty, tz, roll, pitch, yaw]
     # 前3个值为平移(米)，后3个值为欧拉角(度)，RPY顺序
     # 用于将IMU位姿转换到机器人本体坐标系，通常用于足式/轮式机器人
-    lio.extrinsic.odom_robo: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    lio.extrinsic.odom_robo: [-0.15, -0.1, 0.0, 0.0, 30.0, 0.0]
 
     # ======================== 哈希地图(体素地图)参数 ========================
     # 体素哈希地图的最大容量(体素数量)，影响可建图面积，增大可支持更大场景
@@ -112,7 +112,7 @@
 
     # ======================== 输出相关参数 ========================
     # 是否发布机器人本体坐标系的里程计信息（需配合odom_robo外参使用）
-    lio.output.robot: false
+    lio.output.robot: true
     # 是否发布世界坐标系下的规划环境地图
     lio.output.plan_env_world: false
     # 是否发布机体坐标系下的规划环境地图
@@ -164,7 +164,7 @@
 
     # ======================== SC-PGO 离线处理参数 ========================
     # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
-    lio.sc_pgo.enable: true
+    lio.sc_pgo.enable: false
     # 关键帧平移距离阈值(米)，与上一关键帧平移差值超过此值抽取一帧
     lio.sc_pgo.keyframe_gap: 0.5
     # 关键帧旋转角度阈值(度)，与上一关键帧旋转差值超过此值抽取一帧
@@ -176,4 +176,4 @@
 
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
-    lio.fast_tf: false
+    lio.fast_tf: true
