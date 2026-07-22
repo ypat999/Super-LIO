@@ -245,7 +245,7 @@ def generate_launch_description():
         remappings=[('/tf_static', '/tf_static')],
         output='screen'
     )
-    # ld.add_action(static_transform_world_to_base_footprint)
+    ld.add_action(static_transform_world_to_base_footprint)
 
     # 根据模式添加相应的节点（按照LIO-SAM的逻辑）
     if RECORD_ONLY:
