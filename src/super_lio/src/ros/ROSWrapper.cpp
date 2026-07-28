@@ -720,25 +720,10 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
 
-    // Fast TF: publish tf at IMU frequency to reduce latency
+    // Fast TF: publish base_footprint tf at IMU frequency to reduce latency
+    // NOTE: world->imu is NOT published here — it is only published in pub_odom()
+    // at LIO rate using point-cloud-calibrated state for accuracy.
     if (g_fast_tf) {
-      geometry_msgs::msg::TransformStamped tf_msg;
-
-      // world -> imu
-      tf_msg.header.stamp = toRosTime(data.secs);
-      tf_msg.header.frame_id = g_world_frame;
-      tf_msg.child_frame_id = g_imu_frame;
-      tf_msg.transform.translation.x = imu_state.p(0);
-      tf_msg.transform.translation.y = imu_state.p(1);
-      tf_msg.transform.translation.z = imu_state.p(2);
-
-      Quat q_imu(imu_state.R);
-      tf_msg.transform.rotation.x = q_imu.x();
-      tf_msg.transform.rotation.y = q_imu.y();
-      tf_msg.transform.rotation.z = q_imu.z();
-      tf_msg.transform.rotation.w = q_imu.w();
-      tf_broadcaster_->sendTransform(tf_msg);
-
       // world -> base_footprint
       if (g_footprint_pub_en) {
         geometry_msgs::msg::TransformStamped tf_footprint;
