@@ -740,6 +740,9 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
         else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
         else                              world_up = Eigen::Vector3f(0, 0, 1);
 
+        Eigen::Quaternionf q_imu(imu_state.R);
+        q_imu.normalize();
+
         Eigen::Vector3f lidar_fwd_local;
         if (g_ref_gravity_axis == 0)      lidar_fwd_local = Eigen::Vector3f::UnitZ();
         else if (g_ref_gravity_axis == 1) lidar_fwd_local = Eigen::Vector3f::UnitZ();
