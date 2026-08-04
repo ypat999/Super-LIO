@@ -1,6 +1,9 @@
 #ifndef ESKF_HPP_
 #define ESKF_HPP_
 
+#include <mutex>
+#include <atomic>
+
 #include "basic/alias.h"
 #include "basic/Manifold.h"
 #include "common/ds.h"
@@ -57,24 +60,54 @@ public:
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
 
-  double GetTime() const { return current_time_; }
+  double GetTime() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return current_time_;
+  }
 
-  SysState GetSysState() const { return SysState(current_time_, R_, p_, v_, bg_, ba_); }
+  SysState GetSysState() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return SysState(current_time_, R_, p_, v_, bg_, ba_);
+  }
 
-  NavState GetNavState() const { return NavState(current_time_, R_, p_, v_); }
+  NavState GetNavState() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return NavState(current_time_, R_, p_, v_);
+  }
 
-  DynamicState GetDynamicState() const { return DynamicState(current_time_, R_.R_, p_, v_, body_omega_, global_acc_); }
+  DynamicState GetDynamicState() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return DynamicState(current_time_, R_.R_, p_, v_, body_omega_, global_acc_);
+  }
 
-  KFState GetKFState() const { return KFState{need_converge_, GetSE3()}; }
+  KFState GetKFState() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return KFState{need_converge_, GetSE3()};
+  }
 
-  Pose_t   GetPoseT() const { return Pose_t(current_time_, R_, p_); }
+  Pose_t   GetPoseT() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return Pose_t(current_time_, R_, p_);
+  }
 
-  COV GetCov() const { return P_; }
+  COV GetCov() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return P_;
+  }
 
-  BASIC::SE3 GetSE3() const { return BASIC::SE3(R_, p_); }
+  BASIC::SE3 GetSE3() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return BASIC::SE3(R_, p_);
+  }
 
-  void SetObsTime(const double obs_time) { current_obs_time_ = obs_time; }
-  void SetLastObsTime(const double obs_time) { last_obs_time_ = obs_time; }
+  void SetObsTime(const double obs_time) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    current_obs_time_ = obs_time;
+  }
+  void SetLastObsTime(const double obs_time) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    last_obs_time_ = obs_time;
+  }
 
   void SetX(const SysState& x);
 
@@ -82,13 +115,20 @@ public:
   /// 避免 IMU-rate fast_tf 前向预测链被打断
   void SetMainState(const SysState& x);
 
-  void SetCov(const COV& cov){ P_ = cov; }
+  void SetCov(const COV& cov) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    P_ = cov;
+  }
 
-  BASIC::V3 GetGravity() const { return g_; }
+  BASIC::V3 GetGravity() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return g_;
+  }
 
   void ResetIMUIntegration();
 
-  bool init_ = false;
+  // 跨线程标记（IMU 回调与 process 线程并发读写），用原子避免数据竞争
+  std::atomic<bool> init_{false};
   bool Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot);
 
 private:
@@ -120,6 +160,10 @@ private:
   NOISE Q_ = NOISE::Zero();
 
   Options options_;
+
+  // IMU 回调线程(eskf_->Predict)与 process 线程(Predict/UpdateObserve)并发，
+  // 所有修改/读取内部状态的方法持同一把递归锁（UpdateObserve 内会嵌套调用 getter）
+  mutable std::recursive_mutex mtx_;
 
   double  forward_time_ = -1;
   IMUData forward_last_imu_;

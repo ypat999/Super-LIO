@@ -530,6 +530,10 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
 
   setupIO();
   setupServices();
+  
+  // 启动 IMU 输出线程，将发布从 IMU 回调解耦
+  imu_output_running_ = true;
+  imu_output_thread_ = std::thread(&ROSWrapper::imuOutputThread, this);
 }
 
 
@@ -546,11 +550,20 @@ void ROSWrapper::setupServices(){
 
 void ROSWrapper::setupIO(){
   //// input ======================================
+  // 创建独立的回调组，实现 IMU/lidar/process 三级并行
   cb_sensor_ = this->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_imu_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_lidar_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_process_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
 
-  rclcpp::SubscriptionOptions sub_opt;
-  sub_opt.callback_group = cb_sensor_;
+  rclcpp::SubscriptionOptions sub_opt_imu;
+  sub_opt_imu.callback_group = cb_imu_;
+  rclcpp::SubscriptionOptions sub_opt_lidar;
+  sub_opt_lidar.callback_group = cb_lidar_;
 
   auto imu_qos = rclcpp::QoS(rclcpp::KeepLast(500))
                  .durability_volatile();
@@ -572,7 +585,7 @@ void ROSWrapper::setupIO(){
       g_imu_topic,
       imu_qos,
       std::bind(&ROSWrapper::imuHandler, this, std::placeholders::_1),
-      sub_opt);
+      sub_opt_imu);
 
 #ifdef LIVOX_SUPPORT
   if (g_lidar_type == LID_TYPE::LIVOX) {
@@ -581,7 +594,7 @@ void ROSWrapper::setupIO(){
             g_lidar_topic,
             lidar_qos,
             std::bind(&ROSWrapper::livoxHandler, this, std::placeholders::_1),
-            sub_opt);
+            sub_opt_lidar);
   } else
 #endif
   {
@@ -590,21 +603,25 @@ void ROSWrapper::setupIO(){
             g_lidar_topic,
             lidar_qos,
             std::bind(&ROSWrapper::stdMsgHandler, this, std::placeholders::_1),
-            sub_opt);
+            sub_opt_lidar);
   }
 
   /// output ======================================
+  auto viz_qos = rclcpp::QoS(rclcpp::KeepLast(10))
+    .best_effort()
+    .durability_volatile();
+
   pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "lio/odom", 100);
+      "lio/odom", viz_qos);
 
   pub_imu_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "lio/imu/odom", 10);
+      "lio/imu/odom", viz_qos);
 
   pub_robo_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
-      "lio/robo/odom", 10);
+      "lio/robo/odom", viz_qos);
 
   pub_path_ = this->create_publisher<nav_msgs::msg::Path>(
-      "lio/path", 10);
+      "lio/path", viz_qos);
 
   auto pointcloud_qos = rclcpp::QoS(rclcpp::KeepLast(2))
     .best_effort()
@@ -618,8 +635,14 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/body/cloud", pointcloud_qos);
 
+  // TF 发布同样必须 best_effort：Humble 的 TransformBroadcaster 默认
+  // DynamicBroadcasterQoS(=RELIABLE)，远程 RViz 在 WiFi 差/断连时
+  // RELIABLE /tf 仍会触发重传积压，必须显式改为 best_effort + volatile
+  auto tf_qos = rclcpp::QoS(rclcpp::KeepLast(100))
+    .best_effort()
+    .durability_volatile();
   tf_broadcaster_ =
-      std::make_shared<tf2_ros::TransformBroadcaster>(this);
+      std::make_shared<tf2_ros::TransformBroadcaster>(this, tf_qos);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -628,9 +651,20 @@ void ROSWrapper::setupIO(){
 
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   auto t0 = std::chrono::high_resolution_clock::now();
-  
+
+  // 方案F: IMU 到达延迟诊断（ROS 时钟 vs 消息时间戳，sim/实时时钟均适用）
+  const double now_secs = this->now().seconds();
+  const double msg_secs = stampToSec(msg->header.stamp);
+  const double arrival_lat = now_secs - msg_secs;
+  static double last_arrival_warn = 0.0;
+  if (arrival_lat > 0.05 && (now_secs - last_arrival_warn) > 1.0) {
+    LOG(WARNING) << "[IMU Delay] arrival latency = " << arrival_lat * 1000.0
+                 << " ms (msg.stamp=" << msg_secs << ", ros_now=" << now_secs << ")";
+    last_arrival_warn = now_secs;
+  }
+
   IMUData data;
-  data.secs = stampToSec(msg->header.stamp);
+  data.secs = msg_secs;
 
   V3 acc_raw(msg->linear_acceleration.x,
              msg->linear_acceleration.y,
@@ -643,143 +677,40 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   data.acc = R_IMU_to_Lidar * acc_raw;
   data.gyr = R_IMU_to_Lidar * gyr_raw;
 
-  if (data.secs < last_timestamp_imu_) {
-    LOG(WARNING) << "imu loop back, clear buffer";
-    imu_buffer_.clear();
-    imu_buffer_.push_back(data);
-    last_timestamp_imu_ = data.secs;
+  bool loop_back = false;
+  {
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+    if (data.secs < last_timestamp_imu_) {
+      LOG(WARNING) << "imu loop back, clear buffer";
+      imu_buffer_.clear();
+      imu_buffer_.push_back(data);
+      last_timestamp_imu_ = data.secs;
+      loop_back = true;
+    } else {
+      imu_buffer_.push_back(data);
+      last_timestamp_imu_ = data.secs;
+    }
+  }
+  if (loop_back) {
     // eskf_->Reset();   // todo:
     return;
   }
 
-  imu_buffer_.push_back(data);
-  last_timestamp_imu_ = data.secs;
-
   DynamicState imu_state, robo_state;
   if(eskf_->Predict(data, imu_state, robo_state)){
-    nav_msgs::msg::Odometry odom_imu, odom_robo;
-
-    // REP 103: twist must be in child_frame (body frame)
-    const V3 v_imu_body  = imu_state.R.transpose() * imu_state.v;
-
+    // 推入队列，由独立线程 imuOutputThread 发布，避免 WiFi 差时 RELIABLE 发布阻塞回调
     {
-      odom_imu.pose.pose.position.x = imu_state.p(0);
-      odom_imu.pose.pose.position.y = imu_state.p(1);
-      odom_imu.pose.pose.position.z = imu_state.p(2);
-
-      Quat q(imu_state.R);
-      q.normalize();
-
-      odom_imu.pose.pose.orientation.x = q.x();
-      odom_imu.pose.pose.orientation.y = q.y();
-      odom_imu.pose.pose.orientation.z = q.z();
-      odom_imu.pose.pose.orientation.w = q.w();
-
-      odom_imu.twist.twist.linear.x = v_imu_body[0];
-      odom_imu.twist.twist.linear.y = v_imu_body[1];
-      odom_imu.twist.twist.linear.z = v_imu_body[2];
-
-      odom_imu.twist.twist.angular.x = imu_state.w(0);
-      odom_imu.twist.twist.angular.y = imu_state.w(1);
-      odom_imu.twist.twist.angular.z = imu_state.w(2);
-    }
-
-    {
-      // robot body-frame velocity = rotated IMU body velocity + lever-arm cross term
-      const V3 r_imu_to_robo = -g_odom_robo.R_ * g_odom_robo.t_;
-      const V3 v_robo_body = g_odom_robo.R_.transpose() * (v_imu_body + imu_state.w.cross(r_imu_to_robo));
-      const V3 w_robo_body = g_odom_robo.R_.transpose() * imu_state.w;
-
-      odom_robo.pose.pose.position.x = robo_state.p(0);
-      odom_robo.pose.pose.position.y = robo_state.p(1);
-      odom_robo.pose.pose.position.z = robo_state.p(2);
-
-      Quat q(robo_state.R);
-      q.normalize();
-
-      odom_robo.pose.pose.orientation.x = q.x();
-      odom_robo.pose.pose.orientation.y = q.y();
-      odom_robo.pose.pose.orientation.z = q.z();
-      odom_robo.pose.pose.orientation.w = q.w();
-
-      odom_robo.twist.twist.linear.x = v_robo_body[0];
-      odom_robo.twist.twist.linear.y = v_robo_body[1];
-      odom_robo.twist.twist.linear.z = v_robo_body[2];
-
-      odom_robo.twist.twist.angular.x = w_robo_body[0];
-      odom_robo.twist.twist.angular.y = w_robo_body[1];
-      odom_robo.twist.twist.angular.z = w_robo_body[2];
-    }
-
-    odom_imu.header.stamp = toRosTime(data.secs);
-    odom_robo.header.stamp = toRosTime(data.secs);
-    odom_imu.header.frame_id = g_world_frame;
-    odom_imu.child_frame_id = g_imu_frame;
-    odom_robo.header.frame_id = g_world_frame;
-    odom_robo.child_frame_id = "base_link";
-    pub_imu_odom_->publish(odom_imu);
-    pub_robo_odom_->publish(odom_robo);
-
-    // Fast TF: publish base_footprint tf at IMU frequency to reduce latency
-    // NOTE: world->imu is NOT published here — it is only published in pub_odom()
-    // at LIO rate using point-cloud-calibrated state for accuracy.
-    if (g_fast_tf) {
-      // world -> base_footprint
-      if (g_footprint_pub_en) {
-        geometry_msgs::msg::TransformStamped tf_footprint;
-        tf_footprint.header.stamp = toRosTime(data.secs);
-        tf_footprint.header.frame_id = g_world_frame;
-        tf_footprint.child_frame_id = g_tf_base_footprint_frame;
-
-        tf_footprint.transform.translation.x = imu_state.p(0);
-        tf_footprint.transform.translation.y = imu_state.p(1);
-        tf_footprint.transform.translation.z = imu_state.p(2);
-
-        Eigen::Vector3f world_up;
-        if (g_ref_gravity_axis == 0)      world_up = Eigen::Vector3f(-1, 0, 0);
-        else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
-        else                              world_up = Eigen::Vector3f(0, 0, 1);
-
-        Eigen::Quaternionf q_imu(imu_state.R);
-        q_imu.normalize();
-
-        Eigen::Vector3f lidar_fwd_local;
-        if (g_ref_gravity_axis == 0)      lidar_fwd_local = Eigen::Vector3f::UnitZ();
-        else if (g_ref_gravity_axis == 1) lidar_fwd_local = Eigen::Vector3f::UnitZ();
-        else                              lidar_fwd_local = Eigen::Vector3f::UnitX();
-        Eigen::Vector3f lidar_fwd_world = q_imu * lidar_fwd_local;
-
-        Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
-        if (fwd_proj.norm() < 1e-6) {
-          Eigen::Vector3f alt_local = (g_ref_gravity_axis == 2) ? Eigen::Vector3f::UnitY() : Eigen::Vector3f::UnitX();
-          Eigen::Vector3f alt_world = q_imu * alt_local;
-          fwd_proj = alt_world - (alt_world.dot(world_up)) * world_up;
-          if (fwd_proj.norm() < 1e-6) return;
-        }
-        fwd_proj.normalize();
-
-        Eigen::Vector3f foot_x = fwd_proj;
-        Eigen::Vector3f foot_z = world_up;
-        Eigen::Vector3f foot_y = foot_z.cross(foot_x);
-        if (foot_y.norm() < 1e-6) return;
-        foot_y.normalize();
-
-        Eigen::Matrix3f foot_mat;
-        foot_mat.col(0) = foot_x;
-        foot_mat.col(1) = foot_y;
-        foot_mat.col(2) = foot_z;
-
-        Eigen::Quaternionf q_foot(foot_mat);
-        q_foot.normalize();
-
-        tf_footprint.transform.rotation.x = q_foot.x();
-        tf_footprint.transform.rotation.y = q_foot.y();
-        tf_footprint.transform.rotation.z = q_foot.z();
-        tf_footprint.transform.rotation.w = q_foot.w();
-
-        tf_broadcaster_->sendTransform(tf_footprint);
+      ImuOutputData out;
+      out.imu_state = std::move(imu_state);
+      out.robo_state = std::move(robo_state);
+      out.timestamp = data.secs;
+      std::lock_guard<std::mutex> lock(imu_output_mutex_);
+      if(imu_output_queue_.size() > 10) {
+        imu_output_queue_.pop();
       }
+      imu_output_queue_.push(std::move(out));
     }
+    imu_output_cv_.notify_one();
     
     auto t1 = std::chrono::high_resolution_clock::now();
     double lat_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -821,7 +752,10 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   lidar_data.start_time = stampToSec(msg->header.stamp);
   lidar_data.end_time   = lidar_data.start_time + offset_time;
   lidar_data.frame_id = msg->header.frame_id;
-  lidar_buffer_.push_back(lidar_data);
+  {
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+    lidar_buffer_.push_back(lidar_data);
+  }
 }
 #endif
 
@@ -991,11 +925,155 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   }
   lidar_data.end_time = lidar_data.start_time + max_offset_time;
   lidar_data.frame_id = msg->header.frame_id;
-  lidar_buffer_.push_back(lidar_data);
+  {
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
+    lidar_buffer_.push_back(lidar_data);
+  }
+}
+
+
+ROSWrapper::~ROSWrapper() {
+  imu_output_running_ = false;
+  imu_output_cv_.notify_one();
+  if (imu_output_thread_.joinable()) {
+    imu_output_thread_.join();
+  }
+}
+
+
+void ROSWrapper::imuOutputThread() {
+  while (imu_output_running_) {
+    ImuOutputData data;
+    {
+      std::unique_lock<std::mutex> lock(imu_output_mutex_);
+      imu_output_cv_.wait(lock, [this] {
+        return !imu_output_queue_.empty() || !imu_output_running_;
+      });
+      if (!imu_output_running_ && imu_output_queue_.empty()) {
+        return;
+      }
+      data = std::move(imu_output_queue_.front());
+      imu_output_queue_.pop();
+    }
+
+    // 在独立线程中构建并发布 odom + TF，不阻塞 IMU 回调
+    const V3 v_imu_body = data.imu_state.R.transpose() * data.imu_state.v;
+
+    nav_msgs::msg::Odometry odom_imu;
+    odom_imu.header.stamp = toRosTime(data.timestamp);
+    odom_imu.header.frame_id = g_world_frame;
+    odom_imu.child_frame_id = g_imu_frame;
+    odom_imu.pose.pose.position.x = data.imu_state.p(0);
+    odom_imu.pose.pose.position.y = data.imu_state.p(1);
+    odom_imu.pose.pose.position.z = data.imu_state.p(2);
+    {
+      Quat q(data.imu_state.R);
+      q.normalize();
+      odom_imu.pose.pose.orientation.x = q.x();
+      odom_imu.pose.pose.orientation.y = q.y();
+      odom_imu.pose.pose.orientation.z = q.z();
+      odom_imu.pose.pose.orientation.w = q.w();
+    }
+    odom_imu.twist.twist.linear.x = v_imu_body[0];
+    odom_imu.twist.twist.linear.y = v_imu_body[1];
+    odom_imu.twist.twist.linear.z = v_imu_body[2];
+    odom_imu.twist.twist.angular.x = data.imu_state.w(0);
+    odom_imu.twist.twist.angular.y = data.imu_state.w(1);
+    odom_imu.twist.twist.angular.z = data.imu_state.w(2);
+    pub_imu_odom_->publish(odom_imu);
+
+    // robot body-frame odom
+    {
+      const V3 r_imu_to_robo = -g_odom_robo.R_ * g_odom_robo.t_;
+      const V3 v_robo_body = g_odom_robo.R_.transpose() * (v_imu_body + data.imu_state.w.cross(r_imu_to_robo));
+      const V3 w_robo_body = g_odom_robo.R_.transpose() * data.imu_state.w;
+
+      nav_msgs::msg::Odometry odom_robo;
+      odom_robo.header.stamp = toRosTime(data.timestamp);
+      odom_robo.header.frame_id = g_world_frame;
+      odom_robo.child_frame_id = "base_link";
+      odom_robo.pose.pose.position.x = data.robo_state.p(0);
+      odom_robo.pose.pose.position.y = data.robo_state.p(1);
+      odom_robo.pose.pose.position.z = data.robo_state.p(2);
+      {
+        Quat q(data.robo_state.R);
+        q.normalize();
+        odom_robo.pose.pose.orientation.x = q.x();
+        odom_robo.pose.pose.orientation.y = q.y();
+        odom_robo.pose.pose.orientation.z = q.z();
+        odom_robo.pose.pose.orientation.w = q.w();
+      }
+      odom_robo.twist.twist.linear.x = v_robo_body[0];
+      odom_robo.twist.twist.linear.y = v_robo_body[1];
+      odom_robo.twist.twist.linear.z = v_robo_body[2];
+      odom_robo.twist.twist.angular.x = w_robo_body[0];
+      odom_robo.twist.twist.angular.y = w_robo_body[1];
+      odom_robo.twist.twist.angular.z = w_robo_body[2];
+      pub_robo_odom_->publish(odom_robo);
+    }
+
+    // Fast TF: base_footprint
+    if (g_fast_tf && g_footprint_pub_en) {
+      geometry_msgs::msg::TransformStamped tf_footprint;
+      tf_footprint.header.stamp = toRosTime(data.timestamp);
+      tf_footprint.header.frame_id = g_world_frame;
+      tf_footprint.child_frame_id = g_tf_base_footprint_frame;
+      tf_footprint.transform.translation.x = data.imu_state.p(0);
+      tf_footprint.transform.translation.y = data.imu_state.p(1);
+      tf_footprint.transform.translation.z = data.imu_state.p(2);
+
+      Eigen::Vector3f world_up;
+      if (g_ref_gravity_axis == 0)      world_up = Eigen::Vector3f(-1, 0, 0);
+      else if (g_ref_gravity_axis == 1) world_up = Eigen::Vector3f(0, -1, 0);
+      else                              world_up = Eigen::Vector3f(0, 0, 1);
+
+      Eigen::Quaternionf q_imu(data.imu_state.R);
+      q_imu.normalize();
+
+      Eigen::Vector3f lidar_fwd_local;
+      if (g_ref_gravity_axis == 0)      lidar_fwd_local = Eigen::Vector3f::UnitZ();
+      else if (g_ref_gravity_axis == 1) lidar_fwd_local = Eigen::Vector3f::UnitZ();
+      else                              lidar_fwd_local = Eigen::Vector3f::UnitX();
+      Eigen::Vector3f lidar_fwd_world = q_imu * lidar_fwd_local;
+
+      Eigen::Vector3f fwd_proj = lidar_fwd_world - (lidar_fwd_world.dot(world_up)) * world_up;
+      if (fwd_proj.norm() < 1e-6) {
+        Eigen::Vector3f alt_local = (g_ref_gravity_axis == 2) ? Eigen::Vector3f::UnitY() : Eigen::Vector3f::UnitX();
+        Eigen::Vector3f alt_world = q_imu * alt_local;
+        fwd_proj = alt_world - (alt_world.dot(world_up)) * world_up;
+        if (fwd_proj.norm() < 1e-6) continue;
+      }
+      fwd_proj.normalize();
+
+      Eigen::Vector3f foot_x = fwd_proj;
+      Eigen::Vector3f foot_z = world_up;
+      Eigen::Vector3f foot_y = foot_z.cross(foot_x);
+      if (foot_y.norm() < 1e-6) continue;
+      foot_y.normalize();
+
+      Eigen::Matrix3f foot_mat;
+      foot_mat.col(0) = foot_x;
+      foot_mat.col(1) = foot_y;
+      foot_mat.col(2) = foot_z;
+
+      Eigen::Quaternionf q_foot(foot_mat);
+      q_foot.normalize();
+
+      tf_footprint.transform.rotation.x = q_foot.x();
+      tf_footprint.transform.rotation.y = q_foot.y();
+      tf_footprint.transform.rotation.z = q_foot.z();
+      tf_footprint.transform.rotation.w = q_foot.w();
+
+      tf_broadcaster_->sendTransform(tf_footprint);
+    }
+  }
 }
 
 
 bool ROSWrapper::sync_measure(MeasureGroup& meas){
+  // process 线程与 IMU/lidar 回调线程并发，整个缓冲区操作持锁
+  std::lock_guard<std::mutex> lock(buffers_mutex_);
+
   if (lidar_buffer_.empty() || imu_buffer_.empty()) {
     return false;
   }
@@ -1012,6 +1090,16 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
   }
 
   if (last_timestamp_imu_ < meas.lidar.end_time) {
+    // 方案F: IMU 延迟诊断 — 当 IMU 数据落后于 Lidar 时说明 IMU 处理被阻塞
+    static double last_warn_stamp = 0;
+    double imu_lag = meas.lidar.end_time - last_timestamp_imu_;
+    if (imu_lag > 0.05 && (meas.lidar.end_time - last_warn_stamp) > 1.0) {
+      char buf[256];
+      snprintf(buf, sizeof(buf), "[IMU Lag] IMU lags behind lidar by %.1f ms. IMU buf: %zu, lidar buf: %zu",
+               imu_lag * 1000, imu_buffer_.size(), lidar_buffer_.size());
+      LOG(WARNING) << buf;
+      last_warn_stamp = meas.lidar.end_time;
+    }
     return false;
   }
 
@@ -1299,7 +1387,8 @@ void ROSWrapper::pub_processing_time(double time,
 {
   static auto pub_processing_time_ =
     this->create_publisher<geometry_msgs::msg::PoseStamped>(
-        "/lio/processing_time", 10);
+        "/lio/processing_time",
+        rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
   geometry_msgs::msg::PoseStamped msg;
   msg.header.stamp = toRosTime(time);
   msg.pose.position.x = current_time;

@@ -33,16 +33,17 @@ int main(int argc, char** argv){
     lio->printTimeRecord();
   });
 
+  // process 定时器使用独立回调组，与 IMU/lidar 回调并行
   auto timer = data_wrapper->create_wall_timer(
     std::chrono::milliseconds(2),
     [lio]() { lio->process(); },
-    data_wrapper->getSensorCallbackGroup()
+    data_wrapper->getProcessCallbackGroup()
   );
 
-  rclcpp::spin(data_wrapper);
-
-  // lio->saveMap();
-  // lio->printTimeRecord();
+  // 多线程执行器：3 线程 = IMU 线程 + Lidar 线程 + process 线程
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 3);
+  executor.add_node(data_wrapper);
+  executor.spin();
 
   rclcpp::shutdown();
   return 0;

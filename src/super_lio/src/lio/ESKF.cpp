@@ -48,6 +48,7 @@ void ESKF::SetInitialConditions(Options options, const V3& init_bg,
                                 const V3& init_ba, const float imu_scale,
                                 const V3& gravity) 
 {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   BuildNoise(options);
   options_ = options;
   bg_ = init_bg;
@@ -62,6 +63,7 @@ void ESKF::SetInitialConditions(Options options, const V3& init_bg,
 
 
 void ESKF::SetX(const SysState& x) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   last_imu_time_ = x.timestamp;      // TODO: The timestamp update is not strictly consistent.
   current_time_ = last_imu_time_;
   R_ = x.R;
@@ -77,6 +79,7 @@ void ESKF::SetX(const SysState& x) {
 /// 仅更新主状态 (R/p/v/bg/ba)，不触碰 fw_R_/fw_p_/fw_v_，
 /// 避免 IMU-rate fast_tf 前向预测链被打断
 void ESKF::SetMainState(const SysState& x) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   last_imu_time_ = x.timestamp;
   current_time_ = last_imu_time_;
   R_ = x.R;
@@ -126,6 +129,7 @@ void ESKF::Update() {
 
 /// IMU 预测：前向传播名义状态 + 协方差，同时输出 IMU 和机器人位姿（供 fast_tf 使用）
 bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot){
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   if(!init_) {
     return false;
   }
@@ -177,6 +181,7 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 
 
 bool ESKF::Predict(const IMUData& imu) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   if(last_imu_time_ < 0){
     last_imu_time_ = imu.secs;
@@ -244,6 +249,9 @@ const int STATE_DIM = 18;
 /// 观测更新：迭代 ESKF，使用信息矩阵形式避免双求逆，
 /// 每次迭代仅一次 18x18 矩阵求逆（Yk = G^{-T} * Y_pred * G^{-1} + HTRH）
 bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
+  // 与 IMU 回调线程的 Predict 互斥；obs 内会嵌套调用 Get*（递归锁）
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
   // propagated state
   SO3 R_pred = R_;
   V3  p_pred = p_;
@@ -339,6 +347,7 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
 
 
 void ESKF::ResetIMUIntegration() {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   forward_time_ = -1;
   forward_last_imu_ = IMUData();
   fw_R_ = R_;

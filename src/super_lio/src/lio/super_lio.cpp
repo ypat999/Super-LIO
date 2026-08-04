@@ -2,10 +2,7 @@
 #include "lio/super_lio.h"
 
 #include <sys/resource.h>
-#include <sched.h>
-#include <pthread.h>
 #include <chrono>
-#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -45,22 +42,6 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
 } // anonymous namespace
 
 namespace LI2Sup{
-
-bool SuperLIO::set_realtime_priority(int priority)
-{
-  struct sched_param param;
-  param.sched_priority = priority;
-  
-  int ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
-  if (ret != 0) {
-    LOG(WARNING) << "Failed to set SCHED_FIFO priority " << priority 
-               << ", error: " << std::strerror(ret);
-    return false;
-  }
-  
-  LOG(INFO) << GREEN << " ---> [SuperLIO]: Set SCHED_FIFO priority to " << priority << RESET;
-  return true;
-}
 
 /// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
 inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
@@ -286,12 +267,6 @@ void SuperLIO::process(){
     return;
   }
 
-  static bool priority_set = false;
-  if (!priority_set) {
-    set_realtime_priority(98);
-    priority_set = true;
-  }
-  
   if(!data_wrapper_->sync_measure(measures_)){
     return;
   }

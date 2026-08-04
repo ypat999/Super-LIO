@@ -6,6 +6,10 @@
 #include <tuple>
 #include <deque>
 #include <vector>
+#include <queue>
+#include <thread>
+#include <mutex>
+#include <atomic>
 #include <execution>
 
 #include <pcl/point_types.h>
@@ -60,8 +64,15 @@ void livox2pcl(const livox_ros_driver2::msg::CustomMsg::SharedPtr& msg, BASIC::C
 
 class ROSWrapper : public rclcpp::Node {
 public:
+  /// IMU 输出数据（传递给独立发布线程）
+  struct ImuOutputData {
+    DynamicState imu_state;
+    DynamicState robo_state;
+    double timestamp;
+  };
+
   explicit ROSWrapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
-  ~ROSWrapper(){};
+  ~ROSWrapper() override;
   using Ptr = std::shared_ptr<ROSWrapper>;
   bool sync_measure(MeasureGroup&);
 
@@ -70,7 +81,11 @@ public:
   // 设置SuperLIO实例的引用
   void setSuperLIO(std::shared_ptr<class SuperLIO> lio) { super_lio_ = lio; }
 
+  // 回调组访问接口
+  rclcpp::CallbackGroup::SharedPtr getProcessCallbackGroup() const { return cb_process_; }
+
   void clear(){
+    std::lock_guard<std::mutex> lock(buffers_mutex_);
     lidar_buffer_.clear();
     imu_buffer_.clear();
     lidar_pushed_ = false;
@@ -120,6 +135,9 @@ private:
 
 private:
   rclcpp::CallbackGroup::SharedPtr cb_sensor_;
+  rclcpp::CallbackGroup::SharedPtr cb_imu_;
+  rclcpp::CallbackGroup::SharedPtr cb_lidar_;
+  rclcpp::CallbackGroup::SharedPtr cb_process_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
 #ifdef LIVOX_SUPPORT
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
@@ -138,6 +156,9 @@ private:
   double last_timestamp_imu_ = -1.0;
   double last_timestamp_lidar_ = -1.0;
 
+  // 多线程执行器下，IMU/lidar 回调线程与 process 线程并发访问缓冲区的保护锁
+  std::mutex buffers_mutex_;
+
   ESKF::Ptr eskf_{nullptr};
   std::shared_ptr<class SuperLIO> super_lio_{nullptr};
 
@@ -150,8 +171,10 @@ private:
 
   BASIC::V3 last_path_point_ = BASIC::V3(0, 0, -100);
 
-/// output.
+/// 输出。
 private:
+  void imuOutputThread();
+
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;       /// lidar fre --> IMU frame
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_imu_odom_;   /// IMU fre   --> IMU frame
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
@@ -160,6 +183,13 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
 
   Timer latency_timer_;
+
+  // IMU 输出线程（将发布从 IMU 回调解耦，避免 WiFi 差时 RELIABLE 发布阻塞）
+  std::thread imu_output_thread_;
+  std::mutex imu_output_mutex_;
+  std::condition_variable imu_output_cv_;
+  std::queue<ImuOutputData> imu_output_queue_;
+  std::atomic<bool> imu_output_running_{false};
 };
 
 } // namespace END.

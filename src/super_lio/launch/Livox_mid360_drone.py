@@ -172,15 +172,15 @@ def generate_launch_description():
     )
     ld.add_action(livox_frame_to_base_link_tf)
 
-    # base_link_to_base_footprint_tf = Node(
-    #     package='tf2_ros',
-    #     executable='static_transform_publisher',
-    #     name='base_link_to_base_footprint_tf',
-    #     parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-    #     arguments=['0.0', '0', '0.0', '0', '0.0', '0', 'world', 'base_footprint'],
-    #     output='screen'
-    # )
-    # ld.add_action(base_link_to_base_footprint_tf)
+    world_to_base_footprint_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='world_to_base_footprint_tf',
+        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+        arguments=['0.0', '0', '0.0', '0', '0.0', '0', 'world', 'base_footprint'],
+        output='screen'
+    )
+    # ld.add_action(world_to_base_footprint_tf)
 
     # 根据模式添加相应的节点（按照LIO-SAM的逻辑）
     if RECORD_ONLY:
