@@ -607,8 +607,11 @@ void ROSWrapper::setupIO(){
   }
 
   /// output ======================================
+  // 里程计/轨迹必须 RELIABLE：SC-PGO(aft_mapped_to_init)、Nav2 里程计、RViz
+  // 显示全部以默认 RELIABLE 订阅，BEST_EFFORT 发布会因 QoS 不兼容而完全收不到。
+  // 发布阻塞已由 imuOutputThread（有界队列）从 IMU 回调解耦，不再影响 LIO。
   auto viz_qos = rclcpp::QoS(rclcpp::KeepLast(10))
-    .best_effort()
+    .reliable()
     .durability_volatile();
 
   pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
@@ -635,11 +638,11 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/body/cloud", pointcloud_qos);
 
-  // TF 发布同样必须 best_effort：Humble 的 TransformBroadcaster 默认
-  // DynamicBroadcasterQoS(=RELIABLE)，远程 RViz 在 WiFi 差/断连时
-  // RELIABLE /tf 仍会触发重传积压，必须显式改为 best_effort + volatile
+  // TF 必须 RELIABLE：RViz / Nav2 / tf2 均以默认 RELIABLE 订阅 /tf，
+  // BEST_EFFORT 发布会因 QoS 不兼容导致 RViz 一条 TF 都收不到。
+  // WiFi 弱网时的发布阻塞已由 imuOutputThread（有界队列）解耦，不再阻塞 IMU 回调。
   auto tf_qos = rclcpp::QoS(rclcpp::KeepLast(100))
-    .best_effort()
+    .reliable()
     .durability_volatile();
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this, tf_qos);
