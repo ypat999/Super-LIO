@@ -70,6 +70,14 @@ def generate_launch_description():
     dynamic_removal_flag = LaunchConfiguration('dynamic_removal')
     ld.add_action(declare_dynamic_removal_arg)
 
+    declare_sc_pgo_arg = DeclareLaunchArgument(
+        'sc_pgo',
+        default_value='false',
+        description='Whether to enable SC-PGO data output (build map mode)'
+    )
+    sc_pgo_flag = LaunchConfiguration('sc_pgo')
+    ld.add_action(declare_sc_pgo_arg)
+
 
 
     # 在线模式：Livox雷达驱动
@@ -113,7 +121,9 @@ def generate_launch_description():
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
-        parameters=[config_yaml, {'use_sim_time': use_sim_time, 'lio.dynamic_removal.enable': dynamic_removal_flag}],
+        parameters=[config_yaml, {'use_sim_time': use_sim_time,
+                                  'lio.dynamic_removal.enable': dynamic_removal_flag,
+                                  'lio.sc_pgo.enable': sc_pgo_flag}],
         prefix=['taskset -c 7'],   # 绑定 CPU 7
         arguments=['--ros-args', '--log-level', 'info']
     )
