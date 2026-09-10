@@ -635,13 +635,16 @@ void SuperLIO::ProcessCaceMap(const std::string& output_name, bool filtered){
   std::string output_map_name = save_map_dir + "/" + output_name;
 
   // Collect and sort matching PCD files
+  // Prefix match, not substring: "scans_" must not pick up "filtered_scans_*",
+  // otherwise the unfiltered backup would contain every fragment twice.
   std::vector<std::string> pcd_files;
   for (const auto& entry : fs::directory_iterator(pcd_folder)) {
     if (entry.path().extension() == ".pcd" &&
-        entry.path().filename().string().find(scan_prefix) != std::string::npos) {
+        entry.path().filename().string().find(scan_prefix) == 0) {
       pcd_files.push_back(entry.path().string());
     }
   }
+  // Merge is order-independent, so plain string order is fine here.
   std::sort(pcd_files.begin(), pcd_files.end());
 
   if (pcd_files.empty()) {
