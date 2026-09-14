@@ -333,6 +333,9 @@ bool SuperLIO::kf_init(){
   state.timestamp = measures_.imu.back().secs;
   kf_->SetX(state);
   sys_init_pose_ = kf_->GetSE3();
+  // SetInitialConditions 会把 P_ 重置为先验（ESKF.cpp:58-59）并把世界原点设在当前
+  // imu/lidar 位置 —— 对下游而言 odom 世界系刚刚被重建，必须声明重置
+  if(data_wrapper_){ data_wrapper_->notifyOdomReset("kf_init: filter re-initialized"); }
   return true;
 }
 
@@ -1493,6 +1496,9 @@ void SuperLIO::resetIMUIntegration(){
   if(kf_){
     kf_->ResetIMUIntegration();
     LOG(INFO) << GREEN << " ---> [SuperLIO]: IMU pre-integration reset" << RESET;
+    // 单一收敛点：所有走到这里的重置都会让 odom 序列出现不连续，
+    // 必须让下游（PX4 EKF2）知道，否则它只能靠创新门限反复拒绝 -> reset 风暴
+    if(data_wrapper_){ data_wrapper_->notifyOdomReset("IMU pre-integration reset"); }
   }
 }
 

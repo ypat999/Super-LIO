@@ -283,6 +283,10 @@ bool SuperLIOReLoc::kf_init(){
   state.timestamp = -1.0;
   kf_->SetX(state);
   sys_init_pose_ = kf_->GetSE3();
+  // 重定位完成：odom 世界系被搬到先验位姿上，是一次不连续跳变。
+  // 不声明重置的话 PX4 EKF2 只会把这帧当成巨大创新去硬拒 -> 本次事故里的
+  // reset 风暴（xy_reset_counter 涨到 145）就是这种"无信号只能猜"的表现。
+  if(data_wrapper_){ data_wrapper_->notifyOdomReset("reloc: kf_init (re-localized)"); }
 
   {
     point_map_->clear();
