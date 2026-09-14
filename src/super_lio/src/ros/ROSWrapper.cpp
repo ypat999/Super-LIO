@@ -6,6 +6,7 @@
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <thread>
 #include <chrono>
+#include <algorithm>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -623,6 +624,19 @@ void ROSWrapper::setupIO(){
   pub_robo_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
       "lio/robo/odom", viz_qos);
 
+  // odom 重置计数：TRANSIENT_LOCAL + KEEP_LAST(1)，
+  // 让晚于 LIO 启动的下游（飞控通信节点）也能立即拿到当前计数值。
+  pub_odom_reset_counter_ = this->create_publisher<std_msgs::msg::UInt32>(
+      "lio/odom_reset_counter",
+      rclcpp::QoS(rclcpp::KeepLast(1))
+          .reliable()
+          .transient_local());
+  {
+    std_msgs::msg::UInt32 m;
+    m.data = odom_reset_counter_.load();
+    pub_odom_reset_counter_->publish(m);
+  }
+
   pub_path_ = this->create_publisher<nav_msgs::msg::Path>(
       "lio/path", viz_qos);
 
@@ -707,9 +721,28 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       out.imu_state = std::move(imu_state);
       out.robo_state = std::move(robo_state);
       out.timestamp = data.secs;
+      // 入队时快照后验方差：P_ 只在 LiDAR 观测更新时变化，同一 LiDAR 周期内的
+      // IMU 帧共用同一份后验是正确行为；但绝不能在发布线程现读，
+      // 否则队列积压时协方差会与 timestamp 错位（制造假创新）。
+      if (eskf_) {
+        out.cov_diag_pv   = eskf_->GetCovDiagPV();
+        out.cov_diag_rot  = eskf_->GetCovDiagRot();
+        out.need_converge = eskf_->NeedConverge();
+      } else {
+        out.cov_diag_pv.setZero();
+        out.cov_diag_rot.setZero();
+        out.need_converge = true;
+      }
       std::lock_guard<std::mutex> lock(imu_output_mutex_);
       if(imu_output_queue_.size() > 10) {
+        // 原先这里静默丢最旧帧：会掩盖 LiDAR/IMU 处理堆积，而堆积正是飞控侧
+        // vision_data_stopped 的根因。改为计数 + 限频告警。
         imu_output_queue_.pop();
+        const uint64_t dropped = imu_output_drops_.fetch_add(1) + 1;
+        if (dropped % 50 == 1) {
+          LOG(WARNING) << YELLOW << " ---> [odom queue] 积压丢帧累计 " << dropped
+                       << " 帧，odom 时间戳相对实时已滞后" << RESET;
+        }
       }
       imu_output_queue_.push(std::move(out));
     }
@@ -944,6 +977,83 @@ ROSWrapper::~ROSWrapper() {
 }
 
 
+void ROSWrapper::notifyOdomReset(const std::string& reason)
+{
+  // 计数单调递增，绝不清零；PX4 侧 reset_counter 是 uint8，由下游做 &0xFF 自然回绕。
+  const uint32_t n = odom_reset_counter_.fetch_add(1) + 1;
+  LOG(WARNING) << YELLOW << " ---> [odom reset] 声明 odom 内部状态/参考系重置 #" << n
+               << " 原因: " << reason << RESET;
+  if (pub_odom_reset_counter_) {
+    std_msgs::msg::UInt32 m;
+    m.data = n;
+    pub_odom_reset_counter_->publish(m);
+  }
+}
+
+
+void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
+                                       const BASIC::M3& R_world_body,
+                                       const ImuOutputData& data)
+{
+  fillOdometryCovariance(odom, R_world_body, data.cov_diag_pv, data.cov_diag_rot,
+                         data.need_converge);
+}
+
+
+void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
+                                       const BASIC::M3& R_world_body,
+                                       const BASIC::V6& cov_diag_pv,
+                                       const BASIC::V3& cov_diag_rot,
+                                       bool need_converge)
+{
+  // ---- 地板值（不可省）----
+  // 信息式更新在退化方向（长走廊、单面墙、单向特征）上会让 P 收敛到极小，
+  // 把 1e-9 发给飞控等于告诉它"该方向 odom 是绝对真值"，会直接把估计器带崩。
+  constexpr double POS_FLOOR  = 1e-4;   // (0.01 m)^2
+  constexpr double VEL_FLOOR  = 1e-3;   // (0.03 m/s)^2
+  constexpr double ROT_FLOOR  = 1e-4;   // (0.01 rad)^2
+  constexpr double GYRO_FLOOR = 1e-2;   // 角速度无后验可用，给保守常数，绝不留 0
+
+  // 迭代用满仍未收敛 => 该帧后验不可信，膨胀后再发。
+  // 只需让该帧在 EKF2_EVP_GATE=5 / EVV_GATE=3 下超门即可，不必给极大值：
+  // 保留数值有限还能继续约束姿态，同时不满足 §4.4 第5条"test_ratio<0.1"的
+  // 速度接管条件 —— 即退化帧会自动拒绝速度接管，但仍贡献位置/姿态信息。
+  const double infl = need_converge ? 4.0 : 1.0;
+  auto floored = [infl](double v, double f) { return std::max(v * infl, f); };
+
+  // ROS 6x6 行主序: pose=[x y z roll pitch yaw], twist=[vx vy vz wx wy wz]
+  auto& pc = odom.pose.covariance;
+  pc.fill(0.0);
+  pc[0 * 6 + 0] = floored(cov_diag_pv(0), POS_FLOOR);
+  pc[1 * 6 + 1] = floored(cov_diag_pv(1), POS_FLOOR);
+  pc[2 * 6 + 2] = floored(cov_diag_pv(2), POS_FLOOR);
+  // 注意: P 的 0..2 是机体系左扰动旋转误差，与 ROS 的世界系欧拉角约定不一致。
+  // PX4 只使用 orientation_variance[0..2]，此处按对角近似；勿直接喂给 Nav2 等下游。
+  pc[3 * 6 + 3] = floored(cov_diag_rot(0), ROT_FLOOR);
+  pc[4 * 6 + 4] = floored(cov_diag_rot(1), ROT_FLOOR);
+  pc[5 * 6 + 5] = floored(cov_diag_rot(2), ROT_FLOOR);
+
+  // 速度块: P 的 v 分量是世界系，而 REP-103 要求 twist 表达在 child_frame(body)。
+  // 必须与 v_body = R^T * v_world 做同样的合同变换，否则姿态一动协方差主轴就错位，
+  // 下游会看到"速度和它的不确定性不在同一坐标系"。
+  auto& tc = odom.twist.covariance;
+  tc.fill(0.0);
+  Eigen::Matrix<double, 3, 3> Pvv_world = Eigen::Matrix<double, 3, 3>::Zero();
+  Pvv_world(0, 0) = static_cast<double>(cov_diag_pv(3));
+  Pvv_world(1, 1) = static_cast<double>(cov_diag_pv(4));
+  Pvv_world(2, 2) = static_cast<double>(cov_diag_pv(5));
+  const Eigen::Matrix<double, 3, 3> Rw = R_world_body.template cast<double>();
+  const Eigen::Matrix<double, 3, 3> Pvv_body = Rw.transpose() * Pvv_world * Rw;
+
+  tc[0 * 6 + 0] = floored(Pvv_body(0, 0), VEL_FLOOR);
+  tc[1 * 6 + 1] = floored(Pvv_body(1, 1), VEL_FLOOR);
+  tc[2 * 6 + 2] = floored(Pvv_body(2, 2), VEL_FLOOR);
+  tc[3 * 6 + 3] = GYRO_FLOOR;
+  tc[4 * 6 + 4] = GYRO_FLOOR;
+  tc[5 * 6 + 5] = GYRO_FLOOR;
+}
+
+
 void ROSWrapper::imuOutputThread() {
   while (imu_output_running_) {
     ImuOutputData data;
@@ -983,6 +1093,7 @@ void ROSWrapper::imuOutputThread() {
     odom_imu.twist.twist.angular.x = data.imu_state.w(0);
     odom_imu.twist.twist.angular.y = data.imu_state.w(1);
     odom_imu.twist.twist.angular.z = data.imu_state.w(2);
+    fillOdometryCovariance(odom_imu, data.imu_state.R, data);
     pub_imu_odom_->publish(odom_imu);
 
     // robot body-frame odom
@@ -1012,6 +1123,8 @@ void ROSWrapper::imuOutputThread() {
       odom_robo.twist.twist.angular.x = w_robo_body[0];
       odom_robo.twist.twist.angular.y = w_robo_body[1];
       odom_robo.twist.twist.angular.z = w_robo_body[2];
+      // 通信节点发给 PX4 的就是这一路 (/lio/robo/odom)，协方差必须完整
+      fillOdometryCovariance(odom_robo, data.robo_state.R, data);
       pub_robo_odom_->publish(odom_robo);
     }
 
@@ -1148,6 +1261,12 @@ void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   odom.twist.twist.angular.y = body_omega[1];
   odom.twist.twist.angular.z = body_omega[2];
 
+  // /lio/odom 也补齐协方差：避免"一条有、一条全 0"导致下游拿错源。
+  // 此处在 process 线程内即时快照，与 state.timestamp 同属最近一次观测更新后的后验。
+  if (eskf_) {
+    fillOdometryCovariance(odom, state.R.R_, eskf_->GetCovDiagPV(),
+                           eskf_->GetCovDiagRot(), eskf_->NeedConverge());
+  }
   pub_odom_->publish(odom);    // imu frame -> lidar frequency
 
   V3 robo_position = state.R.R_ * ( - g_odom_robo.R_ * g_odom_robo.t_) + state.p;
@@ -1464,6 +1583,9 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
 
           flg_get_init_guess = true;
 
+          // 外部注入初始位姿 = 世界系原点变了，对下游（PX4 EKF2）是一次参考系重置
+          notifyOdomReset("initialpose received");
+
           LOG(INFO) << YELLOW
                   << " ---> GET Initial guess: "
                   << init_translation.transpose()
@@ -1500,6 +1622,7 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
     
     LOG(INFO) << YELLOW << " ---> [Service] Resetting IMU pre-integration..." << RESET;
     super_lio_->resetIMUIntegration();
+    // 重置计数在 SuperLIO::resetIMUIntegration() 内统一上报（单一收敛点），此处不重复计数
     
     LOG(INFO) << GREEN << " ---> [Service] Map saved successfully, LIO resumed" << RESET;
     response->success = true;

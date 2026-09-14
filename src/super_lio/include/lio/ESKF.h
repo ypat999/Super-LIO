@@ -95,6 +95,36 @@ public:
     return P_;
   }
 
+  /// 位置/速度后验方差对角（p 取 3..5，v 取 6..8），均为世界系。
+  /// 只取对角，避免 18x18 跨线程拷贝。
+  /// 注意偏移量的适用条件：STATE 注释 `R p v bg ba g` 对应 18 维形式
+  /// (offset 0/3/6/9/12/15)。而 UpdateObserve 中 `dx_.segment<16>(15)` 与
+  /// `G_reset.block<16,16>(15,15)` 表明 g 为流形上的 3 参数、末位是冗余标量
+  /// (即 15+3=18)。当 g 退化为 2 参数（共 17 维，见 STATE_DOF）时
+  /// 3..5 / 6..8 仍然正确（g 在末尾，不影响其之前分量的偏移），
+  /// 但若将来改动状态拼接顺序，必须重新核对本函数的下标。
+  BASIC::V6 GetCovDiagPV() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    BASIC::V6 d;
+    d << P_(3, 3), P_(4, 4), P_(5, 5), P_(6, 6), P_(7, 7), P_(8, 8);
+    return d;
+  }
+
+  /// 旋转后验方差对角（0..2），对应机体系左扰动误差，非世界系欧拉角。
+  BASIC::V3 GetCovDiagRot() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    BASIC::V3 d;
+    d << P_(0, 0), P_(1, 1), P_(2, 2);
+    return d;
+  }
+
+  /// true 表示本次观测更新把迭代次数用满仍未在 quit_eps_ 上收敛，
+  /// 即该帧后验不可信（退化场景/初值偏差大）。见 UpdateObserve 中 iter > 2 的置位。
+  bool NeedConverge() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return need_converge_;
+  }
+
   BASIC::SE3 GetSE3() const {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     return BASIC::SE3(R_, p_);

@@ -30,6 +30,7 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <std_msgs/msg/u_int32.hpp>
 
 #ifdef LIVOX_SUPPORT
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -69,6 +70,10 @@ public:
     DynamicState imu_state;
     DynamicState robo_state;
     double timestamp;
+    /// ESKF 后验方差对角，入队时快照（不要在发布线程现读，否则与 timestamp 错位）
+    BASIC::V6 cov_diag_pv;    ///< 世界系: [px py pz vz vy vz] 的方差
+    BASIC::V3 cov_diag_rot;   ///< 机体系左扰动旋转误差方差
+    bool    need_converge = false;  ///< true = 该帧迭代用满未收敛，后验不可信
   };
 
   explicit ROSWrapper(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
@@ -80,6 +85,13 @@ public:
   
   // 设置SuperLIO实例的引用
   void setSuperLIO(std::shared_ptr<class SuperLIO> lio) { super_lio_ = lio; }
+
+  /// 声明"滤波器内部状态/参考系刚刚被重置"。
+  /// 递增 odom 重置计数并以 TRANSIENT_LOCAL 发布，供下游（飞控通信节点）映射到
+  /// PX4 VehicleOdometry.reset_counter —— 让 EKF2 走显式 reset 而不是靠创新门限硬扛。
+  void notifyOdomReset(const std::string& reason);
+
+  uint32_t odomResetCounter() const { return odom_reset_counter_.load(); }
 
   // 回调组访问接口
   rclcpp::CallbackGroup::SharedPtr getProcessCallbackGroup() const { return cb_process_; }
@@ -106,6 +118,20 @@ public:
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
                             const NavState& state);  
   void pub_processing_time(double time, double current_time, double mean_time, double std_time);
+
+  /// 把 ESKF 后验方差填入 nav_msgs/Odometry 的 pose/twist covariance。
+  /// 位置块是世界系可直接放对角；速度块是世界系，必须合同变换到 child_frame(body)。
+  /// 所有分量都过地板值保护，绝不向下游发 0（0 = 无穷可信）。
+  static void fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
+                                     const BASIC::M3& R_world_body,
+                                     const BASIC::V6& cov_diag_pv,
+                                     const BASIC::V3& cov_diag_rot,
+                                     bool need_converge);
+
+  /// 便捷重载：直接取 ImuOutputData 中的快照
+  static void fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
+                                     const BASIC::M3& R_world_body,
+                                     const ImuOutputData& data);
 
   void recordLatency(const std::string& name, double latency_ms);
   void printLatencies();
@@ -181,6 +207,13 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
+
+  /// odom 重置计数（单调，绝不清零）及其发布通道
+  std::atomic<uint32_t> odom_reset_counter_{0};
+  rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr pub_odom_reset_counter_;
+
+  /// 输出队列丢帧计数（原先 >10 时静默 pop_front，无任何可观测性）
+  std::atomic<uint64_t> imu_output_drops_{0};
 
   Timer latency_timer_;
 
