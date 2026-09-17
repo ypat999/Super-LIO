@@ -7,6 +7,7 @@
 #include <thread>
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -1019,7 +1020,18 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
   // 保留数值有限还能继续约束姿态，同时不满足 §4.4 第5条"test_ratio<0.1"的
   // 速度接管条件 —— 即退化帧会自动拒绝速度接管，但仍贡献位置/姿态信息。
   const double infl = need_converge ? 4.0 : 1.0;
-  auto floored = [infl](double v, double f) { return std::max(v * infl, f); };
+
+  // 非有限值的兜底（必须显式判）：std::max(a,b) 等价于 (a<b)?b:a，NaN 参与
+  // 比较恒为 false，于是会原样返回 NaN —— 地板值对 NaN 完全无效。而 P_ 是
+  // float 矩阵，ESKF 里 P_pred/J_prior/Yk 三处裸 .inverse() 在病态/退化输入下
+  // 就可能产出 inf 或 NaN，并沿对角一路进到 odom.covariance。
+  // 这里不给地板值（那等于宣称"高度可信"），给一个明确的"不可用"量级，
+  // 让下游有依据把这一帧降权。
+  constexpr double INVALID_VAR = 1e4;
+  auto floored = [infl](double v, double f) {
+    if (!std::isfinite(v)) return INVALID_VAR;
+    return std::max(v * infl, f);
+  };
 
   // ROS 6x6 行主序: pose=[x y z roll pitch yaw], twist=[vx vy vz wx wy wz]
   auto& pc = odom.pose.covariance;
