@@ -130,15 +130,18 @@ def generate_launch_description():
     ld.add_action(super_lio_node)
 
     # 添加静态变换发布器
-    static_transform_map_to_odom = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_transform_map_to_odom',
-        parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'map', 'odom'],
-        output='screen'
-    )
-    ld.add_action(static_transform_map_to_odom)
+    # map->odom 由 lidar_localization 独家持有（初始匹配即发布）。
+    # 此处若再发恒等值，与 lidar_localization 构成同一 /tf_static key 双发布者，
+    # 新订阅者迟到加入时 latched 消息重放顺序不确定，恒等值会瞬时覆盖修正值。
+    # static_transform_map_to_odom = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='static_transform_map_to_odom',
+    #     parameters=[{'use_sim_time': DEFAULT_USE_SIM_TIME}],
+    #     arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'map', 'odom'],
+    #     output='screen'
+    # )
+    # ld.add_action(static_transform_map_to_odom)
 
     static_transform_odom_to_world = Node(
         package='tf2_ros',
