@@ -7,6 +7,17 @@
   [![Code](https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoWidth=16)](https://github.com/Liansheng-Wang/Super-LIO.git) [![arXiv](https://img.shields.io/badge/arXiv-blue?logo=arxiv&color=%23B31B1B)](https://arxiv.org/abs/2509.05723) [![IEEE](https://img.shields.io/badge/RAL2026-004088.svg)](https://ieeexplore.ieee.org/document/11347459) [![Bilibili](https://img.shields.io/badge/Bilibili-00A1D6?style=flat-square&logo=bilibili&logoColor=white&logoWidth=16)](https://www.bilibili.com/video/BV11wBeBYEp6) [![YouTube](https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white&logoWidth=16)](https://youtu.be/m9-hl8s5DDw)
 </div>
 
+> **XTDrone2 fork 说明**（分支 `no-de-check`，与主仓库 `XTDrone2_ego_planner` 协同）
+>
+> - `launch/Livox_mid360_drone.py`：已停用恒等 `map->odom` 静态发布——该 TF 由
+>   `lidar_localization_ros2` 独家持有（含原点基准精准降落校正），避免 `/tf_static`
+>   双写竞态导致的定位跳变（提交 `015d2b6`）。
+> - 外参一致性：launch 静态链 `imu→livox_frame→base_link`
+>   `(yaw=180°, pitch=210°)` 与 `config/livox_360_drone.yaml` 的
+>   `lio.extrinsic.odom_robo (roll=180°, pitch=-30°)` 定义的 base_link 等价
+>   （`/lio/robo/odom` 与 TF 树一致，已实测验证，勿单侧修改）。
+> - `localization.yaml` / SZD 降落参数见各相关包 README。
+
 
 <div align="center">
   <p>
