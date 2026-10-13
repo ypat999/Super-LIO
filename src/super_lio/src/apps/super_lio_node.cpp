@@ -40,8 +40,15 @@ int main(int argc, char** argv){
     data_wrapper->getProcessCallbackGroup()
   );
 
-  // 多线程执行器：3 线程 = IMU 线程 + Lidar 线程 + process 线程
-  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 3);
+  // 性能统计定时器：lio.eva.timer 开启时每分钟输出一次并清零窗口；关闭时为空操作
+  auto report_timer = data_wrapper->create_wall_timer(
+    std::chrono::seconds(60),
+    [lio]() { lio->periodicTimeReport(); },
+    data_wrapper->getReportCallbackGroup()
+  );
+
+  // 多线程执行器：4 线程 = IMU 线程 + Lidar 线程 + process 线程 + 周期报告
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 4);
   executor.add_node(data_wrapper);
   executor.spin();
 

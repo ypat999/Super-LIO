@@ -561,6 +561,8 @@ void ROSWrapper::setupIO(){
       rclcpp::CallbackGroupType::MutuallyExclusive);
   cb_process_ = this->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_report_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
 
   rclcpp::SubscriptionOptions sub_opt_imu;
   sub_opt_imu.callback_group = cb_imu_;
@@ -722,6 +724,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       out.imu_state = std::move(imu_state);
       out.robo_state = std::move(robo_state);
       out.timestamp = data.secs;
+      out.receive_time = std::chrono::duration<double>(
+          std::chrono::high_resolution_clock::now().time_since_epoch()).count();
       // 入队时快照后验方差：P_ 只在 LiDAR 观测更新时变化，同一 LiDAR 周期内的
       // IMU 帧共用同一份后验是正确行为；但绝不能在发布线程现读，
       // 否则队列积压时协方差会与 timestamp 错位（制造假创新）。
@@ -1138,6 +1142,12 @@ void ROSWrapper::imuOutputThread() {
       // 通信节点发给 PX4 的就是这一路 (/lio/robo/odom)，协方差必须完整
       fillOdometryCovariance(odom_robo, data.robo_state.R, data);
       pub_robo_odom_->publish(odom_robo);
+      if(data.receive_time > 0.0){
+        auto now_s = std::chrono::duration<double>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        double lat_ms = (now_s - data.receive_time) * 1000.0;
+        recordLatency("[IMU->Odom]", lat_ms);
+      }
     }
 
     // Fast TF: base_footprint
@@ -1537,6 +1547,10 @@ void ROSWrapper::recordLatency(const std::string& name, double latency_ms){
 
 void ROSWrapper::printLatencies(){
   latency_timer_.PrintAll();
+}
+
+void ROSWrapper::clearLatencies(){
+  latency_timer_.Clear();
 }
 
 

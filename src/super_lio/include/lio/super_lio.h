@@ -42,6 +42,8 @@ public:
   void process();
   void saveMap();
   void printTimeRecord();
+  /// 周期性性能报告：打印本窗口的统计后清空，供 lio.eva.timer 开启时每分钟调用
+  void periodicTimeReport();
 
   void pauseProcessing();
   void resumeProcessing();

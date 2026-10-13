@@ -70,6 +70,8 @@ public:
     DynamicState imu_state;
     DynamicState robo_state;
     double timestamp;
+    /// IMU 回调收到原始数据的时刻（epoch 秒），用于计算 odom 端到端发布延迟
+    double receive_time = 0.0;
     /// ESKF 后验方差对角，入队时快照（不要在发布线程现读，否则与 timestamp 错位）
     BASIC::V6 cov_diag_pv;    ///< 世界系: [px py pz vz vy vz] 的方差
     BASIC::V3 cov_diag_rot;   ///< 机体系左扰动旋转误差方差
@@ -95,6 +97,7 @@ public:
 
   // 回调组访问接口
   rclcpp::CallbackGroup::SharedPtr getProcessCallbackGroup() const { return cb_process_; }
+  rclcpp::CallbackGroup::SharedPtr getReportCallbackGroup() const { return cb_report_; }
 
   void clear(){
     std::lock_guard<std::mutex> lock(buffers_mutex_);
@@ -135,6 +138,7 @@ public:
 
   void recordLatency(const std::string& name, double latency_ms);
   void printLatencies();
+  void clearLatencies();
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
@@ -164,6 +168,7 @@ private:
   rclcpp::CallbackGroup::SharedPtr cb_imu_;
   rclcpp::CallbackGroup::SharedPtr cb_lidar_;
   rclcpp::CallbackGroup::SharedPtr cb_process_;
+  rclcpp::CallbackGroup::SharedPtr cb_report_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
 #ifdef LIVOX_SUPPORT
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;

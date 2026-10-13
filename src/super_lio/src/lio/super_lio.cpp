@@ -1448,6 +1448,12 @@ void SuperLIO::OutputThread(){
 
     if (data.has_body_pc && data.body_pc) {
       data_wrapper_->pub_cloud_body(data.body_pc, data.state.timestamp);
+      if(data.lidar_receive_time > 0.0){
+        auto now_s = std::chrono::duration<double>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        double lat_ms = (now_s - data.lidar_receive_time) * 1000.0;
+        data_wrapper_->recordLatency("[Lidar->BodyCloud]", lat_ms);
+      }
     }
 
     if(data.has_world_pc && data.world_pc){
@@ -1472,6 +1478,14 @@ void SuperLIO::printTimeRecord(){
   if(!g_time_eva) return;
   time_record_.PrintAll();
   data_wrapper_->printLatencies();
+}
+
+
+void SuperLIO::periodicTimeReport(){
+  if(!g_time_eva) return;
+  time_record_.PrintAndClear();
+  data_wrapper_->printLatencies();
+  data_wrapper_->clearLatencies();
 }
 
 
