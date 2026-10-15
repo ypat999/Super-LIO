@@ -97,8 +97,6 @@ void SuperLIOReLoc::init(){
   
   scan_undistort_full_.reset(new PointCloudType());
   ds_undistort_.reset(new PointCloudType());
-  world_pc_.reset(new PointCloudType());
-  ds_world_.reset(new PointCloudType());
   point_map_.reset(new PointCloudType());
   init_obs_data_.reset(new PointCloudType());
   

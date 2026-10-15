@@ -105,7 +105,6 @@ protected:
   void SaveThread();
   void DenseThread();
   void enqueueDense();
-  void caceData();
   void caceSCPGOData();
   void ProcessCaceMap(const std::string& output_name, bool filtered);
 
@@ -126,7 +125,7 @@ protected:
   BASIC::SE3 T_predicted_end_;
   BASIC::CloudPtr scan_undistort_full_;
   BASIC::CloudPtr ds_undistort_;
-  BASIC::CloudPtr point_map_, world_pc_, ds_world_;
+  BASIC::CloudPtr point_map_;
   std::mutex map_mutex_;  // 保护 point_map_ / pcd_index_（DenseThread 与 saveMap 并发访问）
   int frame_num_ = 0;
   BASIC::SE3 sys_init_pose_;
@@ -173,9 +172,6 @@ protected:
   std::ofstream sc_pgo_odom_file_;
 
   std::atomic<bool> paused_{false};
-
-  // Cache for caceData reuse (avoid duplicate transformPointCloud)
-  BASIC::CloudPtr last_transformed_world_pc_;
 };
 
 } // namespace END.

@@ -102,8 +102,6 @@ void SuperLIO::init(){
   
   scan_undistort_full_.reset(new PointCloudType());
   ds_undistort_.reset(new PointCloudType());
-  world_pc_.reset(new PointCloudType());
-  ds_world_.reset(new PointCloudType());
 
   if(g_save_map){
     point_map_.reset(new PointCloudType());
@@ -416,83 +414,6 @@ void SuperLIO::stateProcess(){
   caceSCPGOData();
 }
 
-
-/// 缓存当前帧数据：变换点云到世界系，存入 cace_map_ 供后续输出和建图
-void SuperLIO::caceData(){
-  if(!g_save_map) return;
-
-  auto state = kf_->GetNavState();
-
-  if(g_lio_only_undistort){
-    if(g_if_filter){
-      *world_pc_ = *ds_undistort_;
-    }else{
-      *world_pc_ = *scan_undistort_full_;
-    }
-  }else{
-    // Reuse Output's already-transformed cloud if available
-    if(last_transformed_world_pc_ && !last_transformed_world_pc_->empty()){
-      *world_pc_ = *last_transformed_world_pc_;
-    }else{
-      const Eigen::Matrix3f Rf = state.R.R_.cast<float>();
-      const Eigen::Vector3f tf = state.p.cast<float>();
-      if(g_if_filter){
-        transformPointCloudRt(*ds_undistort_, *world_pc_, Rf, tf);
-      }else{
-        transformPointCloudRt(*scan_undistort_full_, *world_pc_, Rf, tf);
-      }
-    }
-  }
-
-  static int scan_wait_num = 0;
-  if(!world_pc_->empty()){
-    *point_map_ += *world_pc_;
-    scan_wait_num++;
-  }
-
-  if(g_pcd_save_interval < 0) {
-    scan_wait_num = 0;
-    return;
-  }
-
-  static bool rm_PCD_dir = false;
-  if(!rm_PCD_dir){
-    rm_PCD_dir = true;
-    std::string save_map_dir = g_save_map_dir;
-    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
-      save_map_dir = g_root_dir + save_map_dir;
-    }
-    std::string cmd = "rm -rf " + save_map_dir + "/PCD";
-    [[maybe_unused]] int res;
-    res = system(cmd.c_str());
-    cmd = "mkdir -p " + save_map_dir + "/PCD";
-    res = system(cmd.c_str());
-  }
-
-  if (point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval) {
-    pcd_index_++;
-    
-    SaveData save_data;
-    save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
-    save_data.pcd_index = pcd_index_;
-    save_data.timestamp = state.timestamp;
-    save_data.position = state.p.cast<float>();
-    save_data.orientation = BASIC::Quat(state.R.R_.cast<float>());
-    
-    {
-      std::lock_guard<std::mutex> lock(save_mutex_);
-      if(save_queue_.size() > 3){
-        save_queue_.pop();
-      }
-      save_queue_.push(std::move(save_data));
-    }
-    save_cv_.notify_one();
-    
-    point_map_->clear();
-    scan_wait_num = 0;
-  }
-}
-
 void SuperLIO::SaveThread(){
   while(save_running_){
     SaveData data;
@@ -709,7 +630,7 @@ void SuperLIO::DenseThread(){
       transformPointCloudRt(*dense_body, *dense_world, data.T_corrected.R_, data.T_corrected.t_);
     }
 
-    // 5. pcd 累积 + 保存（world 系全量，替代原 caceData 的抽稀 pcd 来源）
+    // 5. pcd 累积 + 保存（world 系全量点作为 pcd 来源）
     if(g_save_map && !dense_world->empty()){
       if(!rm_PCD_dir){
         rm_PCD_dir = true;
