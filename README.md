@@ -16,6 +16,16 @@
 >   `(yaw=180°, pitch=210°)` 与 `config/livox_360_drone.yaml` 的
 >   `lio.extrinsic.odom_robo (roll=180°, pitch=-30°)` 定义的 base_link 等价
 >   （`/lio/robo/odom` 与 TF 树一致，已实测验证，勿单侧修改）。
+> - 点云双链路输出（提交 `8a21fd9`，原 `lio/body/cloud` 改名为 `lio/cloud_body`）：
+>   - 实时链路 `lio/cloud_body`（机体系）/ `lio/cloud_world`（world）：输入按
+>     `lio.sensor.filter_rate` 隔点抽稀，配准、去畸变、发布全走抽稀点，**不再过体素降采样**，
+>     单核负载与延迟确定
+>   - 全量链路 `lio/cloud_body_dense`（机体系）/ `lio/cloud_world_dense`（world）：
+>     `DenseThread` 异步消费每帧全量原始点，复用同一 IMU 传播轨迹去畸变 + 配准 delta 修正，
+>     有界队列（>3 帧丢最旧）防积压，主线程零阻塞
+>   - PCD 落盘（`/map_save`）数据源改为全量 `lio/cloud_world_dense`
+>   - 下游已同步订阅 `cloud_body`：无人机 CP 避障、`lidar_localization_ros2`、
+>     机器狗仓 `nav2_dog_slam` / `lidar_localization` launch
 > - `localization.yaml` / SZD 降落参数见各相关包 README。
 
 
