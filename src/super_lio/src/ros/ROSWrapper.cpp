@@ -655,10 +655,6 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/cloud_body", pointcloud_qos);
 
-  pub_cloud_world_dense_ =
-    this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "lio/cloud_world_dense", pointcloud_qos);
-
   pub_cloud_body_dense_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/cloud_body_dense", pointcloud_qos);
@@ -1501,15 +1497,6 @@ void ROSWrapper::pub_cloud_body_dense(const CloudPtr& pc, double time){
   cloud.header.frame_id = g_imu_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_dense_->publish(cloud);
-}
-
-
-void ROSWrapper::pub_cloud_world_dense(const CloudPtr& pc, double time){
-  sensor_msgs::msg::PointCloud2 cloud;
-  pcl::toROSMsg(*pc, cloud);
-  cloud.header.frame_id = g_world_frame;
-  cloud.header.stamp = toRosTime(time);
-  pub_cloud_world_dense_->publish(cloud);
 }
 
 

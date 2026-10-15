@@ -693,10 +693,11 @@ void SuperLIO::DenseThread(){
     // 3. 发布 cloud_body_dense（机体系全量）
     data_wrapper_->pub_cloud_body_dense(dense_body, data.timestamp);
 
-    // 4. 变换到 world -> cloud_world_dense（全量）
+    // 4. 变换到 world（全量）——仅供 PCD 落盘，world 系全量不再对外发布话题
     CloudPtr dense_world(new PointCloudType());
-    transformPointCloudRt(*dense_body, *dense_world, data.T_corrected.R_, data.T_corrected.t_);
-    data_wrapper_->pub_cloud_world_dense(dense_world, data.timestamp);
+    if(g_save_map){
+      transformPointCloudRt(*dense_body, *dense_world, data.T_corrected.R_, data.T_corrected.t_);
+    }
 
     // 5. pcd 累积 + 保存（world 系全量，替代原 caceData 的抽稀 pcd 来源）
     if(g_save_map && !dense_world->empty()){
