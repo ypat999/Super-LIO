@@ -129,7 +129,8 @@ struct LidarData
   double start_time = 0.0;
   double end_time = 0.0;
   double receive_time = 0.0;  // wall-clock time (s) when lidar msg was received
-  pcl::PointCloud<LI2Sup::PointXTZIT>::Ptr pc{nullptr};
+  pcl::PointCloud<LI2Sup::PointXTZIT>::Ptr pc{nullptr};        // filter_rate 抽稀点，供实时配准
+  pcl::PointCloud<LI2Sup::PointXTZIT>::Ptr pc_full{nullptr};   // 全量点，供 cloud_*_dense 持久化输出
   std::string frame_id;
 };
 

@@ -71,12 +71,29 @@ protected:
     BASIC::Quat orientation;
   };
 
+  // 全量点异步去畸变/变换的投递数据（错峰：不阻塞实时配准链路）
+  struct DenseData {
+    pcl::PointCloud<PointXTZIT>::Ptr pc_full;     // 全量原始点（含 offset_time，shared_ptr 共享）
+    std::vector<DynamicState> propagate_states;   // IMU 传播轨迹（值拷贝，主线程下一帧会覆盖）
+    std::vector<BASIC::V3> imu_gyr;               // 每个区间原始陀螺仪（去畸变 omega_body 用）
+    double start_time = 0.0;                      // 去畸变起始时间（s）
+    double timestamp = 0.0;                       // 状态时间戳（发布 dense 话题用）
+    BASIC::SE3 T_pred;                            // 预测位姿（去畸变基准）
+    BASIC::SE3 T_corrected;                       // 配准修正位姿（delta 修正用）
+  };
+
   void stateWaitKFInit();
   void stateWaitMapInit();
   void stateProcess();
   virtual bool kf_init();
   virtual bool map_init();
   void Propagation_Undistort();
+  void undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
+                      const std::vector<DynamicState>& propagate_states,
+                      const std::vector<BASIC::V3>& imu_gyr,
+                      double start_time,
+                      const BASIC::SE3& T_end,
+                      BASIC::CloudPtr& out_pc);
   void ApplyDeltaCorrection();
   void PublishBodyCloud();
   void DownSample();
@@ -86,6 +103,8 @@ protected:
   virtual void Output();
   void OutputThread();
   void SaveThread();
+  void DenseThread();
+  void enqueueDense();
   void caceData();
   void caceSCPGOData();
   void ProcessCaceMap(const std::string& output_name, bool filtered);
@@ -134,6 +153,13 @@ protected:
   std::condition_variable save_cv_;
   std::queue<SaveData> save_queue_;
   std::atomic<bool> save_running_{false};
+
+  // 全量点异步去畸变/变换线程（错峰：实时链路不被全量处理阻塞）
+  std::thread dense_thread_;
+  std::mutex dense_mutex_;
+  std::condition_variable dense_cv_;
+  std::queue<DenseData> dense_queue_;
+  std::atomic<bool> dense_running_{false};
 
   // SC-PGO offline output
   int sc_pgo_index_ = 0;

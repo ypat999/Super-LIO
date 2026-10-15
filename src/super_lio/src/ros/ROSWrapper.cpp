@@ -653,7 +653,15 @@ void ROSWrapper::setupIO(){
 
   pub_cloud_body_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
-        "lio/body/cloud", pointcloud_qos);
+        "lio/cloud_body", pointcloud_qos);
+
+  pub_cloud_world_dense_ =
+    this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "lio/cloud_world_dense", pointcloud_qos);
+
+  pub_cloud_body_dense_ =
+    this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "lio/cloud_body_dense", pointcloud_qos);
 
   // TF 必须 RELIABLE：RViz / Nav2 / tf2 均以默认 RELIABLE 订阅 /tf，
   // BEST_EFFORT 发布会因 QoS 不兼容导致 RViz 一条 TF 都收不到。
@@ -769,9 +777,13 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   std::size_t ptsize = msg->point_num;
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
   lidar_data.pc->reserve(ptsize / g_filter_rate + 1);
+  lidar_data.pc_full.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
+  lidar_data.pc_full->reserve(ptsize + 1);
 
   double offset_time = 0.0;
-  for(std::size_t _i = g_filter_offset; _i < ptsize; _i += g_filter_rate){
+  // 一次遍历同时填充全量点(pc_full)与抽稀点(pc)，避免重复扫描 msg->points。
+  // 全量点与抽稀点共用同一套 range/intensity 过滤，仅抽样比例不同。
+  for(std::size_t _i = 0; _i < ptsize; ++_i){
     auto& pt = msg->points[_i];
     auto tag = pt.tag & 0x30;
     if (tag == 0x10 || tag == 0x00){
@@ -779,7 +791,12 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
       if(dis > g_blind2 && dis < g_maxrange2){
         if(g_intensity_filter_en && pt.reflectivity < g_intensity_min) continue;
         offset_time = pt.offset_time * 1e-9;
-        lidar_data.pc->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
+        lidar_data.pc_full->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
+        // filter_rate 抽稀：与原先 for(_i=offset; _i<ptsize; _i+=rate) 等价
+        if(_i >= (std::size_t)g_filter_offset &&
+           (_i - (std::size_t)g_filter_offset) % (std::size_t)g_filter_rate == 0){
+          lidar_data.pc->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
+        }
       }
     }
   }
@@ -808,6 +825,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   lidar_data.receive_time = std::chrono::duration<double>(
       std::chrono::high_resolution_clock::now().time_since_epoch()).count();
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
+  lidar_data.pc_full.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
 
   double offset_time = 0.0;
   double dis = 0.0;
@@ -849,6 +867,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   };
 
   lidar_data.pc->reserve(num_points / g_filter_rate + 1);
+  lidar_data.pc_full->reserve(num_points + 1);
   lidar_data.start_time = stampToSec(msg->header.stamp);
 
   // Find min time for relative offset calculation
@@ -955,6 +974,20 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     for (size_t i = g_filter_offset; i < num_points; i += g_filter_rate) {
       try_add_point(i);
     }
+  }
+
+  // 全量点：遍历所有点（不做 filter_rate 抽稀），供 cloud_*_dense 持久化输出。
+  // 复用与抽稀点相同的 range/intensity 过滤，仅抽样比例不同。
+  for (size_t i = 0; i < num_points; ++i) {
+    float x = read_float(i, off_x);
+    float y = read_float(i, off_y);
+    float z = read_float(i, off_z);
+    if (!validPoint(x, y, z)) continue;
+    float intensity = has_intensity ? read_float(i, off_intensity) : 1.0f;
+    if (g_intensity_filter_en && intensity < g_intensity_min) continue;
+    double ot = read_offset_time(i);
+    if (ot > max_offset_time) max_offset_time = ot;
+    lidar_data.pc_full->emplace_back(x, y, z, intensity, ot);
   }
 
   // 更新偏移量（对称振荡采样：交替从两端选取，覆盖更均匀）
@@ -1459,6 +1492,24 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   cloud.header.frame_id = g_imu_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_cloud_body_dense(const CloudPtr& pc, double time){
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_imu_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_body_dense_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_cloud_world_dense(const CloudPtr& pc, double time){
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  cloud.header.frame_id = g_world_frame;
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_world_dense_->publish(cloud);
 }
 
 

@@ -170,7 +170,9 @@ def generate_launch_description():
             ('lio/robo/odom', 'lio/robo/odom'),
             ('lio/path', 'lio/path'),
             ('lio/cloud_world', 'lio/cloud_world'),
-            ('lio/body/cloud', 'lio/body/cloud'),
+            ('lio/cloud_body', 'lio/cloud_body'),
+            ('lio/cloud_body_dense', 'lio/cloud_body_dense'),
+            ('lio/cloud_world_dense', 'lio/cloud_world_dense'),
             ('/tf', '/tf'),
             ('/tf_static', '/tf_static'),
         ]

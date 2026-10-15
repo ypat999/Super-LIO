@@ -112,6 +112,8 @@ public:
   void pub_cloud_world(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud_body(const BASIC::CloudPtr& pc, double time);
+  void pub_cloud_world_dense(const BASIC::CloudPtr& pc, double time);
+  void pub_cloud_body_dense(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_undistort_only(const BASIC::CloudPtr& pc, double time, const std::string& lidar_frame);
   void pub_cloud2planner(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_pose(const BASIC::CloudPtr& pc, 
@@ -212,6 +214,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_dense_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_dense_;
 
   /// odom 重置计数（单调，绝不清零）及其发布通道
   std::atomic<uint32_t> odom_reset_counter_{0};

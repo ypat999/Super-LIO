@@ -119,6 +119,10 @@ void SuperLIO::init(){
   output_running_ = true;
   output_thread_ = std::thread(&SuperLIO::OutputThread, this);
 
+  // 全量点异步去畸变/变换线程（dense 话题 + pcd），总是启动
+  dense_running_ = true;
+  dense_thread_ = std::thread(&SuperLIO::DenseThread, this);
+
   if(g_save_map){
     namespace fs = std::filesystem;
     
@@ -218,6 +222,12 @@ SuperLIO::~SuperLIO(){
   save_cv_.notify_all();
   if(save_thread_.joinable()){
     save_thread_.join();
+  }
+
+  dense_running_ = false;
+  dense_cv_.notify_all();
+  if(dense_thread_.joinable()){
+    dense_thread_.join();
   }
 }
 
@@ -379,7 +389,6 @@ void SuperLIO::stateProcess(){
     }
     PublishBodyCloud();   // immediate body publish (low latency)
     Output();              // world cloud via queue
-    caceData();
     caceSCPGOData();
     return;
   }
@@ -403,7 +412,7 @@ void SuperLIO::stateProcess(){
     UpdateMap();
   }
   Output();                // world cloud via queue (high precision)
-  caceData();
+  enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
   caceSCPGOData();
 }
 
@@ -616,6 +625,115 @@ void SuperLIO::caceSCPGOData(){
                         << Rm(1,0) << " " << Rm(1,1) << " " << Rm(1,2) << " " << tm(1) << " "
                         << Rm(2,0) << " " << Rm(2,1) << " " << Rm(2,2) << " " << tm(2) << "\n";
       sc_pgo_odom_file_.flush();
+    }
+  }
+}
+
+
+/// 把当前帧的全量点 + IMU 轨迹 + 配准位姿投递到异步 dense 队列（配准后调用）。
+/// 全量去畸变/变换在 DenseThread 错峰执行，不阻塞实时配准链路。
+void SuperLIO::enqueueDense(){
+  if(!data_wrapper_) return;
+  if(!measures_.lidar.pc_full || measures_.lidar.pc_full->empty()) return;
+  if(propagate_states_.size() < 2) return;   // 无 IMU 区间，去畸变无意义
+
+  DenseData data;
+  data.pc_full = measures_.lidar.pc_full;    // shared_ptr 共享，避免 2 万点深拷贝
+  data.propagate_states = propagate_states_; // 值拷贝（主线程下一帧会覆盖）
+  data.imu_gyr.reserve(measures_.imu.size());
+  for (auto &imu : measures_.imu) {
+    data.imu_gyr.emplace_back(imu.gyr);
+  }
+  data.start_time = measures_.lidar.start_time;
+  data.timestamp = kf_->GetNavState().timestamp;
+  data.T_pred = T_predicted_end_;
+  data.T_corrected = kf_->GetSE3();          // 配准后位姿
+
+  {
+    std::lock_guard<std::mutex> lock(dense_mutex_);
+    if(dense_queue_.size() > 3) dense_queue_.pop();   // 有界，丢最旧
+    dense_queue_.push(std::move(data));
+  }
+  dense_cv_.notify_one();
+}
+
+
+/// 异步全量点处理线程：去畸变 -> delta 修正 -> 发布 body_dense/world_dense -> pcd 累积。
+void SuperLIO::DenseThread(){
+  int scan_wait_num = 0;
+  bool rm_PCD_dir = false;
+  while(dense_running_){
+    DenseData data;
+    {
+      std::unique_lock<std::mutex> lock(dense_mutex_);
+      dense_cv_.wait(lock, [this]{ return !dense_queue_.empty() || !dense_running_; });
+      if(!dense_running_ && dense_queue_.empty()) break;
+      if(dense_queue_.empty()) continue;
+      data = std::move(dense_queue_.front());
+      dense_queue_.pop();
+    }
+
+    if(!data.pc_full || data.pc_full->empty()) continue;
+
+    // 1. 全量去畸变（用预测位姿，异步执行，不阻塞实时链路）
+    CloudPtr dense_body(new PointCloudType());
+    undistortCloud(data.pc_full, data.propagate_states, data.imu_gyr,
+                   data.start_time, data.T_pred, dense_body);
+
+    // 2. delta correction：T_corrected vs T_pred 的修正应用到全量 body 点
+    const M3 dR = data.T_corrected.R_.transpose() * data.T_pred.R_;
+    const V3 dp = data.T_corrected.R_.transpose() * (data.T_pred.t_ - data.T_corrected.t_);
+    for (auto& pt : dense_body->points) {
+      const float px = pt.x, py = pt.y, pz = pt.z;
+      pt.x = dR(0,0)*px + dR(0,1)*py + dR(0,2)*pz + dp[0];
+      pt.y = dR(1,0)*px + dR(1,1)*py + dR(1,2)*pz + dp[1];
+      pt.z = dR(2,0)*px + dR(2,1)*py + dR(2,2)*pz + dp[2];
+    }
+
+    // 3. 发布 cloud_body_dense（机体系全量）
+    data_wrapper_->pub_cloud_body_dense(dense_body, data.timestamp);
+
+    // 4. 变换到 world -> cloud_world_dense（全量）
+    CloudPtr dense_world(new PointCloudType());
+    transformPointCloudRt(*dense_body, *dense_world, data.T_corrected.R_, data.T_corrected.t_);
+    data_wrapper_->pub_cloud_world_dense(dense_world, data.timestamp);
+
+    // 5. pcd 累积 + 保存（world 系全量，替代原 caceData 的抽稀 pcd 来源）
+    if(g_save_map && !dense_world->empty()){
+      if(!rm_PCD_dir){
+        rm_PCD_dir = true;
+        std::string save_map_dir = g_save_map_dir;
+        if(!save_map_dir.empty() && save_map_dir[0] != '/') {
+          save_map_dir = g_root_dir + save_map_dir;
+        }
+        std::string cmd = "rm -rf " + save_map_dir + "/PCD";
+        [[maybe_unused]] int res = system(cmd.c_str());
+        cmd = "mkdir -p " + save_map_dir + "/PCD";
+        res = system(cmd.c_str());
+      }
+      *point_map_ += *dense_world;
+      scan_wait_num++;
+      if(g_pcd_save_interval < 0){
+        scan_wait_num = 0;
+      } else if(point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval){
+        pcd_index_++;
+        SaveData save_data;
+        save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
+        save_data.pcd_index = pcd_index_;
+        save_data.timestamp = data.timestamp;
+        save_data.position = data.T_corrected.t_;
+        save_data.orientation = BASIC::Quat(data.T_corrected.R_);
+        {
+          std::lock_guard<std::mutex> lock(save_mutex_);
+          if(save_queue_.size() > 3){
+            save_queue_.pop();
+          }
+          save_queue_.push(std::move(save_data));
+        }
+        save_cv_.notify_one();
+        point_map_->clear();
+        scan_wait_num = 0;
+      }
     }
   }
 }
@@ -947,20 +1065,37 @@ void SuperLIO::Propagation_Undistort(){
 
   const SE3 T_end = kf_->GetSE3();
   T_predicted_end_ = T_end;  // save for delta correction after ESKF update
+  // 构建每个区间的原始陀螺仪序列（去畸变 omega_body 用，异步 dense 也复用）
+  std::vector<V3> imu_gyr;
+  imu_gyr.reserve(measures_.imu.size());
+  for (auto &imu : measures_.imu) {
+    imu_gyr.emplace_back(imu.gyr);
+  }
+
+  undistortCloud(measures_.lidar.pc, propagate_states_, imu_gyr,
+                 measures_.lidar.start_time, T_end, scan_undistort_full_);
+}
+
+/// 通用去畸变：对 raw_pc 按 IMU 传播轨迹(propagate_states)去畸变到 out_pc。
+/// 实时抽稀点与异步全量点共用此函数；imu_gyr 为每个区间原始陀螺仪(长度=区间数)。
+void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
+                              const std::vector<DynamicState>& propagate_states,
+                              const std::vector<V3>& imu_gyr,
+                              double start_time,
+                              const SE3& T_end,
+                              CloudPtr& out_pc){
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
-  const double start_time = measures_.lidar.start_time;
-  auto& raw_pc = measures_.lidar.pc;
 
   std::size_t ptsize = raw_pc->points.size();
-  scan_undistort_full_->resize(ptsize);
+  out_pc->resize(ptsize);
 
-  const size_t M = propagate_states_.size();
+  const size_t M = propagate_states.size();
   if (M < 2) {
     // No IMU intervals to interpolate between; copy raw points directly
     for (size_t i = 0; i < ptsize; ++i) {
       const auto& pt = raw_pc->points[i];
-      auto& pt_full = scan_undistort_full_->points[i];
+      auto& pt_full = out_pc->points[i];
       pt_full.x = pt.x;
       pt_full.y = pt.y;
       pt_full.z = pt.z;
@@ -970,22 +1105,6 @@ void SuperLIO::Propagation_Undistort(){
   }
 
   // Pre-compute per-interval constants to avoid redundant work.
-  // For each IMU interval [j, j+1], precompute:
-  //   R_end_inv_R_h = R_inv * R_h          (3x3, shared by all points in interval)
-  //   t_base = R_inv * (p_h - T_end_t)     (3x1, shared)
-  //   v_base = R_inv * v_h                  (3x1, shared)
-  //   acc_base = R_inv * acc_t              (3x1, shared)
-  //   omega_body = R_h^T * omega            (3x1, body-frame angular velocity)
-  //   dt_inv = 1.0 / dt                     (scalar, shared)
-  // Then for each point with parameter tau:
-  //   R_i ≈ R_h * Exp(omega * tau) ≈ R_h * (I + hat(omega * tau))  [small angle]
-  //   R_inv * R_i ≈ R_end_inv_R_h * (I + hat(omega_body * tau))
-  //   p_i = p_h + v_h * tau + 0.5 * acc_t * tau^2
-  //   result = R_inv * (R_i * raw + p_i - T_end_t)
-  //          = R_end_inv_R_h * raw + R_end_inv_R_h * hat(omega_body * tau) * raw
-  //            + t_base + v_base * tau + 0.5 * acc_base * tau^2
-  // The hat(omega_body*tau)*raw = omega_body*tau × raw, which is cheap.
-
   struct IntervalCache {
     M3 R_end_inv_R_h;    // R_inv * R_h
     V3 t_base;           // R_inv * (p_h - T_end_t)
@@ -999,8 +1118,8 @@ void SuperLIO::Propagation_Undistort(){
 
   std::vector<IntervalCache> interval_cache(M - 1);
   for (size_t j = 0; j + 1 < M; ++j) {
-    const auto& s0 = propagate_states_[j];
-    const auto& s1 = propagate_states_[j + 1];
+    const auto& s0 = propagate_states[j];
+    const auto& s1 = propagate_states[j + 1];
     auto& ic = interval_cache[j];
     ic.R_end_inv_R_h = R_inv * s0.R;
     ic.t_base = R_inv * (s0.p - T_end_t);
@@ -1009,15 +1128,14 @@ void SuperLIO::Propagation_Undistort(){
     // Use raw gyro from the IMU that drove this interval, not state-derived w.
     // State-derived w lags by one Predict call and causes skew during
     // direction reversals (state.w still reflects old rotation direction).
-    ic.omega_body = measures_.imu[j].gyr;
+    ic.omega_body = (j < imu_gyr.size()) ? imu_gyr[j] : s0.w;
     ic.dt_inv = 1.0 / (s1.time - s0.time);
     ic.time_start = s0.time;
     ic.time_end = s1.time;
   }
 
   // 预提取 offset_time 到连续数组，改善 cache 局部性
-  // （AOS 布局下 offset_time 与 x/y/z 交错，遍历时 cache 命中率差）
-  const double back_time = propagate_states_.back().time;
+  const double back_time = propagate_states.back().time;
   std::vector<double> offset_times(ptsize);
   for (size_t i = 0; i < ptsize; ++i) {
     offset_times[i] = start_time + raw_pc->points[i].offset_time;
@@ -1026,7 +1144,7 @@ void SuperLIO::Propagation_Undistort(){
   size_t j = 0; // cached interval index
 
   for (size_t idx = 0; idx < ptsize; ++idx) {
-    auto& pt_full = scan_undistort_full_->points[idx];
+    auto& pt_full = out_pc->points[idx];
     const auto& pt = raw_pc->points[idx];
     pt_full.intensity = pt.intensity;
 
@@ -1044,32 +1162,24 @@ void SuperLIO::Propagation_Undistort(){
     const auto& ic = interval_cache[j];
     const double tau = query_time - ic.time_start;
 
-    // 2nd-order Exp(omega*tau) approximation:
-    //   Exp(phi) = I + hat(phi) + 0.5*hat(phi)^2 + O(phi^3)
-    //   1st-order (I+hat) drops the cos term → over-rotates points during fast turns.
-    //   2nd-order residual < 0.01° at 300°/s — imperceptible even at long range.
+    // 2nd-order Exp(omega*tau) approximation.
     const float px = pt.x, py = pt.y, pz = pt.z;
     const float ox = ic.omega_body[0], oy = ic.omega_body[1], oz = ic.omega_body[2];
     const float tau_f = tau;
     const float htau2 = 0.5f * tau_f * tau_f;
-    // c = omega × raw
     const float cx = oy*pz - oz*py;
     const float cy = oz*px - ox*pz;
     const float cz = ox*py - oy*px;
-    // c2 = omega × (omega × raw)
     const float c2x = oy*cz - oz*cy;
     const float c2y = oz*cx - ox*cz;
     const float c2z = ox*cy - oy*cx;
-    // m = raw + c*tau + 0.5*c2*tau²
     const float mx = px + cx*tau_f + c2x*htau2;
     const float my = py + cy*tau_f + c2y*htau2;
     const float mz = pz + cz*tau_f + c2z*htau2;
-    // R_end_inv_R_h * m  （单次 3x3×3x1）
     const M3& R = ic.R_end_inv_R_h;
     const float rx = R(0,0)*mx + R(0,1)*my + R(0,2)*mz;
     const float ry = R(1,0)*mx + R(1,1)*my + R(1,2)*mz;
     const float rz = R(2,0)*mx + R(2,1)*my + R(2,2)*mz;
-    // + t_base + v_base*tau + acc_base*tau²
     const float tau2_f = tau_f * tau_f;
     pt_full.x = rx + ic.t_base[0] + ic.v_base[0]*tau_f + ic.acc_base[0]*tau2_f;
     pt_full.y = ry + ic.t_base[1] + ic.v_base[1]*tau_f + ic.acc_base[1]*tau2_f;
@@ -1364,11 +1474,7 @@ void SuperLIO::Output(){
       if(count % g_pub_step == 0){
         count = 0;
         output_data.world_pc.reset(new PointCloudType());
-        if(g_visual_dense){
-          *output_data.world_pc = *scan_undistort_full_;
-        }else{
-          *output_data.world_pc = *ds_undistort_;
-        }
+        *output_data.world_pc = *scan_undistort_full_;
         output_data.has_world_pc = true;
       }
     }
@@ -1380,11 +1486,7 @@ void SuperLIO::Output(){
       if(count % g_pub_step == 0){
         count = 0;
         output_data.world_pc.reset(new PointCloudType());
-        if(g_visual_dense){
-          *output_data.world_pc = *scan_undistort_full_;
-        }else{
-          *output_data.world_pc = *ds_undistort_;
-        }
+        *output_data.world_pc = *scan_undistort_full_;
         output_data.has_world_pc = true;
       }
     }
@@ -1398,14 +1500,8 @@ void SuperLIO::Output(){
       if(count % g_pub_step == 0){
         count = 0;
         output_data.world_pc.reset(new PointCloudType());
-        if(g_visual_dense){
-          transformPointCloudRt(*scan_undistort_full_, *output_data.world_pc, Rf, tf);
-        }else{
-          transformPointCloudRt(*ds_undistort_, *output_data.world_pc, Rf, tf);
-        }
+        transformPointCloudRt(*scan_undistort_full_, *output_data.world_pc, Rf, tf);
         output_data.has_world_pc = true;
-        // Cache transformed cloud for caceData reuse
-        last_transformed_world_pc_ = output_data.world_pc;
       }
     }
   }
