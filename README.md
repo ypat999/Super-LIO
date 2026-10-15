@@ -27,6 +27,10 @@
 >     供 PCD 落盘（`/map_save`），且只在 `lio.map.save_map: true` 时才执行该变换
 >   - 下游已同步订阅 `cloud_body`：无人机 CP 避障、`lidar_localization_ros2`、
 >     机器狗仓 `nav2_dog_slam` / `lidar_localization` launch
+>   - 线程隔离：主流程（点云订阅→ESKF→`Output()` 入队→odom 发布）与 dense/存图线程解耦，
+>     发布点云断网只阻塞 `OutputThread`/`DenseThread`，不阻塞主流程；`/map_save` 前
+>     `pauseProcessing()` 会等待 dense 队列排空且当前帧处理完毕（静默屏障），`point_map_`
+>     另由 `map_mutex_` 保护，确保后台不再写地图点后再存图
 > - `localization.yaml` / SZD 降落参数见各相关包 README。
 
 

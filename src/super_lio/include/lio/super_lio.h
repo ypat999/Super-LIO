@@ -127,6 +127,7 @@ protected:
   BASIC::CloudPtr scan_undistort_full_;
   BASIC::CloudPtr ds_undistort_;
   BASIC::CloudPtr point_map_, world_pc_, ds_world_;
+  std::mutex map_mutex_;  // 保护 point_map_ / pcd_index_（DenseThread 与 saveMap 并发访问）
   int frame_num_ = 0;
   BASIC::SE3 sys_init_pose_;
   BASIC::SE3 last_pose_;
@@ -160,6 +161,8 @@ protected:
   std::condition_variable dense_cv_;
   std::queue<DenseData> dense_queue_;
   std::atomic<bool> dense_running_{false};
+  bool dense_paused_ = false;  // 暂停期间 DenseThread 不再消费队列（存图前静默屏障）
+  bool dense_busy_ = false;    // DenseThread 正在处理一帧（dense_mutex_ 保护）
 
   // SC-PGO offline output
   int sc_pgo_index_ = 0;

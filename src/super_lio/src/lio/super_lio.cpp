@@ -658,7 +658,7 @@ void SuperLIO::enqueueDense(){
 }
 
 
-/// 异步全量点处理线程：去畸变 -> delta 修正 -> 发布 body_dense/world_dense -> pcd 累积。
+/// 异步全量点处理线程：去畸变 -> delta 修正 -> 发布 body_dense -> world 变换仅供 pcd 累积。
 void SuperLIO::DenseThread(){
   int scan_wait_num = 0;
   bool rm_PCD_dir = false;
@@ -666,14 +666,24 @@ void SuperLIO::DenseThread(){
     DenseData data;
     {
       std::unique_lock<std::mutex> lock(dense_mutex_);
-      dense_cv_.wait(lock, [this]{ return !dense_queue_.empty() || !dense_running_; });
-      if(!dense_running_ && dense_queue_.empty()) break;
-      if(dense_queue_.empty()) continue;
+      dense_cv_.wait(lock, [this]{
+        return (!dense_queue_.empty() && !dense_paused_) || !dense_running_;
+      });
+      if(!dense_running_) break;                  // 退出：无论队列是否残留
+      if(dense_queue_.empty() || dense_paused_) continue;
       data = std::move(dense_queue_.front());
       dense_queue_.pop();
+      dense_busy_ = true;                         // 帧处理中（供存图前静默屏障判定）
     }
 
-    if(!data.pc_full || data.pc_full->empty()) continue;
+    if(!data.pc_full || data.pc_full->empty()){
+      {
+        std::lock_guard<std::mutex> lock(dense_mutex_);
+        dense_busy_ = false;
+      }
+      dense_cv_.notify_all();
+      continue;
+    }
 
     // 1. 全量去畸变（用预测位姿，异步执行，不阻塞实时链路）
     CloudPtr dense_body(new PointCloudType());
@@ -712,18 +722,28 @@ void SuperLIO::DenseThread(){
         cmd = "mkdir -p " + save_map_dir + "/PCD";
         res = system(cmd.c_str());
       }
-      *point_map_ += *dense_world;
-      scan_wait_num++;
-      if(g_pcd_save_interval < 0){
-        scan_wait_num = 0;
-      } else if(point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval){
-        pcd_index_++;
-        SaveData save_data;
-        save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
-        save_data.pcd_index = pcd_index_;
-        save_data.timestamp = data.timestamp;
-        save_data.position = data.T_corrected.t_;
-        save_data.orientation = BASIC::Quat(data.T_corrected.R_);
+      // point_map_ / pcd_index_ 与 saveMap() 并发访问，统一由 map_mutex_ 保护
+      SaveData save_data;
+      bool do_save = false;
+      {
+        std::lock_guard<std::mutex> lock(map_mutex_);
+        *point_map_ += *dense_world;
+        scan_wait_num++;
+        if(g_pcd_save_interval < 0){
+          scan_wait_num = 0;
+        } else if(point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval){
+          pcd_index_++;
+          save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
+          save_data.pcd_index = pcd_index_;
+          save_data.timestamp = data.timestamp;
+          save_data.position = data.T_corrected.t_;
+          save_data.orientation = BASIC::Quat(data.T_corrected.R_);
+          point_map_->clear();
+          scan_wait_num = 0;
+          do_save = true;
+        }
+      }
+      if(do_save){
         {
           std::lock_guard<std::mutex> lock(save_mutex_);
           if(save_queue_.size() > 3){
@@ -732,10 +752,15 @@ void SuperLIO::DenseThread(){
           save_queue_.push(std::move(save_data));
         }
         save_cv_.notify_one();
-        point_map_->clear();
-        scan_wait_num = 0;
       }
     }
+
+    // 本帧处理完毕：清除 busy 并唤醒可能在等待静默的 pauseProcessing()
+    {
+      std::lock_guard<std::mutex> lock(dense_mutex_);
+      dense_busy_ = false;
+    }
+    dense_cv_.notify_all();
   }
 }
 
@@ -911,24 +936,30 @@ void SuperLIO::saveMap(){
   if(!g_save_map) return;
   if(g_pcd_save_interval > 0){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
-    if (point_map_->size() > 0) {
-      pcd_index_++;
-      
-      auto state = kf_->GetNavState();
-      SaveData save_data;
-      save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
-      save_data.pcd_index = pcd_index_;
-      save_data.timestamp = state.timestamp;
-      save_data.position = state.p.cast<float>();
-      save_data.orientation = BASIC::Quat(state.R.R_.cast<float>());
-      
+    SaveData save_data;
+    bool do_save = false;
+    {
+      std::lock_guard<std::mutex> lock(map_mutex_);
+      if (point_map_->size() > 0) {
+        pcd_index_++;
+        
+        auto state = kf_->GetNavState();
+        save_data.cloud_to_save.reset(new PointCloudType(*point_map_));
+        save_data.pcd_index = pcd_index_;
+        save_data.timestamp = state.timestamp;
+        save_data.position = state.p.cast<float>();
+        save_data.orientation = BASIC::Quat(state.R.R_.cast<float>());
+        
+        point_map_->clear();
+        do_save = true;
+      }
+    }
+    if(do_save){
       {
         std::lock_guard<std::mutex> lock(save_mutex_);
         save_queue_.push(std::move(save_data));
       }
       save_cv_.notify_one();
-      
-      point_map_->clear();
     }
     
     {
@@ -1015,26 +1046,29 @@ void SuperLIO::saveMap(){
   }
 
   LOG(INFO) << YELLOW << " ---> Saving map..... " << RESET;
-  if(!point_map_->empty()){
-    std::string save_map_dir = g_save_map_dir;
-    if (!save_map_dir.empty() && save_map_dir[0] != '/') {
-      save_map_dir = g_root_dir + save_map_dir;
+  {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    if(!point_map_->empty()){
+      std::string save_map_dir = g_save_map_dir;
+      if (!save_map_dir.empty() && save_map_dir[0] != '/') {
+        save_map_dir = g_root_dir + save_map_dir;
+      }
+      std::string map_name = save_map_dir + "/" + g_map_name;
+      LOG(INFO) << YELLOW << " ---> Save map to: " << map_name << RESET;
+      pcl::VoxelGrid<PointType> voxel_fliter;
+      PointCloudType latst_map;
+      voxel_fliter.setInputCloud(point_map_);
+      voxel_fliter.setLeafSize(g_map_ds_size, g_map_ds_size, g_map_ds_size);
+      voxel_fliter.filter(latst_map);
+      if(latst_map.size() > 0){
+        latst_map.width = latst_map.size();
+        latst_map.height = 1;
+        latst_map.is_dense = false;
+      }
+      pcl::io::savePCDFileBinary(map_name, latst_map);
+      LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
+      LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
     }
-    std::string map_name = save_map_dir + "/" + g_map_name;
-    LOG(INFO) << YELLOW << " ---> Save map to: " << map_name << RESET;
-    pcl::VoxelGrid<PointType> voxel_fliter;
-    PointCloudType latst_map;
-    voxel_fliter.setInputCloud(point_map_);
-    voxel_fliter.setLeafSize(g_map_ds_size, g_map_ds_size, g_map_ds_size);
-    voxel_fliter.filter(latst_map);
-    if(latst_map.size() > 0){
-      latst_map.width = latst_map.size();
-      latst_map.height = 1;
-      latst_map.is_dense = false;
-    }
-    pcl::io::savePCDFileBinary(map_name, latst_map);
-    LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
-    LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
   }
   
   // Close SC-PGO output file
@@ -1588,11 +1622,31 @@ void SuperLIO::periodicTimeReport(){
 
 void SuperLIO::pauseProcessing(){
   paused_.store(true);
+
+  // 停住 dense 链路（静默屏障）：等待队列排空且当前帧处理完毕，此后不再有后台线程写
+  // point_map_，使随后的 saveMap() 可安全读/清地图点。等待期间不置 dense_paused_，
+  // 以便 DenseThread 继续消费直至排空；主流程已由 paused_ 停住，不会再有新帧入队。
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  {
+    std::unique_lock<std::mutex> lock(dense_mutex_);
+    while((!dense_queue_.empty() || dense_busy_) &&
+          std::chrono::steady_clock::now() < deadline){
+      dense_cv_.wait_for(lock, std::chrono::milliseconds(5));
+    }
+    dense_paused_ = true;   // 排空后置停：暂停期间 DenseThread 不再消费
+  }
+  dense_cv_.notify_all();
+
   LOG(INFO) << YELLOW << " ---> [SuperLIO]: Processing paused" << RESET;
 }
 
 
 void SuperLIO::resumeProcessing(){
+  {
+    std::lock_guard<std::mutex> lock(dense_mutex_);
+    dense_paused_ = false;
+  }
+  dense_cv_.notify_all();
   paused_.store(false);
   LOG(INFO) << GREEN << " ---> [SuperLIO]: Processing resumed" << RESET;
 }
