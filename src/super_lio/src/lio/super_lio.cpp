@@ -1097,20 +1097,21 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
     offset_times[i] = start_time + raw_pc->points[i].offset_time;
   }
 
-  size_t j = 0; // cached interval index
+  size_t j = 0;             // cached interval index
+  size_t write_idx = 0;     // 压缩写入位置：尾部不可去畸变的点被剔除
 
   for (size_t idx = 0; idx < ptsize; ++idx) {
-    auto& pt_full = out_pc->points[idx];
     const auto& pt = raw_pc->points[idx];
-    pt_full.intensity = pt.intensity;
 
     double query_time = offset_times[idx];
     if (query_time > back_time) {
-      pt_full.x = pt.x;
-      pt_full.y = pt.y;
-      pt_full.z = pt.z;
+      // 超出 IMU 覆盖范围，无法去畸变：剔除而不是原样透传，
+      // 否则这些点会以未经补偿的坐标混入观测与地图。
       continue;
     }
+
+    auto& pt_full = out_pc->points[write_idx++];
+    pt_full.intensity = pt.intensity;
 
     // Advance j while next interval starts before query_time
     while (j + 1 < M - 1 && interval_cache[j + 1].time_start < query_time) ++j;
@@ -1141,6 +1142,7 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
     pt_full.y = ry + ic.t_base[1] + ic.v_base[1]*tau_f + ic.acc_base[1]*tau2_f;
     pt_full.z = rz + ic.t_base[2] + ic.v_base[2]*tau_f + ic.acc_base[2]*tau2_f;
   }
+  out_pc->resize(write_idx);
 }
 
 
