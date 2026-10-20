@@ -1,0 +1,247 @@
+================================================================================
+Super-LIO 狭窄空间漂移诊断结论与实测方案
+适用版本：当前工作区 lio/Super-LIO（scalar = float 版本）
+用途：换设备实测时的自包含清单（结论 + 埋点位置 + 判据 + 验证步骤）
+================================================================================
+
+一、现象
+--------------------------------------------------------------------------------
+1. 楼道/楼梯间等狭窄空间出现漂移，分两种：
+   (a) 微量持续漂移，方向具有持续性；
+   (b) 偶发跳变，不可预测。
+2. 中大型空间可稳定匹配已有点云，问题不显著。
+3. 12 层楼梯点云（按 y 坐标着色）呈现：
+   - 本应笔直的井道壁变成平滑弧线（横向偏移随高度增长）；
+   - 上下两组平台板之间存在绕竖轴的相对旋转（"扭曲"，非单纯倾斜）；
+   - 误差随高度单调累积，无来回震荡。
+
+   判读：属于 (a) 累积型漂移，不属于 (b) 跳变型。
+   若是跳变主导，图上应出现单层突然错位、墙面分叉/重影，而不是连续弧线。
+
+二、结论分级
+--------------------------------------------------------------------------------
+[真隐患 1] effect_mask_/effect_knn_mask_ 固定 20000，但没有任何钳制
+  位置：src/super_lio/include/lio/super_lio.h:136-137
+        src/super_lio/src/lio/super_lio.cpp:1249  Effect Observe 里 effect_knn_num_ = ptsize
+  性质：上游零分配设计的性能妥协 + 真实内存越界隐患。
+  依据：points_world_v3_.reserve(21000)（super_lio.cpp:110）比数组 20000 还大，
+        说明 20000 不是严格上界；abcd_vec_/effect_knn_idxs_ 也只 resize 到 20000。
+  后果：ptsize > 20000 时写 effect_mask_[idx] 会踩穿到 effect_knn_mask_，
+        再往后是 effect_knn_idxs_ 的 vector 对象（指针/长度），表现为随机跳变或崩溃。
+  触发条件：当前 livox_360_drone.yaml 为 filter_rate=6 + voxel 0.25，
+        楼道点数低，基本不会触发；filter_rate=1 + 开阔场景（体素不降点）才危险。
+  结论：低概率但后果严重，必须加一行钳制。
+
+[真隐患 2] 18x18 信息矩阵在 float 下求逆
+  位置：src/super_lio/src/lio/ESKF.cpp:264   Y_pred = P_pred.inverse()
+        src/super_lio/src/lio/ESKF.cpp:312-313  Qk = Yk.inverse()
+  性质：性能妥协（scalar=float，alias.h:163 的 double 被注释掉），但有真实数值风险。
+  依据：
+    - 逐点热点里作者已改用 double 累加（M6d/V6d），说明知道精度边界在哪；
+    - ESKF.cpp:340 P_ = 0.5*(P_+P_^T) 是对称化补丁，说明已遇到数值不对称问题；
+    - ROSWrapper.cpp:1057-1063 注释明确写了"P_ 是 float 矩阵，三处裸 .inverse()
+      在病态/退化输入下就可能产出 inf 或 NaN"，但当前只在输出端把协方差改成
+      INVALID_VAR，状态本身仍然接受了这次错误修正。
+  量级估算：观测权重 1000、上千点 -> 良态方向 Yk~1e7、Qk~1e-7；
+       退化方向 P 每帧增长约 Q*dt^2*N ~1e-3，10s 后到 ~0.1，Y_deg~10；
+       条件数约 1e7，float eps~1.2e-7，反解相对误差 ~ cond*eps ~ 1，
+       即退化方向上的 Qk 在 float 下基本没有有效位数，且随飞行时间恶化。
+  结论：可以解释"偶发、不可预测的跳变"，是高优先级怀疑对象。
+        修复成本极低（每帧仅 2~4 次 18x18），不建议继续用 float 求逆。
+
+[真隐患 3] 去畸变尾部点原样透传
+  位置：src/super_lio/src/lio/super_lio.cpp:1102-1113
+        query_time > back_time 时直接拷贝原始点，完全不去畸变，且无任何计数。
+  性质：上游遗留的逻辑缺口，不是性能妥协。
+  后果：IMU 覆盖不到扫描尾部时，这部分点带着运动畸变参与配准；
+        转弯越快、IMU 越滞后，占比越高，会伪造出横向/旋转方向的残差。
+  结论：量级通常不大，但必须计数确认，不能默认无害。
+
+[设计边界，不是 bug] 退化方向无约束
+  依据：Observe 中 J.head<3>()=p×n、J.tail<3>()=n，
+        HTVH.block<3,3>(3,3) 本质是 Σ w·n·n^T。
+  楼梯间 = 竖直走廊：井道轴方向约束弱，台阶踏面/踢面掠射，结构高度重复。
+  模型本身是纯 point-to-plane + 增量地图，无 scan-to-scan、无子图、无回环。
+  结论：持续漂移的"发生条件"来自这里，但"漂移方向"来自 IMU 偏置/尺度/外参。
+        埋点只能确认真相，不能解决；要根治需增加约束或回环。
+
+[性能/调参代价，不是隐患]
+  - 5 近邻 + 0.15 平面阈值 + 0.25 体素（OctVoxMap.hpp:307-381）：
+    定长 KNNHeap 无堆分配，换来法向在掠射/双面交界处可倾斜十几度，
+    会给出"有偏的沿轴约束"，是放大慢漂的调参项。
+  - filter_rate=6 + intensity_min=10（livox_360_drone.yaml:21,26-27）：
+    提交记录为 1->3->13->6，注释"实时链路降密换确定性"，且实测 filter_rate=1
+    时 [Lidar->BodyCloud] avg 9.3ms、单核约 40%。属明确的性能取舍，
+    代价是楼道墙面点被削薄，削弱弱方向的约束。
+  - imu_na/ng=0.1（未平方，直接进 Q 对角，ESKF.cpp:93-109）：
+    配置问题，不是性能妥协。它决定"先验 vs 观测"的信任比，
+    退化场景里先验越弱，漂移越快跟随 IMU 误差。
+
+三、本次实测最小改动（都不影响性能优势）
+--------------------------------------------------------------------------------
+改动 1：点数钳制（1 行级别，零开销）
+  在 super_lio.h 增加常量，替换两处 20000，并在 Observe 入口钳制：
+      static constexpr std::size_t kMaxEffectPoints = 20000;
+      // Observe() 开头，size_t ptsize = ds_undistort_->size(); 之后：
+      if (ptsize > kMaxEffectPoints) {
+        static int warn_cnt = 0;
+        if (warn_cnt < 20) {
+          std::cout << "[Observe] ptsize=" << ptsize
+                    << " 超过上限 " << kMaxEffectPoints << std::endl;
+          ++warn_cnt;
+        }
+        ptsize = kMaxEffectPoints;
+      }
+  同时把 super_lio.cpp:110 的 reserve(21000) 统一改成 kMaxEffectPoints。
+
+改动 2：只把两处 18x18 求逆转 double（存储仍用 float）
+  ESKF.cpp:264 改为：
+      M18 Y_pred = P_pred.cast<M18d>().inverse().cast<scalar>();
+  ESKF.cpp:312-313 改为：
+      M18d G_inv_d = G_inv.cast<M18d>();
+      M18d Yk_d = G_inv_d.transpose() * Y_pred.cast<M18d>() * G_inv_d
+                + HTRH.cast<M18d>();
+      Qk = Yk_d.inverse().cast<scalar>();
+  可选：顺手算条件数供 CSV 使用
+      Eigen::SelfAdjointEigenSolver<M18d> es(Yk_d);
+      const double ev_max = es.eigenvalues().maxCoeff();
+      const double ev_min = std::max(1e-12, es.eigenvalues().minCoeff());
+      const double cond_yk = ev_max / ev_min;
+
+改动 3：埋计数器（只在每帧末尾输出一行，不在点循环里打印）
+  三个 continue 的丢弃原因、尾部透传点数、dt 异常次数，全部只做整数累加。
+
+四、埋点清单（按优先级）
+--------------------------------------------------------------------------------
+[L1] 观测构建层（判断几何退化）
+  文件：src/super_lio/src/lio/super_lio.cpp，Observe() 1242-1377
+  - 每帧 ptsize（ds_undistort_->size()），超过 18000 打告警
+  - n_knn_fail：top_K.count < 4 的次数（1278-1282）
+  - n_plane_fail：calc_plane_coeff 返回 false 的次数（1284）
+  - n_res_fail：compute_error 返回 false 的次数（1289）
+  - n_effect：最终有效点数（1315 的 effect_knn_num_）
+  - 残差统计：|error| 的均值/95 分位；超 Huber 阈值的点数
+  - 退化度量（关键）：把最后一次迭代的 HTVH 存成成员，帧后做
+        Eigen::SelfAdjointEigenSolver<M6d> es(HTVH.cast<M6d>());
+    记录：
+        rot   块（0..2）三个特征值
+        trans 块（3..5）三个特征值 λ1>=λ2>=λ3 及 λ3 对应特征向量
+    λ3/λ1 越小、且特征向量与运动方向一致 -> 几何退化成立。
+
+[L2] 滤波器内部（判断数值跳变）
+  文件：src/super_lio/src/lio/ESKF.cpp，UpdateObserve() 251-346
+  - 每次迭代 dx_.lpNorm<Infinity>()（321 之后、325 处）
+  - 实际迭代次数、need_converge_
+  - cond_yk（改动 2 的可选部分）、ev_min
+  - Qk 是否含非有限值
+  - 单帧 |dx_| 超过阈值时打印一次（不要每帧都打）
+  文件：ESKF.cpp Predict() 183-244
+  - dt 异常计数：imu.secs <= last_obs_time_（192-196）、dt>0.2（146-148）
+  - 每帧参与预测的 IMU 个数与时间跨度
+
+[L3] 状态/偏置层（判断是 IMU 偏置还是几何偏置）
+  文件：src/super_lio/src/lio/super_lio.cpp，UpdateMap() 1381-1398 或 Output()
+  - p、v（世界系）、bg、ba、imu_scale_、g_（BASIC::V3）
+  - GetCovDiagPV()、GetCovDiagRot()、NeedConverge()（ESKF.h:106-126）
+  - T_predicted_end_ 与 kf_->GetSE3() 的差：dp、dtheta
+    （即 ApplyDeltaCorrection 1153-1189 实际施加的修正量）
+  - 插入地图的点数（UpdateMap）
+
+[L4] 输入/时序层（楼道专属怀疑点）
+  文件：src/super_lio/src/ros/ROSWrapper.cpp
+  - sync_measure() 1273-1285：每帧 meas.imu.size()、IMU 覆盖时长、雷达跨度
+  - 回调滤波 775-805：滤波前点数、距离剔除数、强度剔除数、抽稀后点数
+    目的：确认 intensity_min=10 + filter_rate=6 在楼道里削掉了多少墙面点
+  - 已有 IMU Lag 告警（1259-1271）保留，统计触发次数
+
+CSV 建议列（每帧一行）：
+  t, frame, ptsize, n_knn_fail, n_plane_fail, n_res_fail, n_effect,
+  htvh_t_eig1, htvh_t_eig2, htvh_t_eig3, eig3_dir_x, eig3_dir_y, eig3_dir_z,
+  dp_x, dp_y, dp_z, dtheta, p_x, p_y, p_z, v_x, v_y, v_z,
+  ba_x, ba_y, ba_z, bg_x, bg_y, bg_z, imu_scale,
+  cov_p_x, cov_p_y, cov_p_z, cov_v_x, cov_v_y, cov_v_z, cov_r,
+  iters, cond_yk, need_conv, n_tail_raw, n_imu, imu_dt_bad
+
+实现注意：
+  1) 不要用 LOG(INFO) 打进点循环（2 万点 x 10~20Hz 会扰动时序，
+     把要观察的漂移本身掩盖掉）；用整数累加 + 帧末一行。
+  2) 开关用参数（如 lio.debug.level：0 关 / 1 帧摘要 / 2 加迭代 / 3 加点统计），
+     默认 0，保证换设备时行为不变。
+  3) CSV 写 g_save_map_dir，与 PCD/scans_*.txt 同一时间基准，便于对齐。
+
+五、实测流程
+--------------------------------------------------------------------------------
+步骤 0：基线
+  - 不改任何参数，跑一趟完整 12 层上下，保存 bag + odom + CSV + PCD。
+  - 记录耗时/CPU（lio.eva.timer: true），确认加埋点后延迟无变化。
+
+步骤 1：读数
+  - cond_yk 是否在飞行若干分钟后持续升高到 1e5 以上；
+  - htvh_t_eig3/eig1 是否在楼道段显著变小（<0.05）；
+  - n_effect/ptsize 是否骤降；
+  - n_tail_raw 占比；
+  - imu_dt_bad 是否为 0；
+  - ptsize 峰值（判断改动 1 是否必要）。
+
+步骤 2：对照实验（每次只改一个变量）
+  A. filter_rate 6 -> 1（体素 0.25 不变）：看漂移是否明显减小。
+  B. imu_na/ng 0.1 -> 0.01（或按传感器手册噪声密度换算）：看是否更依赖雷达。
+  C. voxel_fliter_size 0.25 -> 0.15：看墙面点密度对沿轴约束的影响。
+  D. 同一楼梯上下各跑一遍：误差在机体系是否可重复。
+
+六、判据决策树
+--------------------------------------------------------------------------------
+Q1 跳变是否与 cond_yk 峰值 / 非有限值同帧出现？
+   是 -> 数值问题（真隐患 2），先上改动 2 再复测。
+   否 -> 转 Q2。
+
+Q2 跳变是否与 ptsize 峰值（>20000）同帧出现？
+   是 -> 越界（真隐患 1），先上改动 1。
+   否 -> 转 Q3。
+
+Q3 楼道段 htvh_t_eig3/eig1 是否 < 0.05，且 λ3 特征向量≈运动方向？
+   是 -> 几何退化（设计边界），漂移量由 IMU 偏置决定，需 Q4 区分来源。
+   否 -> 说明几何可观测，漂移来自 IMU/外参/尺度，直接看 Q4。
+
+Q4 把逐帧修正量 dp 分别投影到世界系和机体系：
+   机体系方向基本恒定、世界系跟着航向转 -> 机体系常值加速度偏置
+        （初始重力对齐残差 / imu_scale / ba / 外参）
+   世界系方向基本恒定 -> 观测侧偏置（掠射角法向 / 平面拟合阈值）
+   两者都不恒定且随时间单调增 -> 退化方向无约束 + 零偏积分，
+        调参解决不了，需加 scan-to-scan / 子图 / 回环。
+
+Q5 逐层相对位姿误差随"转角"线性增长还是随"高度"线性增长？
+   随转角 -> bg（偏航零偏）
+   随高度 -> ba / imu_scale（比力尺度）
+   （数据直接来自 PCD/scans_*.txt 的位姿，不需要新埋点）
+
+七、离线验证（用已有落盘数据）
+--------------------------------------------------------------------------------
+1. 每层平台处取一个关键位姿，计算相邻层的相对位姿 ΔT_k。
+2. 分解为 Δyaw_k、以及机体系下的 Δp_k。
+3. 画 Δyaw_k - k、Δp_k - k：
+   - Δyaw_k 有常值偏置 -> bg；
+   - Δp_k 在机体系有常值偏置 -> ba / tilt / imu_scale；
+   - 两者随 k 增大而发散 -> 退化方向无约束。
+4. 与 CSV 中同时间段的 ba/bg/imu_scale/g_ 曲线叠加确认。
+
+八、不要动的地方（保住性能优势）
+--------------------------------------------------------------------------------
+- scalar=float 的整体存储：保持不动，只把两处求逆转 double。
+- 5 近邻 KNNHeap、OctVox 8 子体素 + 均值压缩（20 点上限 / 0.1m 门限）。
+- effect_mask_ 的定长数组设计：保留，只加钳制。
+- need_converge 时跳过 KNN 重搜索（迭代收敛策略）。
+- DenseThread 异步全量点链路。
+以上都是性能冗余的来源，改动收益低、风险高。
+
+九、风险与注意
+--------------------------------------------------------------------------------
+1. 改动 2 只影响 Qk/Y_pred 的精度，不改变滤波结构；若 cond_yk 本来就很低，
+   则不会带来可见变化，属于"去除隐患"而非"修复现象"。
+2. 改动 1 只钳制 Observe 内部循环；ApplyDeltaCorrection 与 UpdateMap 仍使用
+   完整点云长度，二者不涉及那三个定长数组，逻辑上无冲突。
+3. 加埋点后必须重启节点再飞；旧二进制与新配置混跑会误导结论。
+4. 楼梯间飞行本身对飞控有风险，建议先在地面用 bag 回放验证埋点输出正常。
+5. 若最终确认是"退化方向 + 零偏积分"，优先考虑工程手段（起点/关键帧约束、
+   楼层高度先验、回环或 SC-PGO 后处理），而不是继续压 filter_rate 或调观测权重。
+================================================================================
