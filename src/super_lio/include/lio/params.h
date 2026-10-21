@@ -147,6 +147,24 @@ namespace LI2Sup{
   /// 推荐值: 0.003 (30m处阈值增加0.09m)
   extern double g_huber_delta_scale;
 
+  /// ===== 实验埋点 =====
+  /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
+  extern int g_debug_level;
+
+  /// 法向质量加权（实验 1）：按平面拟合残差 max|dist| 降权
+  extern bool   g_normal_weight_en;
+  extern double g_normal_sigma;
+
+  /// 地图端代表点 / 门控（实验 2/5）
+  extern int    g_map_rep_mode;      // 0=增量均值(论文), 1=离子体素中心最近的真实点
+  extern bool   g_map_clamp_mu;      // 均值更新后夹回子体素包围盒
+  extern int    g_map_max_points;    // 每个子体素最多融合点数
+  extern double g_map_merge_dist;    // 与 μ 的合并距离门限（m）
+
+  /// HKNN 分组搜索显式化
+  extern int    g_hknn_max_group;    // -1=全部 6 组；1..6=只搜前 N 组（有效半径递减）
+  extern double g_hknn_order_scale;  // orders_min_dis2 乘子（随 vox_res 缩放用）
+
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
   extern int  g_dynamic_removal_method;     // 0: Temporal, 1: Raycast

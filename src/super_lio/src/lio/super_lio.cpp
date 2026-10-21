@@ -8,6 +8,8 @@
 #include <sstream>
 #include <algorithm>
 
+#include <Eigen/Eigenvalues>
+
 
 using namespace BASIC;
 
@@ -44,7 +46,9 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
 namespace LI2Sup{
 
 /// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
-inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
+/// 若给出 max_abs_dist，则输出参与拟合点中的最大 |dist|（作为平面质量指标）
+inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd,
+                             double* max_abs_dist = nullptr)
 {
   Eigen::Vector3d normvec;
   if (N == 5) {
@@ -79,6 +83,7 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
+    if (max_abs_dist) *max_abs_dist = std::max(*max_abs_dist, std::abs(dist));
     if (std::abs(dist) > g_plane_fit_threshold) return false;
   }
   return true;
@@ -108,8 +113,8 @@ void SuperLIO::init(){
   }
   
   points_world_v3_.reserve(21000);
-  abcd_vec_.resize(20000);
-  effect_knn_idxs_.resize(20000);
+  abcd_vec_.resize(kMaxEffectPoints);
+  effect_knn_idxs_.resize(kMaxEffectPoints);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
   state_fn_ = &SuperLIO::stateWaitKFInit;
@@ -1243,10 +1248,23 @@ void SuperLIO::DownSampleOnly(){
 /// 迭代更新状态；首次迭代直接顺序访问，后续迭代使用紧凑索引
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
-  
+
+  // P0-1：effect_mask_ / abcd_vec_ 等为定长数组，超限会越界；宁少不越界
+  if (ptsize > kMaxEffectPoints) {
+    LOG(WARNING) << "[Observe] ptsize " << ptsize << " exceeds " << kMaxEffectPoints
+                 << ", truncated (tune lio.sensor.filter_rate / enable_downsample)";
+    ptsize = kMaxEffectPoints;
+  }
+
+  const bool debug = g_debug_level > 0;
+  kf_->SetDebug(debug);
+
   static std::vector<float> _lengths;
+  static std::vector<float> _w_quality;
   points_body_v3_.resize(ptsize);
   _lengths.resize(ptsize);
+  _w_quality.resize(ptsize, 1.0f);
+  if (debug) fit_res_vec_.clear();
 
   effect_knn_num_ = ptsize;
   // Don't iota effect_knn_idxs_ yet — first iteration uses direct indexing
@@ -1259,6 +1277,9 @@ void SuperLIO::Observe(){
 
   ivox_->reset_max_group();
   int iter_num = 0;
+  // 首轮统计（仅埋点用）
+  int n_knn_fail = 0, n_plane_fail = 0, n_res_fail = 0, n_effect = 0;
+  M6d last_HTVH = M6d::Zero();
 
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
@@ -1280,16 +1301,26 @@ void SuperLIO::Observe(){
         if(top_K.count < 4){
           effect_mask_[idx] = false;
           effect_knn_mask_[idx] = false;
+          ++n_knn_fail;
           continue;
         }
         effect_knn_mask_[idx] = true;
-        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
-        if(!effect_mask_[idx]) continue;
+        double fit_res = 0.0;
+        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
+        if(!effect_mask_[idx]) { ++n_plane_fail; continue; }
+
+        if (debug) fit_res_vec_.push_back(static_cast<scalar>(fit_res));
+        // 法向质量加权：拟合残差越大（平面越"脏"），该点观测权重越低
+        if (g_normal_weight_en) {
+          const float q = static_cast<float>(fit_res) / static_cast<float>(std::max(1e-3, g_normal_sigma));
+          _w_quality[idx] = 1.0f / (1.0f + q * q);
+        }
 
         auto& abcd = abcd_vec_[idx];
         scalar error;
         effect_mask_[idx] = compute_error(abcd, point_world, _lengths[idx], error);
-        if(!effect_mask_[idx]) continue;
+        if(!effect_mask_[idx]) { ++n_res_fail; continue; }
+        ++n_effect;
 
         V3d normvec(abcd[0], abcd[1], abcd[2]);
         V3d nb = R_transpose * normvec;
@@ -1301,8 +1332,9 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        float w = (abs_error <= huber_delta) ? g_obs_weight
+                                             : g_obs_weight * huber_delta / abs_error;
+        if (g_normal_weight_en) w *= _w_quality[idx];
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }
@@ -1331,7 +1363,8 @@ void SuperLIO::Observe(){
             continue;
           }
           effect_knn_mask_[idx] = true;
-          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+          double fit_res = 0.0;  // 后续轮次不更新质量权重，只用首轮结果
+          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
         }
 
         if(!effect_mask_[idx]) continue;
@@ -1351,8 +1384,9 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        float w = (abs_error <= huber_delta) ? g_obs_weight
+                                             : g_obs_weight * huber_delta / abs_error;
+        if (g_normal_weight_en) w *= _w_quality[idx];
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }
@@ -1369,11 +1403,58 @@ void SuperLIO::Observe(){
       }
     }
 
+    last_HTVH = sum_HTVH;
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
     iter_num++;
   });
+
+  // ===== 埋点 CSV（lio.debug.level > 0）=====
+  if (debug) {
+    if (!debug_csv_.is_open()) {
+      namespace fs = std::filesystem;
+      const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+      std::error_code ec;
+      fs::create_directories(dir, ec);
+      debug_csv_.open(dir + "/debug.csv", std::ios::out | std::ios::trunc);
+      debug_csv_ << "t,ptsize,n_knn_fail,n_plane_fail,n_res_fail,n_effect,"
+                    "fit_res_mean,fit_res_p95,iters,dx_inf,cond_yk,qk_finite,"
+                    "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale\n";
+    }
+    double fit_mean = 0.0, fit_p95 = 0.0;
+    if (!fit_res_vec_.empty()) {
+      double s = 0.0;
+      for (scalar v : fit_res_vec_) s += v;
+      fit_mean = s / static_cast<double>(fit_res_vec_.size());
+      if (g_debug_level >= 2) {
+        std::vector<scalar> tmp(fit_res_vec_);
+        std::sort(tmp.begin(), tmp.end());
+        fit_p95 = tmp[static_cast<size_t>(0.95 * (tmp.size() - 1))];
+      }
+    }
+    double ev_min = 0.0, ev_max = 0.0;
+    if (g_debug_level >= 2) {
+      Eigen::SelfAdjointEigenSolver<M6d> es(last_HTVH);
+      if (es.info() == Eigen::Success) {
+        ev_min = es.eigenvalues().minCoeff();
+        ev_max = es.eigenvalues().maxCoeff();
+      }
+    }
+    const auto state = kf_->GetNavState();
+    const V3 rv = state.R.log_vee();
+    debug_csv_ << state.timestamp << ',' << ptsize << ','
+               << n_knn_fail << ',' << n_plane_fail << ',' << n_res_fail << ',' << n_effect << ','
+               << fit_mean << ',' << fit_p95 << ','
+               << kf_->GetLastIters() << ',' << kf_->GetLastDxInf() << ','
+               << kf_->GetLastCondYk() << ',' << (kf_->GetLastQkFinite() ? 1 : 0) << ','
+               << ev_min << ',' << ev_max << ','
+               << state.p.x() << ',' << state.p.y() << ',' << state.p.z() << ','
+               << state.v.x() << ',' << state.v.y() << ',' << state.v.z() << ','
+               << rv.x() << ',' << rv.y() << ',' << rv.z() << ','
+               << kf_->GetImuScale() << '\n';
+    debug_csv_.flush();
+  }
 
   frame_num_++;
 }

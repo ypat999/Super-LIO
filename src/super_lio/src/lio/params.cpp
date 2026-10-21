@@ -106,6 +106,17 @@ namespace LI2Sup{
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
 
+  /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
+  int    g_debug_level = 0;
+  bool   g_normal_weight_en = false;
+  double g_normal_sigma = 0.05;
+  int    g_map_rep_mode = 0;
+  bool   g_map_clamp_mu = false;
+  int    g_map_max_points = 20;
+  double g_map_merge_dist = 0.1;
+  int    g_hknn_max_group = -1;
+  double g_hknn_order_scale = 1.0;
+
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;
   int  g_dynamic_removal_method = 0;

@@ -83,3 +83,18 @@
     # 组间保持一致
     lio.single_core: true
     lio.fast_tf: false
+
+    # ===== 代码级实验开关（默认全部保持原行为）=====
+    # 0=关；1=每帧写 <save_map_dir>/debug.csv；2=额外算 fit_res p95 与 HTVH 特征值
+    lio.debug.level: __DEBUG_LEVEL__
+    # 实验 1：按平面拟合残差 max|dist| 做质量加权
+    lio.observe.normal_weight_en: __NORMAL_WEIGHT_EN__
+    lio.observe.normal_sigma: __NORMAL_SIGMA__
+    # 实验 2/5：地图端点代表与门控
+    lio.hash_map.rep_mode: __MAP_REP_MODE__
+    lio.hash_map.clamp_mu: __MAP_CLAMP_MU__
+    lio.hash_map.max_points: __MAP_MAX_POINTS__
+    lio.hash_map.merge_dist: __MAP_MERGE_DIST__
+    # HKNN 分组搜索：-1=全部 6 组；1..6=只搜前 N 组
+    lio.hash_map.hknn_max_group: __HKNN_MAX_GROUP__
+    lio.hash_map.hknn_order_scale: __HKNN_ORDER_SCALE__

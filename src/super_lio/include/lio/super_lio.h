@@ -133,12 +133,19 @@ protected:
 
   std::size_t effect_knn_num_ = 0;
   BASIC::VV3 points_world_v3_, points_body_v3_;
-  alignas(64) bool effect_mask_[20000] = {false};
-  alignas(64) bool effect_knn_mask_[20000] = {false};
+  /// effect_mask_ / effect_knn_mask_ / abcd_vec_ 等定长数组的上限，
+  /// 超过后 Observe 会截断 ptsize（见 P0-1）
+  static constexpr std::size_t kMaxEffectPoints = 20000;
+  alignas(64) bool effect_mask_[kMaxEffectPoints] = {false};
+  alignas(64) bool effect_knn_mask_[kMaxEffectPoints] = {false};
   std::vector<int> effect_knn_idxs_;
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
+
+  // ===== 实验埋点（lio.debug.level > 0 时生效，不参与滤波）=====
+  std::vector<BASIC::scalar> fit_res_vec_;
+  std::ofstream debug_csv_;
 
   Timer time_record_;
 

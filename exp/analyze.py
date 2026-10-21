@@ -30,6 +30,13 @@ STAGES = [
     "UpdateMap",
 ]
 
+DEBUG_KEYS = [
+    "dbg_frames", "ptsize_mean", "iters_mean", "iters_p90", "dx_inf_median",
+    "cond_yk_median", "fit_res_mean", "fit_res_p95_median", "effect_ratio",
+    "knn_fail_ratio", "plane_fail_ratio", "res_fail_ratio", "htvh_cond_median",
+    "qk_bad_frames",
+]
+
 NOTES = {
     "exp0_baseline": "基线：filter_rate=6, voxel=0.25, imu_na/ng=0.1",
     "exp1_fr3": "filter_rate 6->3（参与配准的点更多）",
@@ -38,7 +45,61 @@ NOTES = {
     "exp4_vox015": "voxel_fliter_size/vox_resolution 0.25->0.15",
     "exp5_imu001": "imu_na/ng 0.1->0.01（更信任 IMU）",
     "exp6_imu0001": "imu_na/ng 0.1->0.001（极信任 IMU）",
+    "expc1_base": "代码级基线（只开埋点，开关全默认）",
+    "expc2_nw005": "实验1：法向质量加权 sigma=0.05",
+    "expc3_maprep": "实验2：地图端只存真实扫描点（近子体素中心者）",
+    "expc4_clamp": "实验5：均值更新后夹回子体素包围盒",
+    "expc5_clamp_merge005": "实验5：clamp + 合并门限 0.1->0.05",
+    "expc6_hknn_g3": "HKNN 只搜前 3 组（6->3）",
+    "expc7_hknn_s05": "HKNN 提前终止阈值 ×0.5",
 }
+
+
+def parse_debug_csv(path):
+    """聚合 lio.debug.level>0 时逐帧写出的 debug.csv。"""
+    if not os.path.exists(path):
+        return None
+    cols = {}
+    with open(path) as f:
+        rd = csv.reader(f)
+        header = next(rd, None)
+        if not header:
+            return None
+        for row in rd:
+            if len(row) != len(header):
+                continue
+            try:
+                vals = [float(v) for v in row]
+            except ValueError:
+                continue
+            for k, v in zip(header, vals):
+                cols.setdefault(k, []).append(v)
+    if not cols or "ptsize" not in cols:
+        return None
+    a = {k: np.asarray(v, dtype=np.float64) for k, v in cols.items()}
+    eps = 1e-12
+    eff_ratio = a["n_effect"] / np.maximum(eps, a["ptsize"])
+    knn_ratio = a["n_knn_fail"] / np.maximum(eps, a["ptsize"])
+    plane_ratio = a["n_plane_fail"] / np.maximum(eps, a["ptsize"])
+    res_ratio = a["n_res_fail"] / np.maximum(eps, a["ptsize"])
+    htvh_cond = a.get("htvh_ev_max", np.zeros_like(eff_ratio)) / np.maximum(
+        eps, a.get("htvh_ev_min", np.zeros_like(eff_ratio)))
+    return {
+        "dbg_frames": int(len(a["ptsize"])),
+        "ptsize_mean": float(a["ptsize"].mean()),
+        "iters_mean": float(a["iters"].mean()),
+        "iters_p90": float(np.percentile(a["iters"], 90)),
+        "dx_inf_median": float(np.median(a["dx_inf"])),
+        "cond_yk_median": float(np.median(a["cond_yk"])),
+        "fit_res_mean": float(np.median(a["fit_res_mean"])),
+        "fit_res_p95_median": float(np.median(a["fit_res_p95"])),
+        "effect_ratio": float(eff_ratio.mean()),
+        "knn_fail_ratio": float(knn_ratio.mean()),
+        "plane_fail_ratio": float(plane_ratio.mean()),
+        "res_fail_ratio": float(res_ratio.mean()),
+        "htvh_cond_median": float(np.median(htvh_cond)),
+        "qk_bad_frames": int((a["qk_finite"] < 0.5).sum()),
+    }
 
 
 def parse_node_log(path):
@@ -189,6 +250,7 @@ def main():
             "dir": d,
             "meta": meta,
             "timers": parse_node_log(os.path.join(d, "node.log")),
+            "debug": parse_debug_csv(os.path.join(d, "debug.csv")),
             "t_abs": traj_arrays(odom)[0],
             "xyz": traj_arrays(odom)[1],
             "pcd": pcd_info(os.path.join(d, "map.pcd")),
@@ -197,6 +259,10 @@ def main():
     if not entries:
         print("no usable results under", args.root)
         return 1
+
+    # 冒烟/中断的短跑（时长明显短于本轮最长者）不参与共同时间窗比较
+    max_dur = max(e["t_abs"][-1] - e["t_abs"][0] for e in entries)
+    entries = [e for e in entries if (e["t_abs"][-1] - e["t_abs"][0]) >= 0.6 * max_dur]
 
     # 共有时间窗：所有实验都覆盖到的区间
     t_lo = max(e["t_abs"][0] for e in entries)
@@ -235,7 +301,17 @@ def main():
             "map_dx": round(float(ext[0]), 1) if ext is not None else 0,
             "map_dy": round(float(ext[1]), 1) if ext is not None else 0,
             "map_dz": round(float(ext[2]), 1) if ext is not None else 0,
+            "normal_weight_en": e["meta"].get("normal_weight_en", ""),
+            "normal_sigma": e["meta"].get("normal_sigma", ""),
+            "map_rep_mode": e["meta"].get("map_rep_mode", ""),
+            "map_clamp_mu": e["meta"].get("map_clamp_mu", ""),
+            "map_merge_dist": e["meta"].get("map_merge_dist", ""),
+            "hknn_max_group": e["meta"].get("hknn_max_group", ""),
+            "hknn_order_scale": e["meta"].get("hknn_order_scale", ""),
         }
+        dbg = e["debug"]
+        for k in DEBUG_KEYS:
+            row[k] = round(dbg[k], 4) if dbg and isinstance(dbg.get(k), float) else (dbg.get(k, 0) if dbg else "")
         total = 0.0
         for st in STAGES:
             if st in e["timers"]:
@@ -265,7 +341,8 @@ def main():
         rows.append(row)
 
     # 与基线的轨迹差（同一绝对时间戳插值后比较）
-    base = next((e for e in entries if e["name"] == "exp0_baseline"), entries[0])
+    base = next((e for e in entries if e["name"] == "expc1_base"), None) \
+        or next((e for e in entries if e["name"] == "exp0_baseline"), entries[0])
     for e in entries:
         row = next(r for r in rows if r["name"] == e["name"])
         if e is base:
@@ -302,17 +379,54 @@ def main():
         return "\n".join(out)
 
     # 结论里引用的数字全部从 rows 里取，避免手写数字与表脱节
-    by_total = sorted(rows, key=lambda r: r["stage_total_ms"])
+    legacy = [r for r in rows if not r["name"].startswith("expc")]
+    if not legacy:
+        legacy = rows
+    code_rows = [r for r in rows if r["name"].startswith("expc")]
+    by_total = sorted(legacy, key=lambda r: r["stage_total_ms"])
     fastest, slowest = by_total[0], by_total[-1]
-    nonbase = [r for r in rows if r["name"] != base["name"] and r.get("rms_vs_base", -1) >= 0]
+    nonbase = [r for r in legacy if r["name"] != base["name"] and r.get("rms_vs_base", -1) >= 0]
     closest = min(nonbase, key=lambda r: r["rms_vs_base"]) if nonbase else None
     obs_share = [r["Observe_avg_ms"] / r["stage_total_ms"] * 100
-                 for r in rows if r["stage_total_ms"] > 0]
+                 for r in legacy if r["stage_total_ms"] > 0]
     obs_share_txt = "%.0f%%~%.0f%%" % (min(obs_share), max(obs_share)) if obs_share else "?"
-    paths = [r["path_m"] for r in rows]
+    paths = [r["path_m"] for r in legacy]
     zf = {r["name"]: r["z_final"] for r in rows}
     err = {r["name"]: r.get("end_err_vs_base", 0.0) for r in rows}
     fr = {r["name"]: r["Observe_avg_ms"] for r in rows}
+
+    # 代码级实验的结论行
+    code_base = next((r for r in code_rows if r["name"] == "expc1_base"),
+                     code_rows[0] if code_rows else None)
+    code_lines = []
+    if code_base:
+        old = next((r for r in rows if r["name"] == "exp0_baseline"), None)
+        code_lines.append(
+            "- 基线 **expc1_base**（只开埋点）：每帧 %.0f 点，有效点 %.1f%%，KNN 失败 %.1f%%，"
+            "平面拟合失败 %.1f%%，残差门控失败 %.1f%%，迭代 %.2f 次（p90 %.0f），"
+            "cond(Yk) 中位数 %.0f，拟合残差均值 %.4f m（p95 %.4f）。"
+            % (code_base["ptsize_mean"], code_base["effect_ratio"] * 100,
+               code_base["knn_fail_ratio"] * 100, code_base["plane_fail_ratio"] * 100,
+               code_base["res_fail_ratio"] * 100, code_base["iters_mean"],
+               code_base["iters_p90"], code_base["cond_yk_median"],
+               code_base["fit_res_mean"], code_base["fit_res_p95_median"]))
+        if old:
+            code_lines.append(
+                "- 埋点不改行为：expc1_base 与老基线 exp0_baseline 的轨迹 RMS 为 %.3f m"
+                "（同一时间戳插值比较），末位置差 %.3f m。"
+                % (old.get("rms_vs_base", 0.0), old.get("end_err_vs_base", 0.0)))
+        for r in code_rows:
+            if r is code_base:
+                continue
+            code_lines.append(
+                "- **%s**（%s）：Observe %.2f ms（基线 %.2f），有效点 %.1f%%（基线 %.1f%%），"
+                "迭代 %.2f 次，cond(Yk) %.0f，RMS %.3f m，末段 z %.2f m（基线 %.2f m），"
+                "地图 %.0f k 点（基线 %.0f k 点）。"
+                % (r["name"], NOTES.get(r["name"], ""), r["Observe_avg_ms"],
+                   code_base["Observe_avg_ms"], r["effect_ratio"] * 100,
+                   code_base["effect_ratio"] * 100, r["iters_mean"], r["cond_yk_median"],
+                   r.get("rms_vs_base", -1), r["z_final"], code_base["z_final"],
+                   r["map_points"] / 1e3, code_base["map_points"] / 1e3))
 
     off = rows[0].get("start_offset", "?")
     md = [
@@ -342,7 +456,24 @@ def main():
               ["实验", "去畸变max", "体素max", "观测max", "地图max"]),
         "\n> `rms_vs_base`：与基线在同一时间戳上插值后的 3D 位置差 RMS；`end_err_vs_base`：末位置差。"
         "无真值，仅反映相对一致性。`>5m跳跃` 非 0 说明轨迹发散或发生重置。\n",
-        "## 4. 结论\n",
+        "\n## 4. 代码级实验：开关与埋点（lio.debug.level=2 的逐帧统计）\n",
+        table(["name", "normal_weight_en", "normal_sigma", "map_rep_mode", "map_clamp_mu",
+               "map_merge_dist", "hknn_max_group", "hknn_order_scale"],
+              ["实验", "法向加权", "sigma", "代表点模式", "μ clamp", "merge(m)",
+               "HKNN组数", "order_scale"]),
+        "\n",
+        table(["name", "dbg_frames", "ptsize_mean", "iters_mean", "iters_p90", "dx_inf_median",
+               "cond_yk_median", "fit_res_mean", "fit_res_p95_median", "effect_ratio",
+               "knn_fail_ratio", "plane_fail_ratio", "res_fail_ratio", "htvh_cond_median",
+               "qk_bad_frames"],
+              ["实验", "帧数", "点数/帧", "迭代均值", "迭代p90", "|dx|∞中位", "cond(Yk)中位",
+               "拟合残差均值(m)", "拟合残差p95(m)", "有效点占比", "KNN失败占比", "拟合失败占比",
+               "门控失败占比", "HTVH条件数", "Qk非有限帧"]),
+        "\n> `cond_yk` = Yk 特征值条件数（≈ 后验协方差的病态程度）；`effect_ratio` = "
+        "通过全部门控并进入信息矩阵的点占比；`htvh_cond` 反映 point-to-plane 观测在 6 自由度上的可观测性。\n",
+        "\n**代码级实验要点**\n",
+        *code_lines,
+        "\n## 5. 结论（前七组参数实验）\n",
         "**速度**\n",
         "- 唯一显著耗时项是 `Observe`（HKNN + point-to-plane），占单帧总耗时的 %s；"
         "其余五段合计不到 1.5 ms/帧。" % obs_share_txt,
@@ -358,10 +489,10 @@ def main():
         "过程噪声变小后预测更贴合，Huber 权重下残差分布更集中，迭代更快。"
         % (fr.get("exp5_imu001", 0), fr.get("exp6_imu0001", 0)),
         "\n**轨迹与点云**\n",
-        "- 7 组轨迹形态一致：路径长 %.2f~%.2f m、均速 %.2f m/s、`>5m跳跃` 全为 0，"
-        "无发散或重置；地图点数 376k~414k，包围盒 %.1f×%.1f×%.1f m 基本重合。"
-        % (min(paths), max(paths), rows[0]["speed_mps"],
-           min(r["map_dx"] for r in rows), max(r["map_dy"] for r in rows),
+        "- %d 组参数实验轨迹形态一致：路径长 %.2f~%.2f m、均速 %.2f m/s、`>5m跳跃` 全为 0，"
+        "无发散或重置；地图点数与包围盒（%.1f×%.1f×%.1f m）基本重合。"
+        % (len(legacy), min(paths), max(paths), rows[0]["speed_mps"],
+           min(r["map_dx"] for r in legacy), max(r["map_dy"] for r in legacy),
            rows[0]["map_dz"]),
         "- 相对基线最近的是 **%s**（RMS %.3f m，末位置差 %.3f m，z_final %.2f）。"
         % (closest["name"], closest["rms_vs_base"], closest["end_err_vs_base"],

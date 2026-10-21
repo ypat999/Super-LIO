@@ -212,6 +212,44 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
 
+  // ================= debug / experiment switches =================
+  node.declare_parameter<int>("lio.debug.level", 0);
+  node.get_parameter("lio.debug.level", g_debug_level);
+
+  node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
+  node.get_parameter("lio.observe.normal_weight_en", g_normal_weight_en);
+
+  node.declare_parameter<double>("lio.observe.normal_sigma", 0.05);
+  node.get_parameter("lio.observe.normal_sigma", g_normal_sigma);
+
+  node.declare_parameter<int>("lio.hash_map.rep_mode", 0);
+  node.get_parameter("lio.hash_map.rep_mode", g_map_rep_mode);
+
+  node.declare_parameter<bool>("lio.hash_map.clamp_mu", false);
+  node.get_parameter("lio.hash_map.clamp_mu", g_map_clamp_mu);
+
+  node.declare_parameter<int>("lio.hash_map.max_points", 20);
+  node.get_parameter("lio.hash_map.max_points", g_map_max_points);
+
+  node.declare_parameter<double>("lio.hash_map.merge_dist", 0.1);
+  node.get_parameter("lio.hash_map.merge_dist", g_map_merge_dist);
+
+  node.declare_parameter<int>("lio.hash_map.hknn_max_group", -1);
+  node.get_parameter("lio.hash_map.hknn_max_group", g_hknn_max_group);
+
+  node.declare_parameter<double>("lio.hash_map.hknn_order_scale", 1.0);
+  node.get_parameter("lio.hash_map.hknn_order_scale", g_hknn_order_scale);
+
+  LOG(INFO) << GREEN << " ---> [Param] debug/level: " << g_debug_level << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/normal_weight_en: " << g_normal_weight_en
+            << " sigma: " << g_normal_sigma << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] hash_map/rep_mode: " << g_map_rep_mode
+            << " clamp_mu: " << g_map_clamp_mu
+            << " max_points: " << g_map_max_points
+            << " merge_dist: " << g_map_merge_dist << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] hash_map/hknn_max_group: " << g_hknn_max_group
+            << " order_scale: " << g_hknn_order_scale << RESET;
+
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);
   node.get_parameter("lio.submap.submap_resolution", g_submap_resolution);
@@ -519,6 +557,15 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
         else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
         else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
+        else if (name == "lio.debug.level") g_debug_level = p.as_int();
+        else if (name == "lio.observe.normal_weight_en") g_normal_weight_en = p.as_bool();
+        else if (name == "lio.observe.normal_sigma") g_normal_sigma = p.as_double();
+        else if (name == "lio.hash_map.rep_mode") g_map_rep_mode = p.as_int();
+        else if (name == "lio.hash_map.clamp_mu") g_map_clamp_mu = p.as_bool();
+        else if (name == "lio.hash_map.max_points") g_map_max_points = p.as_int();
+        else if (name == "lio.hash_map.merge_dist") g_map_merge_dist = p.as_double();
+        else if (name == "lio.hash_map.hknn_max_group") g_hknn_max_group = p.as_int();
+        else if (name == "lio.hash_map.hknn_order_scale") g_hknn_order_scale = p.as_double();
         else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
         else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
       }

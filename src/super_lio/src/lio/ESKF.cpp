@@ -1,5 +1,7 @@
 #include "lio/ESKF.h"
 
+#include <Eigen/Eigenvalues>
+
 using namespace BASIC;
 
 namespace LI2Sup{
@@ -272,7 +274,9 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
 
   need_converge_ = false;
 
+  int used_iters = 0;
   for (int iter = 0; iter < options_.num_iterations_; ++iter) {
+    used_iters = iter + 1;
     if (iter > 2) {
       need_converge_ = true;
     }
@@ -322,10 +326,25 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
 
     Update();
 
+    // 埋点：本帧实际迭代信息（不影响滤波）
+    last_dx_inf_ = dx_.lpNorm<Eigen::Infinity>();
+    last_qk_finite_ = Qk.allFinite();
+    if (debug_) {
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 18, 18>> es(Yk.cast<double>());
+      if (es.info() == Eigen::Success) {
+        const double ev_max = es.eigenvalues().maxCoeff();
+        const double ev_min = std::max(1e-12, es.eigenvalues().minCoeff());
+        last_cond_yk_ = ev_max / ev_min;
+      } else {
+        last_cond_yk_ = -1.0;
+      }
+    }
+
     if (dx_.lpNorm<Eigen::Infinity>() < options_.quit_eps_ && iter > 0) {
       break;
     }
   }
+  last_iters_ = used_iters;
 
   P_ = Qk;
 

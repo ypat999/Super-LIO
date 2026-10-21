@@ -125,6 +125,26 @@ public:
     return need_converge_;
   }
 
+  /// ===== 埋点（lio.debug.level > 0 时由 SuperLIO 读取写 CSV）=====
+  void SetDebug(bool on) { debug_ = on; }
+  int GetLastIters() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return last_iters_;
+  }
+  double GetLastDxInf() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return last_dx_inf_;
+  }
+  double GetLastCondYk() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return last_cond_yk_;
+  }
+  bool GetLastQkFinite() const {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    return last_qk_finite_;
+  }
+  float GetImuScale() const { return imu_scale_; }
+
   BASIC::SE3 GetSE3() const {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     return BASIC::SE3(R_, p_);
@@ -167,6 +187,13 @@ private:
   
   bool  need_converge_  = true;
   float imu_scale_ = 1.0;
+
+  // 埋点状态（只读导出，不参与滤波）
+  bool   debug_ = false;
+  int    last_iters_ = 0;
+  double last_dx_inf_ = 0.0;
+  double last_cond_yk_ = 0.0;        // Yk 特征值条件数（仅 debug 时计算）
+  bool   last_qk_finite_ = true;
   IMUData last_imu_;
   double current_time_ = 0.0;
   double last_imu_time_ = -1.0;

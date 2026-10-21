@@ -22,6 +22,17 @@ VOX_RES=$6
 DURATION=${7:-300}
 START_OFFSET=${START_OFFSET:-30}
 
+# 代码级实验开关（默认全部保持原行为）
+DEBUG_LEVEL=${DEBUG_LEVEL:-0}
+NORMAL_WEIGHT_EN=${NORMAL_WEIGHT_EN:-false}
+NORMAL_SIGMA=${NORMAL_SIGMA:-0.05}
+MAP_REP_MODE=${MAP_REP_MODE:-0}
+MAP_CLAMP_MU=${MAP_CLAMP_MU:-false}
+MAP_MAX_POINTS=${MAP_MAX_POINTS:-20}
+MAP_MERGE_DIST=${MAP_MERGE_DIST:-0.1}
+HKNN_MAX_GROUP=${HKNN_MAX_GROUP:--1}
+HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
+
 BAG=${BAG:-/home/ywj/slam_data/livox_record_noshell}
 EXP_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OUT=$EXP_ROOT/results/$EXP_NAME
@@ -47,6 +58,15 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__IMU_NA__|$IMU_NA|g" \
     -e "s|__IMU_NG__|$IMU_NG|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
+    -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
+    -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
+    -e "s|__NORMAL_SIGMA__|$NORMAL_SIGMA|g" \
+    -e "s|__MAP_REP_MODE__|$MAP_REP_MODE|g" \
+    -e "s|__MAP_CLAMP_MU__|$MAP_CLAMP_MU|g" \
+    -e "s|__MAP_MAX_POINTS__|$MAP_MAX_POINTS|g" \
+    -e "s|__MAP_MERGE_DIST__|$MAP_MERGE_DIST|g" \
+    -e "s|__HKNN_MAX_GROUP__|$HKNN_MAX_GROUP|g" \
+    -e "s|__HKNN_ORDER_SCALE__|$HKNN_ORDER_SCALE|g" \
     "$TEMPLATE" > "$OUT/params.yaml"
 
 {
@@ -56,6 +76,15 @@ sed -e "s|__OUTDIR__|$OUT|g" \
   echo "imu_na=$IMU_NA"
   echo "imu_ng=$IMU_NG"
   echo "vox_resolution=$VOX_RES"
+  echo "debug_level=$DEBUG_LEVEL"
+  echo "normal_weight_en=$NORMAL_WEIGHT_EN"
+  echo "normal_sigma=$NORMAL_SIGMA"
+  echo "map_rep_mode=$MAP_REP_MODE"
+  echo "map_clamp_mu=$MAP_CLAMP_MU"
+  echo "map_max_points=$MAP_MAX_POINTS"
+  echo "map_merge_dist=$MAP_MERGE_DIST"
+  echo "hknn_max_group=$HKNN_MAX_GROUP"
+  echo "hknn_order_scale=$HKNN_ORDER_SCALE"
   echo "duration=$DURATION"
   echo "start_offset=$START_OFFSET"
   echo "bag=$BAG"

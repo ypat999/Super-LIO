@@ -14,12 +14,15 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
    - “输入侧 PCL VoxelGrid 质心合成点”是误判：实时链路一直用 VoxelGridClosest，
      保留离体素中心最近的真实测量点（见第二节 4）。
 3. 仍值得做，按优先级：
-   P0-1  effect_mask_ 定长数组加钳制（1 行级，去内存越界隐患）
+   P0-1  effect_mask_ 定长数组加钳制 —— 已实现（kMaxEffectPoints，见第二节补注）
    P0-2  18x18 求逆转 double（2 处，去数值隐患）
-   P1    法向质量加权（max|dist| 已在算，零额外遍历，直面“有偏沿轴约束”）
-   P2    地图 μ 锚定子体素中心（零成本，修“代表点漂出格子”）
+   P1    法向质量加权 —— 已实现并跑过一轮，见五-B
+   P2    地图 μ 锚定子体素中心 —— 已实现，实测为恒等操作（增量均值必在子体素内），
+         结论是“剔除该方案”，不要再做
    P3    对照实验：filter_rate 与 voxel 尺寸（注意 HKNN 半径耦合，见实验 3）
          —— 已用户外回环 bag 跑完一轮，结果见五-A
+   代码级四类机制（法向加权 / 地图代表点 / 地图门控 / HKNN 分组）已全部做成
+   运行时开关并跑完对照，见五-B。
 4. 要根治退化方向，仍需额外约束：scan-to-scan / 楼层高度先验 / 回环 / SC-PGO。
    本文档只负责“确认真相 + 去掉可去的偏差”，不承诺消除漂移。
 5. 已完成的参数实验（2026-10-21，227 m 户外回环 bag，7 组，详见五-A）：
@@ -29,6 +32,15 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
    - imu_na/ng 0.1→0.01 单帧 4.40→3.85 ms 且最贴基线（RMS 0.031 m），是唯一“零成本”正向改动；
      0.001 更快（3.29 ms）但相对基线偏差 0.062 m（机理见五-A.3）；
    - 全部为户外数据，楼梯间退化段必须用楼梯 bag 复测后才能套用。
+6. 已完成的代码级实验（同一 bag，7 组，详见五-B）：
+   - 埋点（lio.debug.level=2）与开关默认值都逐位不改行为：新基线 expc1 与 exp0 轨迹
+     RMS 0.000 m / 末位置差 0.000 m；
+   - 基线每帧 973 点：有效点 97.2%，KNN 失败 2.3%，平面拟合失败 0.44%，残差门控 0.05%；
+     迭代 3.54 次，cond(Yk) 中位 5142，Qk 始终有限；
+   - 四类机制都改不出超过 0.11 m RMS 的差异，且 3 组把末段 z 从 0.01 翻到 0.34~0.37 m：
+     属于“分支翻转”而非单调恶化，末段 z 不能单独当判据；
+   - μ clamp 实测恒等（轨迹逐位相同），从候选中剔除；rep_mode 与 order_scale 影响最小
+     （RMS 0.013 / 0.020 m）。
 
 一、现象与判读（不变）
 --------------------------------------------------------------------------------
@@ -90,8 +102,10 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
    - 粗体素 = lio.hash_map.vox_resolution（0.25 m），再分 2×2×2 子体素（0.125 m）。
    - 每个子体素一个代表点 μ + 计数 n：
        空：μ=首点（真实点）；否则 n<20 且 |p-μ|≤0.1 m 时做增量均值，否则丢弃。
-   - 注意：门限是相对 μ，不是相对子体素中心 → μ 可以逐步漂出子体素（见实验 2）。
+   - 注意：门限是相对 μ，不是相对子体素中心；但 μ 不会漂出子体素——同一子体素的
+     点都在格子内，增量均值是凸组合，必然仍在格子内（第六轮已实测证伪，见五-B.3）。
    - 均值本身是论文明确的设计目标（incremental denoising，方差 ~1/n），不要当 bug 删。
+     真正可调的是“均值 vs 真实代表点”（rep_mode）与合并门限 merge_dist。
 
 7) 输出（super_lio.cpp:1415-1424 body，1451-1464 world）
    - cloud_body / cloud_world 都由 scan_undistort_full_（抽稀、去畸变、未体素化）生成。
@@ -136,25 +150,21 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
 
 四、仍成立的风险与最小改法
 --------------------------------------------------------------------------------
-[P0-1] effect_mask_/effect_knn_mask_ 固定 20000，无钳制（未修）
+[P0-1] effect_mask_/effect_knn_mask_ 固定 20000，无钳制（已实现，2026-10-21）
+  现状：super_lio.h 已改为 static constexpr kMaxEffectPoints = 20000，Observe() 入口
+        截断 ptsize 并打 WARNING；init() 按 kMaxEffectPoints 分配。
+        注意：src/super_lio_reloc.cpp 的重定位类未同步（若还要用重定位，按同法补）。
+  实测：本轮 bag 每帧 973 点，远低于上限，改动不改变行为（见五-B.3）。
   位置：include/lio/super_lio.h:136-137（两个 bool[20000]）
         src/lio/super_lio.cpp:110-112（reserve(21000)、abcd_vec_/effect_knn_idxs_ 20000）
         src/lio/super_lio_reloc.cpp:103-105（重定位类同样问题）
   后果：Observe() 里 effect_knn_num_ = ptsize 且直接写 effect_mask_[idx]，
         ptsize > 20000 时越界踩到相邻成员（随机跳变/崩溃）。
-  改法（零开销）：
-    1. super_lio.h 增加
-         static constexpr std::size_t kMaxEffectPoints = 20000;
-       用它替换两处数组尺寸（数组本身仍是定长）。
-    2. super_lio.cpp init()：points_world_v3_.reserve(kMaxEffectPoints);
-       abcd_vec_.resize(kMaxEffectPoints); effect_knn_idxs_.resize(kMaxEffectPoints);
-    3. Observe() 入口（size_t ptsize = ds_undistort_->size(); 之后）钳制：
-         if (ptsize > kMaxEffectPoints) {
-           static int warn_cnt = 0;
-           if (warn_cnt < 20) { std::cout << "[Observe] ptsize=" << ptsize << " clamp\n"; ++warn_cnt; }
-           ptsize = kMaxEffectPoints;
-         }
-    4. 重定位类按同法处理（若不再使用可只加注释）。
+  实际实现（零开销）：
+    - super_lio.h：kMaxEffectPoints = 20000 替换两处数组尺寸；init() 按它 resize。
+    - super_lio.cpp Observe() 入口：ptsize > kMaxEffectPoints 时截断并 LOG(WARNING)，
+      不静默（原方案里的 warn_cnt 计数没有采用，越界告警每帧只发生一次成本可忽略）。
+    - 重定位类（super_lio_reloc.cpp）未同步，若还要用重定位需按同法补。
   注意：只钳制 Observe 循环；ApplyDeltaCorrection/UpdateMap 用完整长度，二者不碰定长数组。
   验收：CSV 里 ptsize 峰值；若从未 >20000，改动属于“去隐患”，不改现象。
 
@@ -177,14 +187,20 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
   验收：Qk 无非有限值；cond_yk 是否随飞行时间单调升到 1e5 以上；
         跳变帧是否伴随 cond 峰值。若无相关性，只是“去隐患”。
 
-[P1] 法向质量没有进入权重（新；对应“有偏的沿轴约束”）
+[P1] 法向质量没有进入权重（已实现，2026-10-21）
   现状：所有点等权（Huber 只管残差大小，不管平面本身可不可信）。
-  改法：见实验 1。成本：零新增遍历（calc_plane_coeff 已在算 |dist|）。
+  实现：calc_plane_coeff 多输出 max|dist|（复用已有循环，零新增遍历）；
+        Observe 两处权重乘 q=1/(1+(fit_res/σ)^2)，σ=lio.observe.normal_sigma。
+        后续迭代复用首轮质量权重（need_converge 时不会重算平面）。
+  实测：见五-B。RMS 0.102 m，迭代 3.54→3.25，cond(Yk) 5142→4062；
+        但末段 z 从 0.01 翻到 0.34 m，本数据无法判定优劣。
 
-[P2] OctVox 的 μ 未锚定子体素中心（新）
-  现状：merge 门限 |p-μ|≤0.1 m 相对 μ；μ 可被持续偏置的观测拉出子体素，
-        代表点与格子解绑，地图几何缓慢偏斜。
-  改法：见实验 2。成本：每次插入多几次浮点运算，无内存增长。
+[P2] OctVox 的 μ 未锚定子体素中心（已实现，实测恒等 → 剔除）
+  原假设：merge 门限 |p-μ|≤0.1 m 相对 μ，μ 可被持续偏置的观测拉出子体素。
+  实现：AddPoint 均值后按需夹回子体素包围盒（lio.hash_map.clamp_mu）。
+  实测：expc4 与基线轨迹逐位相同（RMS 0.000 m）。原因是几何上的恒等：
+        进入同一子体素的点都在该子体素内（按 floor 分配），增量均值是它们的凸组合，
+        必然仍在子体素内，clamp 永远不触发。原假设不成立，方案剔除。
 
 [设计边界，不是 bug] 退化方向无约束
   依据：J.tail<3>()=n，HTVH.trans ≈ Σ w·n·n^T；楼梯井轴向 n 覆盖不足。
@@ -214,7 +230,7 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
   判据：记录 ptsize 峰值、n_effect/ptsize、htvh_t_eig3/eig1、cond_yk、
         每层 ΔT。后续实验全部与本次对比。
 
-实验 1：法向质量加权（P1）
+实验 1：法向质量加权（P1）【已实现并跑完一轮，结果见五-B】
   假设：楼梯间“有偏沿轴约束”主要来自勉强拟合出的倾斜法向；
         按拟合质量降权应减少慢漂，且不显著减少有效点。
   代码改动（4 处）：
@@ -248,7 +264,9 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
   回退：n_effect 下降 >30%，或 eig 比无改善且闭环无改善 → 关掉开关，
         σ 从 0.075 再试一次；仍无效应放弃此路线。
 
-实验 2：地图 μ 锚定子体素中心（P2）
+实验 2：地图 μ 锚定子体素中心（P2）【已实现，实测恒等 → 已否决，勿再实施】
+  否决依据：同一子体素的点都在格子内，均值是凸组合，不可能越格；expc4 与基线
+  轨迹逐位相同（五-B.3）。下面的改法保留仅作历史记录。
   假设：merge 门限相对 μ 会让代表点漂出子体素，长期造成地图几何缓慢偏斜。
   代码改动（OctVoxMap.hpp，配合 insert()）：
     1. insert()（265-303）已有 fine_key（= floor(p/sub_res)），子体素中心是
@@ -326,6 +344,15 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
     楼梯间“退化段强信任是否反而有害”仍未验证，需 htvh_t_eig3/eig1 埋点。
 
 实验 5（可选，最后再考虑）：地图代表点策略 A/B
+  【已实现并跑完一轮，见五-B.2】
+  实测（户外回环 300 s，只改地图端开关，输入参数全固定）：
+    - rep_mode=1（只存真实扫描点，留离格心最近者）expc3：RMS 0.013 m，末段 z 0.01 m，
+      地图点数 378184（基线 377505），Observe 4.45 ms（基线 3.71 ms）→ 影响最小，无收益；
+    - clamp+merge 0.05（expc5）：RMS 0.109 m，末段 z 0.37 m，点数 386312，Observe 4.42 ms
+      → 收紧合并门限让地图更“碎”、噪声更大，反而偏离基线；
+    - μ clamp 单独一项（expc4）逐位恒等，已否决（见实验 2）。
+    另：以下“代价 +48~64 MB、法向抖动上升”的先验估计成立方向正确，但实测法向抖动
+    未体现在轨迹上（三组差异都 ≤0.11 m 且非单调）。
   假设：子体素均值（论文设计）vs 保留离格心最近真实点，谁在楼梯间更稳。
   改动：OctVox 每子体素把 count 换成 best_d2（float），AddPoint 改为 argmin 更新。
   代价：每体素 +24~32 B；capacity=2e6 时约 +48~64 MB；且地图点噪声从 σ/√n 退化为 σ，
@@ -416,12 +443,127 @@ A.5 局限（读结论前必看）
   - 每组独立重启节点、独立建图；组间 CPU 状态（频率/负载）不能完全一致，
     但逐窗口排序稳定（见 A.3），故不改变方向性结论。
 
-六、埋点与 CSV（先做埋点，再做实验）
+五-B、已完成的代码级实验（法向加权 / 地图代表点 / 地图门控 / HKNN 分组）
+--------------------------------------------------------------------------------
+B.0 方式与开关
+  同一 bag、同一 offset、同一输入参数（filter_rate=6, voxel=0.25, na/ng=0.1,
+  vox_res=0.25），只改代码级开关；全部 lio.debug.level=2，逐帧写
+  <save_map_dir>/debug.csv。脚本：
+    cd lio/Super-LIO/exp && DURATION=300 ./run_code_all.sh
+    python3 analyze.py      # 生成 results/summary.md|csv（含第 4 节埋点表）
+  新增运行时开关（默认值 = 原行为，已确认逐位一致）：
+    lio.debug.level                     0/1/2
+    lio.observe.normal_weight_en|sigma  false / 0.05
+    lio.hash_map.rep_mode|clamp_mu      0 / false
+    lio.hash_map.max_points|merge_dist  20 / 0.1
+    lio.hash_map.hknn_max_group|order_scale  -1 / 1.0
+  代码落点：
+    - params.h / params.cpp / ROSWrapper.cpp：声明、默认值、运行时回调
+    - super_lio.cpp：Observe 入口钳制 + 逐帧 CSV；calc_plane_coeff 输出 max|dist|
+    - ESKF.cpp：UpdateObserve 记录 iters / |dx|∞ / Qk 有限性 / cond(Yk)
+    - OctVoxMap.hpp：AddPoint 的 rep_mode/clamp/max_points/merge_dist；
+      reset_max_group 读 hknn_max_group；getTopK 的提前终止乘 order_scale
+
+B.1 埋点基线（expc1_base，2986 帧）
+  每帧参与配准 973 点（filter_rate=6 + 0.25 m VoxelGridClosest）
+  有效点 97.2% | KNN 邻域不足 2.3% | 平面拟合失败 0.44% | 残差门控失败 0.05%
+  迭代 3.54 次（p90 = 4，即上限）| |dx|∞ 中位 1e-4 | cond(Yk) 中位 5142
+  平面拟合残差 max|dist|：均值 0.0318 m，p95 0.0817 m
+  HTVH（6 自由度观测信息）条件数中位 274 | Qk 非有限帧 0
+  读法：匹配层本身没有坏——KNN/平面拟合淘汰率低，Qk 始终有限；cond(Yk)≈5e3
+  说明信息矩阵已经偏病态（float 下约剩 6 位有效数字，见 P0-2）。
+
+B.2 对照结果（共同窗，轨迹指标与 A 节同法）
+  实验                 改动                    Observe  有效点  KNN失败  迭代  cond(Yk)  RMS    末段z  地图点数
+  expc1_base           基线（只开埋点）         3.71    97.2%   2.31%   3.54   5142     0.000   0.01   377505
+  expc2_nw005          法向加权 σ=0.05          4.41    97.2%   2.32%   3.25   4062     0.102   0.34   385143
+  expc3_maprep         rep_mode=1（真实点）     4.45    97.2%   2.31%   3.57   5171     0.013   0.01   378184
+  expc4_clamp          clamp_mu=true            3.07    97.2%   2.31%   3.54   5142     0.000   0.01   377651
+  expc5_clamp_merge005 clamp + merge 0.05       4.42    97.1%   2.32%   3.58   5169     0.109   0.37   386312
+  expc6_hknn_g3        HKNN 组数 6→3           4.23    95.3%   4.36%   3.50   4909     0.107   0.37   385567
+  expc7_hknn_s05       order_scale 0.5          4.18    97.2%   2.31%   3.51   5138     0.020   0.01   376374
+  Observe 单位 ms/帧；RMS = 与 expc1 同时间戳插值后的 3D 位置差 RMS（m）。
+
+B.3 结果分析
+  1) 埋点与开关默认值不改行为（已证）：
+     expc1 与 exp0_baseline 轨迹 RMS 0.000 m、末位置 0.000 m；60 s 冒烟跑与
+     300 s 基线在重叠段逐点吻合到 1e-3 m。可以放心把 debug CSV 当观测手段。
+  2) Observe 的组间差是噪声，不是收益：
+     在点数完全相同、逻辑几乎没变的组之间，Observe 在 3.07~4.45 ms 间跳，
+     说明单次运行的地板噪声约 ±0.7 ms。HKNN 少搜 3 组没有提速（4.23 ms）：
+     耗时主要在已经发生的体素查找/压实遍历，提前终止只省后半段。
+     结论：用本指标比较 <1 ms 的改动需要多次重复，不能单跑定论。
+  3) 法向质量加权（expc2）：机制确实生效——迭代 3.54→3.25、cond(Yk) 5142→4062，
+     说明高残差平面被降权后，观测信息更“软”，dx 更小、收敛更早。
+     代价是约束分布改变：RMS 0.102 m，末段 z 从 0.01 翻到 0.34 m。
+     没有真值，无法判断这是“更准”还是“更松”；在退化段它可能帮倒忙
+     （本就缺约束的方向被进一步降权），需楼梯数据判定。
+  4) 地图代表点 rep_mode=1（expc3）：几乎无影响（RMS 0.013 m，末段 z 不变）。
+     本数据以大面积平面为主，增量均值与“离子体素中心最近的真实点”之差远小于
+     0.125 m 子体素尺度，不足以改变法向/残差。地图点数 +679 是轨迹微差带来的，
+     不是 OctVox 直接产物（落盘 map.pcd 来自 dense point_map_，不是 OctVox）。
+  5) μ clamp（expc4）是恒等操作：轨迹逐位相同。原因见第四节 [P2]——
+     同一子体素的点全在格子内，凸组合的均值不会越界，clamp 永不触发。
+     该方案从候选中剔除；真正会改变代表点的是 rep_mode 与 merge_dist。
+  6) 收紧 merge 门限（expc5，0.1→0.05）：代表点更贴近首批观测、更新更少，
+     RMS 0.109 m、末段 z 0.37 m，和法向加权同一量级、同一分支。
+  7) HKNN 组数 6→3（expc6）：机制明确生效——有效点 97.2%→95.3%（−1.9 pp），
+     KNN 邻域不足 2.3%→4.4%（翻倍），cond 略降。代价是邻域点变少，
+     轨迹 RMS 0.107 m、末段 z 0.37 m；没有换来速度。不建议作为默认。
+  8) 提前终止阈值 ×0.5（expc7）：影响最小（RMS 0.020 m，地图 −1.1 k 点）。
+     说明在 0.25 m 体素 + 室外场景，5 邻域通常在 group0~2 就满足阈值，
+     后续组的遍历本来就很少发生——这也解释了“减组不提速”。
+  9) 末段 z 是双峰，不是连续误差：4 组末段 z≈0.01 m，3 组≈0.34~0.37 m，
+     而路径长全部 227.6 m、回起点水平距离全部 4.93~4.94 m（revisit_z 同步翻转）。
+     如此小的机制扰动就能把回环末段推到另一支，说明这段数据的 z 漂移对扰动
+     高度敏感，单看末段 z 会把“分支翻转”误读成“机制变差”。
+     后续评估应以整段轨迹 RMS + 多指标（z_min/z_max/revisit_z）联合判断，
+     并优先在退化场景上验证。
+
+B.4 结论
+  1) 这段户外回环上，四类机制都没有产生可判定的改进（RMS ≤0.11 m），
+     也没有带来速度收益（均在地板噪声内）。
+  2) μ clamp 已被证伪（数学恒等），从 backlog 删除。
+  3) rep_mode=1 与 order_scale 的影响最小，可作为保留开关；法向加权与
+     merge 门限会显著改变约束分布，必须用楼梯/退化数据判定方向。
+  4) 埋点回答了“漂移是不是匹配层坏了”：不是。KNN 失败率 2.3%、Qk 始终有限、
+     cond(Yk) 稳定在 5e3 量级而未爆炸——与“退化方向无约束 + IMU 零偏积分”的
+     既有判断一致，继续在观测权重上打转收益有限。
+  5) 下一步优先级：楼梯 bag 上复测 expc1/expc2/expc6，重点看
+     cond(Yk)、HTVH 条件数是否随高度上升，以及有效点占比是否随楼层下降。
+
+B.5 局限
+  - 仍是户外回环，无退化段、无真值；“机制无差异”不等于“在楼梯间无差异”。
+  - debug.level=2 每帧 flush 一次 CSV，对耗时的影响已包含在 Observe 内
+    （基线 3.71 ms 与 A 节 exp0 的 4.06 ms 差 0.35 ms，方向不可辨，属噪声）。
+  - 每组独立重启，CPU 频率/负载不可控；批量比较需重复 2~3 次取中位。
+
+六、埋点与 CSV（L1/L2 主体已实现，L3/L4 仍有缺口）
 --------------------------------------------------------------------------------
 原则：点循环里只做整数/浮点累加，帧末输出一行；禁止在循环里 LOG。
-      统一由参数 lio.debug.level 控制：0=关，1=帧摘要，2=加迭代，3=加点统计；默认 0。
+      统一由参数 lio.debug.level 控制：0=关；1=帧摘要；2=额外算 fit_res p95 与
+      HTVH 特征值；默认 0。落盘 <save_map_dir>/debug.csv，每帧 flush。
 
-[L1] 观测层（super_lio.cpp Observe）
+实现状态（2026-10-21）：
+  [L1] 已实现：ptsize、n_knn_fail、n_plane_fail、n_res_fail、n_effect、
+       fit_res 均值（level>=1）与 p95（level>=2）、HTVH 6×6 的 λmax/λmin（level>=2）。
+       未实现：rot/trans 分块特征值、λ3 特征向量。
+  [L2] 已实现：实际迭代次数、|dx|∞、cond(Yk)、Qk 是否有限。
+       未实现：need_converge 标记（可由 iters==4 推断）、Predict 的 dt 异常计数、
+       每帧 IMU 个数/时间跨度。
+  [L3] 已实现：p、v、旋转向量 log(R)、imu_scale。
+       未实现：ApplyDeltaCorrection 的 dp/dtheta、bg/ba、协方差对角、插入点数。
+  [L4] 未实现（raw/range/intensity 剔除数、filter_rate 后的点数、n_tail_drop、
+       IMU Lag 告警计数）。
+
+实际 CSV 列（每帧一行）：
+  t, ptsize, n_knn_fail, n_plane_fail, n_res_fail, n_effect,
+  fit_res_mean, fit_res_p95, iters, dx_inf, cond_yk, qk_finite,
+  htvh_ev_min, htvh_ev_max, px, py, pz, vx, vy, vz, rvx, rvy, rvz, imu_scale
+
+判读用法见七、判据决策树；已跑出的基线读数见五-B.1。
+
+[L1] 观测层（super_lio.cpp Observe）—— 设计原稿
   - ptsize（ds_undistort_->size()）
   - n_knn_fail：top_K.count < 4
   - n_plane_fail：calc_plane_coeff 返回 false
@@ -454,7 +596,7 @@ A.5 局限（读结论前必看）
   - sync_measure（1240-1290）：meas.imu.size()、IMU 覆盖时长、雷达跨度
   - IMU Lag 告警（1265 附近）触发次数
 
-CSV 建议列（每帧一行，写 g_save_map_dir）：
+CSV 建议列（每帧一行，写 g_save_map_dir）—— 设计原稿，实际列见本节开头：
   t, frame, ptsize, n_knn_fail, n_plane_fail, n_res_fail, n_effect,
   fit_res_mean, fit_res_p95,
   htvh_t_eig1, htvh_t_eig2, htvh_t_eig3, eig3_dir_x, eig3_dir_y, eig3_dir_z,
@@ -482,7 +624,8 @@ Q4 逐帧修正量 dp 投影到世界系 / 机体系：
    机体系方向基本恒定、世界系随航向转 → 机体系常值加速度偏置
         （重力对齐残差 / imu_scale / ba / 外参）
    世界系方向基本恒定 → 观测侧偏置（掠射法向 / 平面阈值）
-        → 优先做实验 1（法向质量加权）
+        → 实验 1（法向质量加权，已实现，开关 lio.observe.normal_weight_en；
+           户外回环实测 RMS 0.102 m，与基线同量级，未证明有效）
    两者都不恒定且随时间单调增 → 退化方向无约束 + 零偏积分
         → 调参解决不了，需 scan-to-scan / 子图 / 回环。
 
@@ -505,7 +648,8 @@ Q5 逐层相对位姿误差随“转角”线性增长还是随“高度”线�
 --------------------------------------------------------------------------------
 - scalar=float 的整体存储：保持不动，只把两处 18x18 求逆转 double。
 - 5 近邻 KNNHeap 与 HKNN 分组遍历：不扩 K、不改列表（除非做实验 3 的配套）。
-- OctVox 的 8 子体素 + 增量均值 + 20 点上限：保留（实验 2 只加 clamp）。
+- OctVox 的 8 子体素 + 增量均值 + 20 点上限：保留；实验 2 已做成 rep_mode/merge_dist
+  两个开关，clamp 版实测为恒等（见五-B），默认仍是论文的增量均值。
 - VoxelGridClosest 的“离体素中心最近”规则：保留（这就是论文设计）。
 - effect_mask_ 定长数组：保留，只加钳制。
 - need_converge 时跳过 KNN 重搜索：保留。
@@ -518,7 +662,11 @@ Q5 逐层相对位姿误差随“转角”线性增长还是随“高度”线�
 3. `lio.sensor.enable_downsample` 在正常 LIO 模式不生效，不要用它来“关体素”。
 4. 加埋点后先地面 bag 回放确认输出正常，再实飞；楼梯间飞行本身有风险。
 5. 实验顺序：P0-1/P0-2 → 埋点 → 实验 1/2 → 实验 3/4 →（必要时）实验 5。
-   实验 3/4 已在户外回环完成一轮（五-A）；楼梯数据到手后直接复用 exp/ 脚本复测即可。
-6. 若最终确认是“退化方向 + 零偏积分”，优先工程手段（关键帧约束、楼层高度先验、
+   实验 3/4 已在户外回环完成一轮（五-A）；代码级实验 1/2/5 + HKNN 分组已完成
+   一轮（五-B，脚本 exp/run_code_all.sh）。楼梯数据到手后直接复用两套脚本复测。
+6. 代码级开关（normal_weight / rep_mode / clamp / max_points / merge_dist /
+   hknn_max_group / order_scale）都是每帧读全局，但建图是有状态的：
+   同一次运行中途改值会造成“前半图与后半图规则不同”，必须整轮重启。
+7. 若最终确认是“退化方向 + 零偏积分”，优先工程手段（关键帧约束、楼层高度先验、
    回环/SC-PGO），不要继续压 filter_rate 或调观测权重。
 ================================================================================

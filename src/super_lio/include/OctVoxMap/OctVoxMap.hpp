@@ -9,6 +9,7 @@
 #include <memory>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 #include <execution>
 #include <filesystem>
 #include <unordered_map>
@@ -18,6 +19,7 @@
 
 #include "tsl/robin_map.h"
 #include "HKNN_list60_gem.h"
+#include "lio/params.h"
 
 
 namespace LI2Sup{
@@ -89,7 +91,9 @@ public:
 template<typename Point>
 class OctVox{
 public:
-  OctVox(const Point& pt, uint8_t local_idx)
+  OctVox(const Point& pt, uint8_t local_idx, const Point& origin = Point(0, 0, 0),
+         float sub_res = 0.0f)
+      : origin_(origin), sub_res_(sub_res)
   {
     counts_.fill(UNINIT_MASK);
     points_[local_idx] = pt;
@@ -97,6 +101,14 @@ public:
   }
 
   ~OctVox() {}
+
+  /// 子体素几何中心（由粗体素原点 + local_idx 推算）
+  Point SubCenter(uint8_t local_idx) const {
+    const float half = 0.5f * sub_res_;
+    return Point(origin_.x() + ((local_idx & 1) ? 3.0f : 1.0f) * half,
+                 origin_.y() + ((local_idx & 2) ? 3.0f : 1.0f) * half,
+                 origin_.z() + ((local_idx & 4) ? 3.0f : 1.0f) * half);
+  }
 
   void AddPoint(const Point& pt, uint8_t local_idx) {
     uint8_t& count = counts_[local_idx];
@@ -107,11 +119,33 @@ public:
       return;
     }
 
-    if(count >= MAX_POINTS_PER_SUBVOXEL) return;
-    if ((pt - stored_point).squaredNorm() > DISTANCE_THRESHOLD_SQ) return;
+    if(count >= g_map_max_points) return;
+    const float merge_dist2 = static_cast<float>(g_map_merge_dist * g_map_merge_dist);
+    if ((pt - stored_point).squaredNorm() > merge_dist2) return;
 
+    if (g_map_rep_mode == 1) {
+      // 代表点模式：只存真实扫描点，保留离子体素中心最近的那个
+      const Point center = SubCenter(local_idx);
+      if ((pt - center).squaredNorm() < (stored_point - center).squaredNorm()) {
+        stored_point = pt;
+      }
+      ++count;
+      return;
+    }
+
+    // 论文行为：增量均值
     stored_point = (stored_point * count + pt) / (count + 1);
     ++count;
+
+    if (g_map_clamp_mu && sub_res_ > 0.0f) {
+      // 均值可能被拉出子体素，按需夹回子体素包围盒
+      const Point center = SubCenter(local_idx);
+      const float half = 0.5f * sub_res_;
+      for (int k = 0; k < 3; ++k) {
+        stored_point[k] = std::min(std::max(stored_point[k], center[k] - half),
+                                   center[k] + half);
+      }
+    }
   }
 
   bool getPoint(const uint8_t local_idx, Point& pt) const {
@@ -121,11 +155,12 @@ public:
   }
 
   static constexpr uint8_t UNINIT_MASK = 0x00;
-  static constexpr uint8_t MAX_POINTS_PER_SUBVOXEL = 20;
-  static constexpr double DISTANCE_THRESHOLD_SQ = 0.1 * 0.1;
 
   std::array<uint8_t, 8> counts_;
   std::array<Point, 8> points_;
+
+  Point origin_ = Point(0, 0, 0);  // 粗体素最小角（用于推算子体素中心）
+  float sub_res_ = 0.0f;
 };
 
 
@@ -157,7 +192,7 @@ public:
       uint16_t start = flat_search_order_offsets[i];
       flat_search_ptrs_.push_back(const_cast<uint8_t*>(flat_search_order.data() + start));
     }
-    group_idx_max_ = flat_search_order_offsets.size() - 1;
+    reset_max_group();
   }
   
   ~OctVoxMap() {
@@ -174,7 +209,7 @@ public:
       uint16_t start = flat_search_order_offsets[i];
       flat_search_ptrs_.push_back(const_cast<uint8_t*>(flat_search_order.data() + start));
     }
-    group_idx_max_ = flat_search_order_offsets.size() - 1;
+    reset_max_group();
   }
 
   void SetOptions(const Options& options)
@@ -198,7 +233,10 @@ public:
   void getTopK_VN(const Point& point, KNNHeapType& top_K) const;
 
   void reset_max_group(){
-    group_idx_max_ = flat_search_order_offsets.size() - 1;
+    const int all_groups = static_cast<int>(flat_search_order_offsets.size()) - 1;  // 6 组
+    group_idx_max_ = (g_hknn_max_group < 0) ? all_groups
+                                            : std::min(g_hknn_max_group, all_groups);
+    if (group_idx_max_ < 1) group_idx_max_ = 1;
   }
 
   void decrease_max_group(){
@@ -286,9 +324,10 @@ void OctVoxMap<Point, Scalar>::insert(const Points& cloud_world){
 
     auto iter = grids_.find(key);
     if (iter == grids_.end()) {
+      const Point origin = key.cast<Scalar>() * resolution_;
       data_.emplace_front(std::piecewise_construct,
         std::forward_as_tuple(key),
-        std::forward_as_tuple(pt, local_idx));
+        std::forward_as_tuple(pt, local_idx, origin, sub_resolution_));
       grids_.insert(std::make_pair(key, data_.begin()));
       
       if (data_.size() >= capacity_) {
@@ -373,7 +412,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
     }
 
     if (top_K.count == 5)
-      if (top_K.max_dist2_ < orders_min_dis2[group_idx]){
+      if (top_K.max_dist2_ < orders_min_dis2[group_idx] * g_hknn_order_scale){
         break;
       }
 
