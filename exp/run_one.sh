@@ -4,7 +4,15 @@
 # 用法:
 #   ./run_one.sh <exp_name> <filter_rate> <voxel_size> <imu_na> <imu_ng> <vox_res> [duration_s]
 #
-# 结果目录: exp/results/<exp_name>/
+# duration_s 传 0（默认）表示整包播完，不设看门狗；>0 时只播前 duration_s 秒。
+#
+# 环境变量:
+#   BAG          数据集目录（默认 A 楼楼梯 bag）
+#   RESULT_ROOT  结果根目录（默认 exp/results）
+#   START_OFFSET 起始偏移秒（默认 0）
+#   DEBUG_LEVEL / NORMAL_WEIGHT_EN / ... 代码级开关，默认全部保持原行为
+#
+# 结果目录: $RESULT_ROOT/<exp_name>/
 #   params.yaml   本次实际使用的完整参数
 #   node.log      LIO stdout/stderr（含每分钟 [Undistort]/[Observe]... 耗时块）
 #   odom.csv      /lio/odom 轨迹
@@ -19,8 +27,9 @@ VOXEL_SIZE=$3
 IMU_NA=$4
 IMU_NG=$5
 VOX_RES=$6
-DURATION=${7:-300}
-START_OFFSET=${START_OFFSET:-30}
+# 0 = 整包，不设看门狗
+DURATION=${7:-${DURATION:-0}}
+START_OFFSET=${START_OFFSET:-0}
 
 # 代码级实验开关（默认全部保持原行为）
 DEBUG_LEVEL=${DEBUG_LEVEL:-0}
@@ -33,20 +42,28 @@ MAP_MERGE_DIST=${MAP_MERGE_DIST:-0.1}
 HKNN_MAX_GROUP=${HKNN_MAX_GROUP:--1}
 HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
 
-BAG=${BAG:-/home/ywj/slam_data/livox_record_noshell}
+BAG=${BAG:-/home/ywj/slam_data/livox_record_A_building}
 EXP_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-OUT=$EXP_ROOT/results/$EXP_NAME
+RESULT_ROOT=${RESULT_ROOT:-$EXP_ROOT/results}
+OUT=$RESULT_ROOT/$EXP_NAME
 TEMPLATE=$EXP_ROOT/config_template.yaml
 
 WS_SETUP=/tmp/sl_install/setup.bash
 LIVOX_SETUP=/home/ywj/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/install/setup.bash
 
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+# 每个实验独立的 ROS 日志目录：并行时互不干扰，也避免 ~/.ros/log 无限膨胀
+export ROS_LOG_DIR=${ROS_LOG_DIR:-$OUT/roslog}
+mkdir -p "$ROS_LOG_DIR"
 
 # ROS 的 setup.bash 里有未定义变量（AMENT_TRACE_SETUP_FILES 等），必须先关掉 set -u
 set +u
 source /opt/ros/humble/setup.bash
-source "$LIVOX_SETUP"
+[ -f "$LIVOX_SETUP" ] && source "$LIVOX_SETUP"
+if [ ! -f "$WS_SETUP" ]; then
+  echo "[run_one] missing $WS_SETUP, build first: build_ws.sh" >&2
+  exit 3
+fi
 source "$WS_SETUP"
 set -u
 
@@ -95,13 +112,14 @@ sed -e "s|__OUTDIR__|$OUT|g" \
 
 echo "[run_one] $EXP_NAME start $(date -Is)" | tee -a "$OUT/meta.txt"
 
-# 0) 清理残留节点：ros2 run 会再 fork 出真正的可执行文件，只杀 wrapper 杀不掉节点，
+# 0) 清理同名实验的残留节点：ros2 run 会再 fork 出真正的可执行文件，只杀 wrapper 杀不掉节点，
 #    残留节点会继续订阅同一份 bag 数据、往 /lio/odom 发第二套轨迹，污染结果。
-if pgrep -f "super_lio_node --ros-args --params-file" > /dev/null; then
+#    只匹配本实验的 params 文件，避免误杀并行运行的其他实验。
+if pgrep -f "super_lio_node --ros-args --params-file $OUT/params.yaml" > /dev/null; then
   echo "[run_one] killing leftover super_lio_node" | tee -a "$OUT/meta.txt"
-  pkill -TERM -f "super_lio_node --ros-args --params-file"
+  pkill -TERM -f "super_lio_node --ros-args --params-file $OUT/params.yaml"
   sleep 5
-  pkill -KILL -f "super_lio_node --ros-args --params-file" 2>/dev/null
+  pkill -KILL -f "super_lio_node --ros-args --params-file $OUT/params.yaml" 2>/dev/null
   sleep 1
 fi
 
@@ -124,34 +142,41 @@ REC_PID=$!
 
 sleep 3
 
-# 3) 播包（固定时长、1x 实时）。
+# 3) 播包（默认 1x 实时、整包播完）。
 #    不用 timeout：GNU timeout 走 CLOCK_REALTIME，WSL2 时钟跳变会提前/延后结束；
 #    这里用 sleep(相对时间, 单调钟) + pkill 做看门狗。
 T0=$(date +%s.%N)
-setsid bash -c "sleep $DURATION; pkill -INT -f 'ros2 bag play $BAG'" &
-WD_PID=$!
+WD_PID=""
+if [ "$DURATION" -gt 0 ] 2>/dev/null; then
+  setsid bash -c "sleep $DURATION; pkill -INT -f 'ros2 bag play $BAG'" &
+  WD_PID=$!
+fi
 ros2 bag play "$BAG" -r 1.0 -s sqlite3 \
   --start-offset "$START_OFFSET" \
   --topics /livox/lidar /livox/imu --disable-keyboard-controls \
   > "$OUT/play.log" 2>&1 < /dev/null
 PLAY_RC=$?
-kill -TERM -"$WD_PID" 2>/dev/null
+if [ -n "$WD_PID" ]; then kill -TERM -"$WD_PID" 2>/dev/null; fi
 T1=$(date +%s.%N)
 
 sleep 3
 
-# 4) 触发存图（服务回调内部会 pause -> save -> printTimeRecord -> resume）
-timeout 600 ros2 service call /map_save std_srvs/srv/Trigger "{}" \
+# 4) 先停 recorder，再存图。
+#    /map_save 回调内部会 reset IMU pre-integration 并触发 odom reset，
+#    若此时 recorder 仍在运行，会把重置后的坐标系写进 odom.csv，污染终点位姿指标。
+kill -TERM $REC_PID 2>/dev/null
+sleep 2
+kill -9 $REC_PID 2>/dev/null
+
+# 5) 触发存图（服务回调内部会 pause -> save -> printTimeRecord -> resume）
+#    整栋楼的地图合并比户外大很多，超时放宽到 20 min。
+timeout 1200 ros2 service call /map_save std_srvs/srv/Trigger "{}" \
   > "$OUT/service.log" 2>&1 < /dev/null
 SVC_RC=$?
 
 sleep 5
 
-# 5) 停 recorder / 节点（SIGTERM 触发 printTimeRecord）
-kill -TERM $REC_PID 2>/dev/null
-sleep 2
-kill -9 $REC_PID 2>/dev/null
-
+# 6) 停节点（SIGTERM 触发 printTimeRecord）
 kill -TERM $NODE_PID 2>/dev/null
 pkill -TERM -f "super_lio_node --ros-args --params-file $OUT/params.yaml" 2>/dev/null
 for i in $(seq 1 20); do
@@ -174,5 +199,10 @@ kill -9 $NODE_PID 2>/dev/null
     echo "map_pcd=MISSING"
   fi
 } >> "$OUT/meta.txt"
+
+if [ "$SVC_RC" -ne 0 ] || [ ! -s "$OUT/map.pcd" ]; then
+  echo "[run_one] $EXP_NAME FAILED: service_rc=$SVC_RC map_pcd=$( [ -s "$OUT/map.pcd" ] && echo ok || echo missing)"
+  exit 3
+fi
 
 echo "[run_one] $EXP_NAME done $(date -Is)"

@@ -17,6 +17,9 @@ import sys
 
 import numpy as np
 
+from bag_io import load_odom, read_pcd_xyz as pcd_points, traj_arrays
+from wall_metrics import analyze_run as wall_analyze
+
 TIMER_RE = re.compile(
     r"> \[\s*(?P<name>.+?)\s*\] avg: (?P<avg>[0-9.]+) ms , max: (?P<max>[0-9.]+) ms , calls: (?P<calls>\d+)"
 )
@@ -52,6 +55,10 @@ NOTES = {
     "expc5_clamp_merge005": "实验5：clamp + 合并门限 0.1->0.05",
     "expc6_hknn_g3": "HKNN 只搜前 3 组（6->3）",
     "expc7_hknn_s05": "HKNN 提前终止阈值 ×0.5",
+    "expm1_nw_g3": "组合：法向加权 σ=0.05 + HKNN 组数 3",
+    "expm2_g3_vox015": "组合：voxel 0.15 + HKNN 组数 3",
+    "expm3_nw_vox015": "组合：voxel 0.15 + 法向加权 σ=0.05",
+    "expm4_nw_g3_vox015": "组合：voxel 0.15 + 法向加权 σ=0.05 + HKNN 组数 3",
 }
 
 
@@ -124,62 +131,6 @@ def parse_node_log(path):
     return {k: (v[0] / v[2] if v[2] else 0.0, v[1], v[2]) for k, v in acc.items()}
 
 
-def load_odom(path):
-    if not os.path.exists(path):
-        return None
-    try:
-        data = np.genfromtxt(path, delimiter=",", names=True)
-    except Exception:
-        return None
-    if data is None or data.size == 0:
-        return None
-    if data.shape == ():
-        data = data.reshape(1)
-    return data
-
-
-def pcd_points(path):
-    """读取 binary PCD，返回 (N,3) float64 数组；不支持的类型返回 None。"""
-    if not os.path.exists(path):
-        return None
-    fields, sizes, types, counts = [], [], [], []
-    npts = 0
-    data_kind = "binary"
-    with open(path, "rb") as f:
-        while True:
-            line = f.readline()
-            if not line:
-                return None
-            s = line.decode("ascii", errors="ignore").strip()
-            if s.startswith("FIELDS"):
-                fields = s.split()[1:]
-            elif s.startswith("SIZE"):
-                sizes = [int(x) for x in s.split()[1:]]
-            elif s.startswith("TYPE"):
-                types = s.split()[1:]
-            elif s.startswith("COUNT"):
-                counts = [int(x) for x in s.split()[1:]]
-            elif s.startswith("POINTS"):
-                npts = int(s.split()[1])
-            elif s.startswith("DATA"):
-                data_kind = s.split()[1]
-                break
-
-        if data_kind != "binary" or not fields:
-            return None
-
-        np_type = {"F": "f", "U": "u", "I": "i"}
-        dtype = []
-        for fn, sz, tp, ct in zip(fields, sizes, types, counts or [1] * len(fields)):
-            base = np_type.get(tp, "f") + str(sz)
-            dtype.append((fn, base, (ct,)) if ct > 1 else (fn, base))
-        raw = np.frombuffer(f.read(npts * np.dtype(dtype).itemsize), dtype=dtype)
-        if raw.size == 0:
-            return None
-        xyz = np.stack([raw["x"], raw["y"], raw["z"]], axis=1).astype(np.float64)
-        return xyz[np.isfinite(xyz).all(axis=1)]
-
-
 def pcd_info(path):
     """返回 {'points': N, 'extent': (dx,dy,dz)}。"""
     xyz = pcd_points(path)
@@ -191,10 +142,78 @@ def pcd_info(path):
     return {"points": int(len(xyz)), "extent": hi - lo}
 
 
-def traj_arrays(odom):
-    xyz = np.stack([odom["x"], odom["y"], odom["z"]], axis=1).astype(np.float64)
-    t_abs = odom["t_ns"].astype(np.float64) * 1e-9
-    return t_abs, xyz
+def quat_to_yaw(qx, qy, qz, qw):
+    return np.arctan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
+
+def wrap_deg(a):
+    return (a + 180.0) % 360.0 - 180.0
+
+
+def loop_metrics(t_abs, xyz, yaw, path_min=20.0, z_gain=1.2):
+    """闭环指标：首圈回到起点的位姿误差 + 最终回到起点的位姿误差。
+
+    - 起点位姿 = 第一帧（odom 原点，t=0）。
+    - 首圈终点 = 在第一次持续爬升（z 相对起点 > z_gain）之前，累计路程已超过
+      path_min 后，离起点水平距离最近的那一帧（即"转一圈放回起点"）。
+    - 终点 = 最后一帧附近的 1 s 中位数（"放回原处"）。
+
+    返回值都是"当前位姿相对起点位姿"的量：xy 为水平距离，yaw 为偏航差（度）。
+    """
+    n = len(t_abs)
+    if n < 50:
+        return None
+    t = t_abs - t_abs[0]
+    p0 = xyz[0]
+    y0 = yaw[0]
+    step = np.linalg.norm(np.diff(xyz[:, :2], axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(step)])
+
+    # 第一次持续爬升：z 相对起点超过阈值并保持 2 s
+    z_rel = xyz[:, 2] - p0[2]
+    above = z_rel > z_gain
+    t_asc = None
+    for i in range(n):
+        if above[i]:
+            j = np.searchsorted(t, t[i] + 2.0)
+            j = min(j, n - 1)
+            if above[i:j + 1].mean() > 0.8:
+                t_asc = t[i]
+                break
+    if t_asc is None:
+        t_asc = t[-1]
+
+    def rel(k):
+        return {
+            "xy": float(np.linalg.norm(xyz[k, :2] - p0[:2])),
+            "z": float(xyz[k, 2] - p0[2]),
+            "yaw": float(wrap_deg((yaw[k] - y0) * 180.0 / np.pi)),
+            "t": float(t[k]),
+        }
+
+    # 首圈
+    m = (t >= 0.0) & (t <= max(t_asc - 1.0, 1.0)) & (s > path_min)
+    loop1 = None
+    if m.any():
+        idx = np.flatnonzero(m)
+        d = np.linalg.norm(xyz[idx, :2] - p0[:2], axis=1)
+        k = int(idx[int(np.argmin(d))])
+        loop1 = rel(k)
+
+    # 终点：最后 1 s
+    k_end = int(np.searchsorted(t, t[-1] - 1.0))
+    k_end = min(max(k_end, 0), n - 1)
+    seg = np.arange(k_end, n)
+    pend = np.median(xyz[seg], axis=0)
+    yend = yaw[seg]
+    yend = np.arctan2(np.median(np.sin(yend)), np.median(np.cos(yend)))
+    final = {
+        "xy": float(np.linalg.norm(pend[:2] - p0[:2])),
+        "z": float(pend[2] - p0[2]),
+        "yaw": float(wrap_deg((yend - y0) * 180.0 / np.pi)),
+        "t": float(t[-1]),
+    }
+    return {"loop1": loop1, "final": final, "t_ascend": float(t_asc)}
 
 
 def traj_metrics(t_abs, xyz):
@@ -205,6 +224,11 @@ def traj_metrics(t_abs, xyz):
     dur = float(t_abs[-1] - t_abs[0])
     # 轨迹自洽性：出现 >5 m 的单帧跳跃说明发散/重置
     jumps = int((d > 5.0).sum())
+    # 发散判据：整栋楼尺度 < 200 m，位置一旦跑到 500 m 外即可判定轨迹崩掉
+    # （例如 vox_res=0.20 的 exp3 在 t≈800 s 位置跳到 -1.3e5，地图随即被污染）
+    far = np.abs(xyz) > 500.0
+    diverged = bool(far.any())
+    t_div = float(t_abs[int(np.argmax(far.any(axis=1)))] - t_abs[0]) if diverged else np.nan
     return {
         "frames": int(len(xyz)),
         "dur_s": dur,
@@ -216,6 +240,8 @@ def traj_metrics(t_abs, xyz):
         "end_x": float(xyz[-1, 0]),
         "end_y": float(xyz[-1, 1]),
         "big_jumps": jumps,
+        "diverged": diverged,
+        "t_diverge": t_div,
     }
 
 
@@ -229,6 +255,10 @@ def interp_at(t_src, xyz_src, t_dst):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results"))
+    ap.add_argument("--ref-floor-name", type=int, default=10,
+                    help="起点楼层名，用于把层序映射成 1F/12F 这类标签（默认 10）")
+    ap.add_argument("--skip-walls", action="store_true",
+                    help="跳过分层墙面分析（只算轨迹指标，快很多）")
     args = ap.parse_args()
 
     runs = sorted(d for d in glob.glob(os.path.join(args.root, "*")) if os.path.isdir(d))
@@ -245,15 +275,19 @@ def main():
         odom = load_odom(os.path.join(d, "odom.csv"))
         if odom is None or len(odom) < 10:
             continue
+        t_abs, xyz = traj_arrays(odom)
+        yaw = quat_to_yaw(odom["qx"], odom["qy"], odom["qz"], odom["qw"])
         entries.append({
             "name": name,
             "dir": d,
             "meta": meta,
             "timers": parse_node_log(os.path.join(d, "node.log")),
             "debug": parse_debug_csv(os.path.join(d, "debug.csv")),
-            "t_abs": traj_arrays(odom)[0],
-            "xyz": traj_arrays(odom)[1],
+            "t_abs": t_abs,
+            "xyz": xyz,
+            "yaw": yaw,
             "pcd": pcd_info(os.path.join(d, "map.pcd")),
+            "wall": None if args.skip_walls else wall_analyze(d, args.ref_floor_name),
         })
 
     if not entries:
@@ -297,6 +331,8 @@ def main():
             "end_x": round(tm["end_x"], 2),
             "end_y": round(tm["end_y"], 2),
             "big_jumps": tm["big_jumps"],
+            "diverged": int(tm["diverged"]),
+            "t_diverge": round(tm["t_diverge"], 1) if np.isfinite(tm["t_diverge"]) else "",
             "map_points": pcd.get("points", 0),
             "map_dx": round(float(ext[0]), 1) if ext is not None else 0,
             "map_dy": round(float(ext[1]), 1) if ext is not None else 0,
@@ -337,6 +373,42 @@ def main():
         row["revisit_min_xy"] = round(float(dxy[k]), 2)
         row["revisit_z"] = round(float(xw[k, 2]), 2)
         row["revisit_t"] = round(float(tw[k] - tw[0]), 1)
+
+        # 闭环误差：首圈回到起点 / 最终回到起点（相对第一帧位姿）
+        lm = loop_metrics(e["t_abs"], e["xyz"], e["yaw"])
+        if lm:
+            row["t_ascend"] = round(lm["t_ascend"], 1)
+            l1 = lm["loop1"] or {}
+            row["loop1_xy"] = round(l1.get("xy", np.nan), 2)
+            row["loop1_z"] = round(l1.get("z", np.nan), 2)
+            row["loop1_yaw"] = round(l1.get("yaw", np.nan), 2)
+            row["loop1_t"] = round(l1.get("t", np.nan), 1)
+            f = lm["final"]
+            row["final_xy"] = round(f["xy"], 2)
+            row["final_z"] = round(f["z"], 2)
+            row["final_yaw"] = round(f["yaw"], 2)
+            row["closure_3d"] = round(float(np.hypot(f["xy"], f["z"])), 2)
+
+        # 分层墙面指标（1F / 最高层相对起始层）
+        w = e["wall"]
+        if w:
+            row["floors"] = w["floor_count"]
+            row["ref_floor"] = w["ref_floor"]
+            row["floor_h"] = round(w["floor_h"], 3)
+            row["low_floor"] = w["low_floor"]
+            row["low_rel"] = w["low_rel"]
+            row["low_dxy"] = round(float(np.hypot(w["low_dx"], w["low_dy"])), 2) \
+                if np.isfinite(w["low_dx"]) and np.isfinite(w["low_dy"]) else np.nan
+            row["low_dz"] = round(w["low_dz_total"], 2) if np.isfinite(w["low_dz_total"]) else np.nan
+            row["low_dyaw"] = round(w["low_dyaw"], 2) if np.isfinite(w["low_dyaw"]) else np.nan
+            row["low_reliable"] = int(w["low_reliable"]) if np.isfinite(w["low_reliable"]) else 0
+            row["top_floor"] = w["high_floor"]
+            row["top_rel"] = w["top_rel"]
+            row["top_dz"] = round(w["top_dz_total"], 2) if np.isfinite(w["top_dz_total"]) else np.nan
+            row["top_dxy"] = round(float(np.hypot(w["top_dx"], w["top_dy"])), 2) \
+                if np.isfinite(w["top_dx"]) and np.isfinite(w["top_dy"]) else np.nan
+            row["top_dyaw"] = round(w["top_dyaw"], 2) if np.isfinite(w["top_dyaw"]) else np.nan
+            row["bow_pp"] = round(w["bow_pp"], 3) if np.isfinite(w["bow_pp"]) else np.nan
 
         rows.append(row)
 
@@ -395,6 +467,57 @@ def main():
     err = {r["name"]: r.get("end_err_vs_base", 0.0) for r in rows}
     fr = {r["name"]: r["Observe_avg_ms"] for r in rows}
 
+    # ---- 累计漂移：闭环 + 逐层墙面偏差 ----
+    def num(r, k, dflt=np.nan):
+        v = r.get(k, dflt)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return dflt
+        return v if np.isfinite(v) else dflt
+
+    def drift_score(r):
+        """综合累计漂移打分（越小越好）。
+
+        末位置闭环 closure_3d 反映总体累计误差；第一趟的扭曲在最终地图里以
+        "各层墙相对起点层的偏移"留存，因此把 1F 水平偏移计入，yaw 偏移按
+        约 5 m 力臂折算成米（1 deg ≈ 0.09 m，取 0.1）。
+        """
+        c = num(r, "closure_3d")
+        if not np.isfinite(c):
+            return np.inf
+        low = num(r, "low_dxy")
+        # 缺墙面指标（存图失败 / 无 map.pcd）不能按 0 计，否则会被当成零漂移排到前面
+        if not np.isfinite(low):
+            return np.inf
+        return c + low + 0.1 * abs(num(r, "low_dyaw", 0.0))
+
+    ranked = [r for r in sorted(rows, key=drift_score)
+              if np.isfinite(drift_score(r)) and not r.get("diverged")]
+    for i, r in enumerate(ranked, 1):
+        r["drift_rank"] = i
+        r["drift_score"] = round(drift_score(r), 2)
+
+    def rng(key):
+        vals = [num(r, key) for r in legacy]
+        vals = [v for v in vals if np.isfinite(v)]
+        return (min(vals), max(vals)) if vals else (np.nan, np.nan)
+
+    def span(p, unit=""):
+        return ("%.2f%s~%.2f%s" % (p[0], unit, p[1], unit)
+                if np.isfinite(p[0]) and np.isfinite(p[1]) else "n/a")
+
+    best = ranked[0] if ranked else None
+    worst = ranked[-1] if ranked else None
+    best_rel = min([r for r in ranked if int(r.get("low_reliable", 0)) == 1],
+                   key=drift_score, default=None)
+    div_rows = [r for r in rows if r.get("diverged")]
+    best_closure = min([r for r in rows if np.isfinite(num(r, "closure_3d"))],
+                       key=lambda r: num(r, "closure_3d"), default=None)
+    best_low = min([r for r in rows if np.isfinite(num(r, "low_dxy"))],
+                   key=lambda r: num(r, "low_dxy") + 0.1 * abs(num(r, "low_dyaw", 0.0)),
+                   default=None)
+
     # 代码级实验的结论行
     code_base = next((r for r in code_rows if r["name"] == "expc1_base"),
                      code_rows[0] if code_rows else None)
@@ -428,6 +551,18 @@ def main():
                    r.get("rms_vs_base", -1), r["z_final"], code_base["z_final"],
                    r["map_points"] / 1e3, code_base["map_points"] / 1e3))
 
+    extra_lines = []
+    if div_rows:
+        extra_lines.append(
+            "- 发散组（已排除出排名）：%s —— 位置跑到 500 m 外，轨迹与地图均不可用。"
+            % "、".join("%s(t≈%.0fs)" % (r["name"], num(r, "t_diverge", 0.0)) for r in div_rows))
+    if best_rel:
+        extra_lines.append(
+            "- 若只采信 1F 墙面配准可信的组（n_match≥4，或 3 条线且 align_cost<0.25），"
+            "最优为 **%s**：1F dxy %.2f m、dyaw %.2f°、score %.2f。"
+            % (best_rel["name"], num(best_rel, "low_dxy"), num(best_rel, "low_dyaw"),
+               best_rel["drift_score"]))
+
     off = rows[0].get("start_offset", "?")
     md = [
         "# Super-LIO 参数实验汇总\n",
@@ -440,10 +575,12 @@ def main():
               ["实验", "改了什么", "filter_rate", "voxel(m)", "imu_na/ng", "hash vox_res(m)"]),
         "\n## 1. 轨迹与点云\n",
         table(["name", "frames", "dur_s", "path_m", "speed_mps", "z_min", "z_max", "z_final",
-               "end_x", "end_y", "big_jumps", "revisit_min_xy", "revisit_z", "revisit_t",
+               "end_x", "end_y", "big_jumps", "diverged", "t_diverge",
+               "revisit_min_xy", "revisit_z", "revisit_t",
                "map_points", "map_dx", "map_dy", "map_dz", "rms_vs_base", "end_err_vs_base"],
               ["实验", "帧数", "时长(s)", "轨迹长(m)", "均速(m/s)", "z_min", "z_max", "z_final",
-               "end_x", "end_y", ">5m跳跃", "回起点最近XY(m)", "该帧z(m)", "该帧t(s)",
+               "end_x", "end_y", ">5m跳跃", "发散", "发散时刻(s)",
+               "回起点最近XY(m)", "该帧z(m)", "该帧t(s)",
                "地图点数", "dx", "dy", "dz", "RMS vs 基线(m)", "末位置偏差(m)"]),
         "\n## 2. 各阶段耗时（ms/帧，跨所有 60s 窗口按 calls 加权）\n",
         table(["name", "Undistort_avg_ms", "PublishBody_avg_ms", "DownSample_avg_ms",
@@ -456,7 +593,33 @@ def main():
               ["实验", "去畸变max", "体素max", "观测max", "地图max"]),
         "\n> `rms_vs_base`：与基线在同一时间戳上插值后的 3D 位置差 RMS；`end_err_vs_base`：末位置差。"
         "无真值，仅反映相对一致性。`>5m跳跃` 非 0 说明轨迹发散或发生重置。\n",
-        "\n## 4. 代码级实验：开关与埋点（lio.debug.level=2 的逐帧统计）\n",
+        "\n## 4. 累计漂移：首圈 / 最终闭环 + 逐层墙面偏差\n",
+        "判据：`loop1_*` 是第一圈放回起点时的位姿误差（≈ 第一趟累积漂移）；"
+        "`final_*` / `closure_3d` 是全程结束回到起点时的位姿误差；"
+        "`low_*` 是最低停留层（本 bag 即 1F）墙面相对起点层的平移/偏航偏差，"
+        "由最终地图里各层墙面直线配准得到——地图按建图时刻位姿逐帧累积，"
+        "所以即使回程被已有地图吸住，第一趟的扭曲仍会留成层间墙面错位；"
+        "`low_dz` 是实测的 z 落差（起点层→最低层），与真实楼高对比即可看出竖向漂移；"
+        "`low_rel` 是该层相对起点层停留了几个层（中间层若未停留不会出现在表里）；"
+        "`bow_pp` 是参考墙沿整栋高度的弯曲幅度（p95-p5，米）。\n",
+        table(["name", "t_ascend", "loop1_xy", "loop1_z", "loop1_yaw", "loop1_t",
+               "final_xy", "final_z", "final_yaw", "closure_3d",
+               "floors", "ref_floor", "low_floor", "low_rel", "low_dxy", "low_dz", "low_dyaw",
+               "top_floor", "top_rel", "top_dz", "top_dxy", "top_dyaw", "bow_pp"],
+              ["实验", "首圈爬升t(s)", "首圈XY(m)", "首圈Δz(m)", "首圈Δyaw(°)", "首圈t(s)",
+               "终点XY(m)", "终点Δz(m)", "终点Δyaw(°)", "终点3D(m)",
+               "停留层数", "起点层", "最低层", "相对层号", "最低层dxy(m)", "最低层Δz(m)", "最低层dyaw(°)",
+               "最高层", "相对层号", "最高层Δz(m)", "最高层dxy(m)", "最高层dyaw(°)", "墙面弯曲p95-p5(m)"]),
+        "\n**累计漂移排名**（score = closure_3d + low_dxy + 0.1×|low_dyaw|，越小越好）\n",
+        table(["drift_rank", "name", "note", "closure_3d", "loop1_xy", "final_xy",
+               "low_dxy", "low_dyaw", "low_reliable", "bow_pp", "drift_score"],
+              ["排名", "实验", "改了什么", "终点3D(m)", "首圈XY(m)", "终点XY(m)",
+               "1F dxy(m)", "1F dyaw(°)", "1F配准可信", "墙面弯曲(m)", "score"]),
+        "\n> 墙面指标由 `wall_metrics.py` 计算：按 odom 的 z 平台段分楼层 → 竖向点筛选 → "
+        "xy 平面 RANSAC 直线 → 以法向 mod 90° 的主方向求 Δyaw → 直线偏移量加权最小二乘求 Δx/Δy。"
+        "`low_dxy/low_dyaw` 为 NaN 表示该层墙面不足（直线跨度/覆盖率门控未过），"
+        "此时以 `walls.csv` 的 `n_lines/obs/align_cost` 判断可信度。\n",
+        "\n## 5. 代码级实验：开关与埋点（lio.debug.level=2 的逐帧统计）\n",
         table(["name", "normal_weight_en", "normal_sigma", "map_rep_mode", "map_clamp_mu",
                "map_merge_dist", "hknn_max_group", "hknn_order_scale"],
               ["实验", "法向加权", "sigma", "代表点模式", "μ clamp", "merge(m)",
@@ -473,7 +636,7 @@ def main():
         "通过全部门控并进入信息矩阵的点占比；`htvh_cond` 反映 point-to-plane 观测在 6 自由度上的可观测性。\n",
         "\n**代码级实验要点**\n",
         *code_lines,
-        "\n## 5. 结论（前七组参数实验）\n",
+        "\n## 6. 结论（前七组参数实验）\n",
         "**速度**\n",
         "- 唯一显著耗时项是 `Observe`（HKNN + point-to-plane），占单帧总耗时的 %s；"
         "其余五段合计不到 1.5 ms/帧。" % obs_share_txt,
@@ -488,39 +651,38 @@ def main():
         "- `imu_na/ng` 0.1→0.01→0.001 时 `Observe` 反而降到 %.2f/%.2f ms："
         "过程噪声变小后预测更贴合，Huber 权重下残差分布更集中，迭代更快。"
         % (fr.get("exp5_imu001", 0), fr.get("exp6_imu0001", 0)),
-        "\n**轨迹与点云**\n",
-        "- %d 组参数实验轨迹形态一致：路径长 %.2f~%.2f m、均速 %.2f m/s、`>5m跳跃` 全为 0，"
-        "无发散或重置；地图点数与包围盒（%.1f×%.1f×%.1f m）基本重合。"
+        "\n**轨迹与累计漂移**\n",
+        "- %d 组轨迹形态一致：路径长 %.2f~%.2f m、均速 %.2f m/s、无 >5 m 单帧跳跃；"
+        "地图包围盒 %.1f×%.1f×%.1f m。"
         % (len(legacy), min(paths), max(paths), rows[0]["speed_mps"],
            min(r["map_dx"] for r in legacy), max(r["map_dy"] for r in legacy),
            rows[0]["map_dz"]),
-        "- 相对基线最近的是 **%s**（RMS %.3f m，末位置差 %.3f m，z_final %.2f）。"
-        % (closest["name"], closest["rms_vs_base"], closest["end_err_vs_base"],
-           zf.get(closest["name"], 0)) if closest else "- 无其他实验可对比。",
-        "- `filter_rate` 6→3/1 与细化体素（0.20/0.15）都把末段 z 从基线的 %.2f m 抬到 "
-        "%.2f~%.2f m，横向末位置偏 %.2f~%.2f m；三组变化量远大于 imu 组，"
-        "说明“匹配点更多/更细”的配置在这段回环数据上会放大 z 漂移。"
-        % (zf.get("exp0_baseline", 0),
-           min(zf.get(k, 0) for k in ("exp1_fr3", "exp2_fr1", "exp3_vox020", "exp4_vox015")),
-           max(zf.get(k, 0) for k in ("exp1_fr3", "exp2_fr1", "exp3_vox020", "exp4_vox015")),
-           min(abs(err.get(k, 0)) for k in ("exp1_fr3", "exp2_fr1", "exp3_vox020", "exp4_vox015")),
-           max(abs(err.get(k, 0)) for k in ("exp1_fr3", "exp2_fr1", "exp3_vox020", "exp4_vox015"))),
+        "- 闭环误差：首圈放回起点的水平偏差 %s m，终点回到起点 %s m（3D %s m），"
+        "终点 Δyaw %s。"
+        % (span(rng("loop1_xy")), span(rng("final_xy")), span(rng("closure_3d")),
+           span(rng("final_yaw"), "°")),
+        "- 逐层墙面（1F 相对起点层）：平移偏差 %s m，Δyaw %s；参考墙沿高度的弯曲幅度 %s m。"
+        "墙面偏差不受回程地图匹配影响，是判断第一趟扭曲的直接证据。"
+        % (span(rng("low_dxy")), span(rng("low_dyaw"), "°"), span(rng("bow_pp"))),
+        "- 累计漂移最优 **%s**（score %.2f：终点3D %.2f m、1F dxy %.2f m、1F dyaw %.2f°）；"
+        "最差 **%s**（score %.2f）。"
+        % (best["name"], best["drift_score"], num(best, "closure_3d"),
+           num(best, "low_dxy"), num(best, "low_dyaw"),
+           worst["name"], worst["drift_score"]) if best and worst
+        else "- 闭环/墙面指标不足，无法排名。",
+        "- 两种口径的差异：只看终点 3D 闭环最优是 **%s**（%.2f m），"
+        "叠加 1F 墙面偏差后最优是 **%s**——差异说明终点闭环可能被回程地图匹配掩盖。"
+        % (best_closure["name"], num(best_closure, "closure_3d"), best_low["name"])
+        if best_closure and best_low else "- 口径对比数据不足。",
+        *extra_lines,
         "\n**建议**\n",
-        "- 保留 `filter_rate=6`，把 `imu_na/ng` 0.1→0.01：在 filter_rate=6 组内它最快"
-        "（%.2f ms/帧）且最贴基线（RMS %.3f m）；0.001 单帧总耗时还低 %.2f ms，"
-        "但与基线偏差增至 %.3f m，属于“更信任 IMU”的更激进版本，收益不足以抵消风险。"
-        % (fr.get("exp5_imu001", 0),
-           closest["rms_vs_base"] if closest and closest["name"] == "exp5_imu001" else 0,
-           fr.get("exp0_baseline", 0) - fr.get("exp6_imu0001", 0),
-           next((r["rms_vs_base"] for r in nonbase if r["name"] == "exp6_imu0001"), 0)),
-        "- `filter_rate=1` 用基线的 %.1f 倍算力只换来 %.2f m 的轨迹变化，10 Hz 下没有必要；"
-        "若希望更密的匹配约束，先试 3（%.2f ms/帧，基线的 %.1f 倍）。"
-        % (fr.get("exp2_fr1", 0) / fr.get("exp0_baseline", 1),
-           next((r["rms_vs_base"] for r in nonbase if r["name"] == "exp2_fr1"), 0),
-           fr.get("exp1_fr3", 0),
-           fr.get("exp1_fr3", 0) / fr.get("exp0_baseline", 1)),
-        "- 体素 0.25→0.20/0.15 在本段户外回环上无收益（耗时持平、末段 z 漂移更大），"
-        "不建议作为默认改动；体素细化更适合已知的狭窄/室内场景再单独验证。",
+        "- 以 `drift_score` 排名第一的 **%s** 作为本楼梯间 bag 的默认配置："
+        "它在终点闭环与 1F 墙面两项上综合最优。"
+        % best["name"] if best else "- 建议等待完整 14 组结果后再定配置。",
+        "- 排序时不要只看 `rms_vs_base`/`end_err_vs_base`：这两个指标衡量的是与基线的一致性，"
+        "基线本身在楼梯井里就是漂的；`closure_3d`、`loop1_xy`、`low_dxy/low_dyaw` 才直接对应累计误差。",
+        "- 若某组 `low_dxy/low_dyaw` 为 n/a，先查该组 `walls.csv` 的 `n_lines/obs/align_cost`，"
+        "确认是墙面太少（该层只进大厅没扫全井道）而不是算法失效。",
         "\n> 无真值（无 RTK/动捕），以上“更好/更差”均指与基线的一致性与自洽性，"
         "不能替代有真值的绝对精度评估。\n",
         "CSV: `summary.csv`\n",
