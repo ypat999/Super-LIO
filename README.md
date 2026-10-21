@@ -9,17 +9,22 @@
 
 > **XTDrone2 fork 说明**（分支 `no-de-check`，与主仓库 `XTDrone2_ego_planner` 协同）
 >
-> - `launch/Livox_mid360_drone.py`：已停用恒等 `map->odom` 静态发布——该 TF 由
+> - `src/super_lio/launch/Livox_mid360_drone.py`：已停用恒等 `map->odom` 静态发布——该 TF 由
 >   `lidar_localization_ros2` 独家持有（含原点基准精准降落校正），避免 `/tf_static`
 >   双写竞态导致的定位跳变（提交 `015d2b6`）。
 > - 外参一致性：launch 静态链 `imu→livox_frame→base_link`
->   `(yaw=180°, pitch=210°)` 与 `config/livox_360_drone.yaml` 的
+>   `(yaw=180°, pitch=210°)` 与 `src/super_lio/config/livox_360_drone.yaml` 的
 >   `lio.extrinsic.odom_robo (roll=180°, pitch=-30°)` 定义的 base_link 等价
 >   （`/lio/robo/odom` 与 TF 树一致，已实测验证，勿单侧修改）。
 > - 点云双链路输出（提交 `8a21fd9`，原 `lio/body/cloud` 改名为 `lio/cloud_body`）：
->   - 实时链路 `lio/cloud_body`（机体系）/ `lio/cloud_world`（world）：输入按
->     `lio.sensor.filter_rate` 隔点抽稀，配准、去畸变、发布全走抽稀点，**不再过体素降采样**，
->     单核负载与延迟确定
+>   - 实时链路 `lio/cloud_body`（机体系）/ `lio/cloud_world`（world）：输入先按
+>     `lio.sensor.filter_rate` 隔点抽稀（并做 range/intensity 过滤），再做 IMU 去畸变；
+>     **配准与建图**使用 `VoxelGridClosest`（`lio.sensor.voxel_fliter_size`，本配置 0.25 m）——
+>     每个体素只保留**离体素中心最近的真实测量点**（整点拷贝，保留 `offset_time`），
+>     不做质心平均；**发布**的 `cloud_body`/`cloud_world` 用的是抽稀但**未体素化**的去畸变点云，
+>     因此话题点密度由 `filter_rate` 决定
+>   - 注意：`lio.sensor.enable_downsample` 只在 `downsample_only` 模式生效；
+>     正常 LIO 模式下 `DownSample()` 无开关，体素降采样恒开
 >   - 全量链路 `lio/cloud_body_dense`（机体系）：`DenseThread` 异步消费每帧全量原始点，
 >     复用同一 IMU 传播轨迹去畸变 + 配准 delta 修正，有界队列（>3 帧丢最旧）防积压，
 >     主线程零阻塞
@@ -215,6 +220,8 @@ ros2 launch super_lio gazebo_mid360.py
 
 - **独立点云发布线程**：点云发布在独立线程中执行，不阻塞 LIO 主线程的实时计算
 - **取点算法优化**：优化了点云采样策略，步长取点时每帧循环偏移起始位置，避免固定间隔采样导致的时域锯齿伪影
+  （由 `lio.sensor.enable_filter_offset` 控制；`livox_360_drone.yaml` 当前为 `false`，
+  即实际使用固定步长抽稀，需要时再打开）
 
 ### 地图保存服务
 
