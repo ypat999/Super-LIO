@@ -451,7 +451,7 @@ def main():
         return "\n".join(out)
 
     # 结论里引用的数字全部从 rows 里取，避免手写数字与表脱节
-    legacy = [r for r in rows if not r["name"].startswith("expc")]
+    legacy = [r for r in rows if not r["name"].startswith("expc") and not r.get("diverged")]
     if not legacy:
         legacy = rows
     code_rows = [r for r in rows if r["name"].startswith("expc")]
