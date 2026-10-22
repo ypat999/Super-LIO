@@ -567,8 +567,10 @@ void SuperLIO::enqueueDense(){
   data.pc_full = measures_.lidar.pc_full;    // shared_ptr 共享，避免 2 万点深拷贝
   data.propagate_states = propagate_states_; // 值拷贝（主线程下一帧会覆盖）
   data.imu_gyr.reserve(measures_.imu.size());
+  // 与 ESKF 传播一致：减掉陀螺零偏后再去畸变（同 Propagation_Undistort）
+  const V3 bg = kf_->GetSysState().bg;
   for (auto &imu : measures_.imu) {
-    data.imu_gyr.emplace_back(imu.gyr);
+    data.imu_gyr.emplace_back(imu.gyr - bg);
   }
   data.start_time = measures_.lidar.start_time;
   data.timestamp = kf_->GetNavState().timestamp;
@@ -1027,10 +1029,14 @@ void SuperLIO::Propagation_Undistort(){
   const SE3 T_end = kf_->GetSE3();
   T_predicted_end_ = T_end;  // save for delta correction after ESKF update
   // 构建每个区间的原始陀螺仪序列（去畸变 omega_body 用，异步 dense 也复用）
+  // 必须与 ESKF 传播用同一套角速度：Predict() 里是 (gyr - bg_)，
+  // 若这里直接用原始 gyr，帧内每个点会被多转 bg*tau（bg_x≈3.9 deg/s 时
+  // 100 ms 帧尾可达 0.39 deg 的常值 roll 偏斜，方向恒定，属于系统性偏置）。
+  const V3 bg = kf_->GetSysState().bg;
   std::vector<V3> imu_gyr;
   imu_gyr.reserve(measures_.imu.size());
   for (auto &imu : measures_.imu) {
-    imu_gyr.emplace_back(imu.gyr);
+    imu_gyr.emplace_back(imu.gyr - bg);
   }
 
   undistortCloud(measures_.lidar.pc, propagate_states_, imu_gyr,
@@ -1418,9 +1424,13 @@ void SuperLIO::Observe(){
       std::error_code ec;
       fs::create_directories(dir, ec);
       debug_csv_.open(dir + "/debug.csv", std::ios::out | std::ios::trunc);
+      // 默认 6 位有效数字会把 1.79e9 量级的绝对时间戳量化到 1e4 s，
+      // 逐帧 dt 完全丢失；这里提高到 12 位（时间戳分辨率 ~1e-3 s）。
+      debug_csv_ << std::setprecision(12);
       debug_csv_ << "t,ptsize,n_knn_fail,n_plane_fail,n_res_fail,n_effect,"
                     "fit_res_mean,fit_res_p95,iters,dx_inf,cond_yk,qk_finite,"
-                    "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale\n";
+                    "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale,"
+                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz\n";
     }
     double fit_mean = 0.0, fit_p95 = 0.0;
     if (!fit_res_vec_.empty()) {
@@ -1443,6 +1453,9 @@ void SuperLIO::Observe(){
     }
     const auto state = kf_->GetNavState();
     const V3 rv = state.R.log_vee();
+    // 更新前的预测姿态（去畸变基准），与后验一起给出每帧观测修正量
+    const V3 rv_pred = SO3(T_predicted_end_.R_).log_vee();
+    const auto sys_state = kf_->GetSysState();
     debug_csv_ << state.timestamp << ',' << ptsize << ','
                << n_knn_fail << ',' << n_plane_fail << ',' << n_res_fail << ',' << n_effect << ','
                << fit_mean << ',' << fit_p95 << ','
@@ -1452,7 +1465,9 @@ void SuperLIO::Observe(){
                << state.p.x() << ',' << state.p.y() << ',' << state.p.z() << ','
                << state.v.x() << ',' << state.v.y() << ',' << state.v.z() << ','
                << rv.x() << ',' << rv.y() << ',' << rv.z() << ','
-               << kf_->GetImuScale() << '\n';
+               << kf_->GetImuScale() << ','
+               << rv_pred.x() << ',' << rv_pred.y() << ',' << rv_pred.z() << ','
+               << sys_state.bg.x() << ',' << sys_state.bg.y() << ',' << sys_state.bg.z() << '\n';
     debug_csv_.flush();
   }
 

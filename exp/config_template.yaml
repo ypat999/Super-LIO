@@ -35,7 +35,9 @@
     lio.sensor.imu_na: __IMU_NA__
     lio.sensor.imu_ng: __IMU_NG__
     lio.sensor.imu_nba: 0.0001
-    lio.sensor.imu_nbg: 0.0001
+    lio.sensor.imu_nbg: __IMU_NBG__
+    lio.sensor.imu_gyr_scale: __IMU_GYR_SCALE__
+    lio.sensor.lidar_time_offset: __LIDAR_TIME_OFFSET__
 
     lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
                               1.0, 0.0, 0.0,
@@ -76,9 +78,11 @@
     lio.dynamic_removal.raycast_min_hits: 2
     lio.dynamic_removal.isolated_removal: false
 
-    lio.sc_pgo.enable: false
-    lio.sc_pgo.keyframe_gap: 0.5
-    lio.sc_pgo.keyframe_deg_gap: 5.0
+    # SC-PGO 兼容输出：true 时每关键帧落盘 Scans/*.pcd + odom_poses.txt，
+    # 只做导出、不改变 LIO 本身；用于离线按时间窗重建点云做 yaw 漂移诊断
+    lio.sc_pgo.enable: __SC_PGO_EN__
+    lio.sc_pgo.keyframe_gap: __SC_KF_GAP__
+    lio.sc_pgo.keyframe_deg_gap: __SC_KF_DEG__
 
     # 组间保持一致
     lio.single_core: true

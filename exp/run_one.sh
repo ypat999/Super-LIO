@@ -26,6 +26,9 @@ FILTER_RATE=$2
 VOXEL_SIZE=$3
 IMU_NA=$4
 IMU_NG=$5
+IMU_NBG=${IMU_NBG:-0.0001}
+IMU_GYR_SCALE=${IMU_GYR_SCALE:-1.0}
+LIDAR_TIME_OFFSET=${LIDAR_TIME_OFFSET:-0.0}
 VOX_RES=$6
 # 0 = 整包，不设看门狗
 DURATION=${7:-${DURATION:-0}}
@@ -41,6 +44,10 @@ MAP_MAX_POINTS=${MAP_MAX_POINTS:-20}
 MAP_MERGE_DIST=${MAP_MERGE_DIST:-0.1}
 HKNN_MAX_GROUP=${HKNN_MAX_GROUP:--1}
 HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
+# SC-PGO 兼容输出（只导出关键帧扫描+位姿，不改变 LIO 行为）
+SC_PGO_EN=${SC_PGO_EN:-false}
+SC_KF_GAP=${SC_KF_GAP:-0.5}
+SC_KF_DEG=${SC_KF_DEG:-5.0}
 
 BAG=${BAG:-/home/ywj/slam_data/livox_record_A_building}
 EXP_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -74,6 +81,9 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__VOXEL_SIZE__|$VOXEL_SIZE|g" \
     -e "s|__IMU_NA__|$IMU_NA|g" \
     -e "s|__IMU_NG__|$IMU_NG|g" \
+    -e "s|__IMU_NBG__|$IMU_NBG|g" \
+    -e "s|__IMU_GYR_SCALE__|$IMU_GYR_SCALE|g" \
+    -e "s|__LIDAR_TIME_OFFSET__|$LIDAR_TIME_OFFSET|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
     -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
     -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
@@ -84,6 +94,9 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__MAP_MERGE_DIST__|$MAP_MERGE_DIST|g" \
     -e "s|__HKNN_MAX_GROUP__|$HKNN_MAX_GROUP|g" \
     -e "s|__HKNN_ORDER_SCALE__|$HKNN_ORDER_SCALE|g" \
+    -e "s|__SC_PGO_EN__|$SC_PGO_EN|g" \
+    -e "s|__SC_KF_GAP__|$SC_KF_GAP|g" \
+    -e "s|__SC_KF_DEG__|$SC_KF_DEG|g" \
     "$TEMPLATE" > "$OUT/params.yaml"
 
 {
@@ -92,6 +105,9 @@ sed -e "s|__OUTDIR__|$OUT|g" \
   echo "voxel_fliter_size=$VOXEL_SIZE"
   echo "imu_na=$IMU_NA"
   echo "imu_ng=$IMU_NG"
+  echo "imu_nbg=$IMU_NBG"
+  echo "imu_gyr_scale=$IMU_GYR_SCALE"
+  echo "lidar_time_offset=$LIDAR_TIME_OFFSET"
   echo "vox_resolution=$VOX_RES"
   echo "debug_level=$DEBUG_LEVEL"
   echo "normal_weight_en=$NORMAL_WEIGHT_EN"
@@ -102,6 +118,9 @@ sed -e "s|__OUTDIR__|$OUT|g" \
   echo "map_merge_dist=$MAP_MERGE_DIST"
   echo "hknn_max_group=$HKNN_MAX_GROUP"
   echo "hknn_order_scale=$HKNN_ORDER_SCALE"
+  echo "sc_pgo_en=$SC_PGO_EN"
+  echo "sc_kf_gap=$SC_KF_GAP"
+  echo "sc_kf_deg=$SC_KF_DEG"
   echo "duration=$DURATION"
   echo "start_offset=$START_OFFSET"
   echo "bag=$BAG"

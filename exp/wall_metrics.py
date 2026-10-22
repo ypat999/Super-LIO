@@ -37,7 +37,8 @@ import os
 import numpy as np
 from scipy.ndimage import median_filter
 
-from bag_io import load_odom, read_pcd_xyz, traj_arrays
+from bag_io import (load_odom, read_pcd_xyz, traj_arrays, estimate_up,
+                    rot_from_to)
 
 DEG = 180.0 / np.pi
 
@@ -323,7 +324,7 @@ def bow_profile(pts, line, half_width=0.4, zbin=0.5, min_count=30):
 # ----------------------------------------------------------------------------
 # 主流程
 # ----------------------------------------------------------------------------
-def analyze_run(run_dir, ref_floor_name=10, verbose=False):
+def analyze_run(run_dir, ref_floor_name=10, verbose=False, align_gravity=False):
     odom = load_odom(os.path.join(run_dir, "odom.csv"))
     if odom is None or len(odom) < 50:
         return None
@@ -335,6 +336,18 @@ def analyze_run(run_dir, ref_floor_name=10, verbose=False):
         if len(xyz) < 200:
             return None
     t = t_abs - t_abs[0]
+
+    R_align = np.eye(3)
+    if align_gravity:
+        # 世界系 z 未与重力对齐（FAST-LIO）时，先把 odom/map 一起旋到重力对齐系
+        up = estimate_up(xyz, t_abs)
+        R_align = rot_from_to(up)
+        tilt = np.degrees(np.arccos(min(1.0, abs(float(up[2])))))
+        xyz = xyz @ R_align.T
+        lap = t < 115.0
+        zz = xyz[lap, 2] if lap.sum() > 50 else xyz[:, 2]
+        print(f"[align] {os.path.basename(run_dir)}: up={np.round(up, 4)} "
+              f"与 +z 夹角 {tilt:.2f}°, 对齐后第一圈 z {zz.min():+.2f}..{zz.max():+.2f} m")
 
     levels = detect_floor_levels(t, xyz)
     if not levels:
@@ -353,6 +366,8 @@ def analyze_run(run_dir, ref_floor_name=10, verbose=False):
     pts = read_pcd_xyz(os.path.join(run_dir, "map.pcd"), max_points=6_000_000)
     if pts is None:
         pts = np.zeros((0, 3))
+    elif align_gravity:
+        pts = pts @ R_align.T
 
     # 井道中心：用爬楼段（|vz| 大）的轨迹中位数
     if len(t) > 10 and pts.size:
@@ -524,9 +539,12 @@ def main():
     ap.add_argument("run_dir", nargs="+", help="实验目录（含 odom.csv / map.pcd）")
     ap.add_argument("--ref-floor-name", type=int, default=10,
                     help="起始楼层名（默认 10）")
+    ap.add_argument("--align-gravity", action="store_true",
+                    help="世界系 z 未与重力对齐时（FAST-LIO）先旋转到重力对齐系")
     args = ap.parse_args()
     for d in args.run_dir:
-        res = analyze_run(d, args.ref_floor_name, verbose=True)
+        res = analyze_run(d, args.ref_floor_name, verbose=True,
+                          align_gravity=args.align_gravity)
         if res is None:
             print(f"[walls] {d}: 无可用 odom")
 

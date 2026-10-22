@@ -48,6 +48,8 @@ namespace LI2Sup{
   double g_imu_ng;
   double g_imu_nba;
   double g_imu_nbg;
+  double g_imu_gyr_scale = 1.0;
+  double g_lidar_time_offset = 0.0;
 
   SE3 g_lidar_imu;
   SE3 g_odom_robo;

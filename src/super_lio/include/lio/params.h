@@ -67,6 +67,16 @@ namespace LI2Sup{
   extern double g_imu_ng;
   extern double g_imu_nba;
   extern double g_imu_nbg;
+  // 陀螺 scale 修正系数（乘在原始角速度上，默认 1.0）。
+  // 螺旋楼梯道每层转 360°，陀螺 scale 误差 δ 会折算成每层恒定 δ×360° 的
+  // yaw 偏转（同向同角度），且往返一圈后归零 —— 这是"逐层同向偏转"的系统性
+  // 来源，靠配准观测只能部分压住，需要在此显式标定。
+  extern double g_imu_gyr_scale;
+
+  // 雷达逐点时间基准偏移（秒，默认 0）。只作用于点的去畸变时刻，不改帧 end_time。
+  // 若雷达时间戳相对 IMU 时钟有固定滞后 Δ，去畸变时每帧点云会整体多转 ω·Δ，
+  // 配准把整帧云当刚体对齐 ⇒ 位姿每帧偏 ω·Δ，沿螺旋累计成"与转角成正比"的 yaw 偏置。
+  extern double g_lidar_time_offset;
 
   extern BASIC::SE3 g_lidar_imu;      // lidar in imu frame
   extern BASIC::SE3 g_odom_robo;      // lidar in robot frame

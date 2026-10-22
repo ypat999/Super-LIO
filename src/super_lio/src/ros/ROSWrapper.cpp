@@ -126,6 +126,17 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.sensor.imu_nbg", 0.0);
   node.get_parameter("lio.sensor.imu_nbg", g_imu_nbg);
 
+  // 陀螺 scale 修正（1.0 为不修正）。螺旋楼梯道里 yaw 净转角与层数成正比，
+  // 任何陀螺 scale 误差 δ 都会变成"每层固定偏转 δ*360°"，属于系统性偏置。
+  node.declare_parameter<double>("lio.sensor.imu_gyr_scale", 1.0);
+  node.get_parameter("lio.sensor.imu_gyr_scale", g_imu_gyr_scale);
+
+  // 雷达逐点时间基准偏移（秒，默认 0）。只作用于点的去畸变时刻，不改 end_time，
+  // 用于标定"雷达时间戳相对 IMU 时钟的固定滞后"：Δ 让每帧点云整体多转 ω·Δ，
+  // 沿螺旋楼梯累计后就是与转角成正比的 yaw 偏置（每层同向同角度）。
+  node.declare_parameter<double>("lio.sensor.lidar_time_offset", 0.0);
+  node.get_parameter("lio.sensor.lidar_time_offset", g_lidar_time_offset);
+
   // ================= extrinsic =================
   std::vector<double> extrinsic_lidar_imu;
   node.declare_parameter<std::vector<double>>(
@@ -743,6 +754,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   V3 gyr_raw(msg->angular_velocity.x,
              msg->angular_velocity.y,
              msg->angular_velocity.z);
+  // 先按 IMU 本体系做 scale 标定，再转到 lidar 系（两者只差旋转，标定应按传感器轴）
+  if (g_imu_gyr_scale != 1.0) gyr_raw = gyr_raw * g_imu_gyr_scale;
 
   M3 R_IMU_to_Lidar = g_lidar_imu.R_.transpose();
   data.acc = R_IMU_to_Lidar * acc_raw;
@@ -833,12 +846,13 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
       auto dis = pt.x * pt.x + pt.y * pt.y + pt.z * pt.z;
       if(dis > g_blind2 && dis < g_maxrange2){
         if(g_intensity_filter_en && pt.reflectivity < g_intensity_min) continue;
-        offset_time = pt.offset_time * 1e-9;
-        lidar_data.pc_full->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
+        offset_time = pt.offset_time * 1e-9;   // 帧尾基准不变
+        const double pt_time = offset_time + g_lidar_time_offset;
+        lidar_data.pc_full->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, pt_time);
         // filter_rate 抽稀：与原先 for(_i=offset; _i<ptsize; _i+=rate) 等价
         if(_i >= (std::size_t)g_filter_offset &&
            (_i - (std::size_t)g_filter_offset) % (std::size_t)g_filter_rate == 0){
-          lidar_data.pc->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, offset_time);
+          lidar_data.pc->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, pt_time);
         }
       }
     }
@@ -979,7 +993,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     float intensity = has_intensity ? read_float(k, off_intensity) : 1.0f;
     if (g_intensity_filter_en && intensity < g_intensity_min) return false;
     double ot = read_offset_time(k);
-    lidar_data.pc->emplace_back(x, y, z, intensity, ot);
+    lidar_data.pc->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset);
     if (ot > max_offset_time) max_offset_time = ot;
     return true;
   };
@@ -1030,7 +1044,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     if (g_intensity_filter_en && intensity < g_intensity_min) continue;
     double ot = read_offset_time(i);
     if (ot > max_offset_time) max_offset_time = ot;
-    lidar_data.pc_full->emplace_back(x, y, z, intensity, ot);
+    lidar_data.pc_full->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset);
   }
 
   // 更新偏移量（对称振荡采样：交替从两端选取，覆盖更均匀）

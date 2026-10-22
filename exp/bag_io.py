@@ -26,6 +26,36 @@ def traj_arrays(odom):
     return t_abs, xyz
 
 
+def estimate_up(xyz, t, lap=115.0):
+    """用第一圈水平轨迹平面的法向估计真实竖直方向（世界系），符号取"1F 在下"。
+
+    仅用于世界系 z 未与重力对齐的框架（FAST-LIO 把初始 IMU 姿态当世界系，
+    本 bag 的传感器是 30° 俯仰安装，z 偏离竖直 29°，直接算 deg/m 没有意义）。
+    """
+    m = (t - t[0]) < lap
+    P = xyz[m] if m.sum() > 50 else xyz
+    n = np.linalg.svd(P - P.mean(0), full_matrices=False)[2][2]
+    n = n / np.linalg.norm(n)
+    head = xyz[: max(10, len(xyz) // 30)]
+    p10 = head.mean(0)
+    i = int(np.argmax(np.abs(xyz[:, 2] - np.median(head[:, 2]))))
+    if float((xyz[i] - p10) @ n) > 0:
+        n = -n
+    return n
+
+
+def rot_from_to(a, b=(0.0, 0.0, 1.0)):
+    """把单位向量 a 旋到单位向量 b 的最小旋转矩阵。"""
+    a = np.asarray(a, float) / np.linalg.norm(a)
+    b = np.asarray(b, float)
+    v = np.cross(a, b)
+    c = float(a @ b)
+    if np.linalg.norm(v) < 1e-9:
+        return np.eye(3) if c > 0 else -np.eye(3)
+    vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + vx + vx @ vx * (1.0 / (1.0 + c))
+
+
 def _pcd_header(path):
     """解析 binary PCD 头，返回 (dtype, npts, data_offset)；不支持时 (None, 0, 0)。"""
     fields, sizes, types, counts = [], [], [], []

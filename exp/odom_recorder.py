@@ -16,7 +16,7 @@ from nav_msgs.msg import Odometry
 
 
 class OdomRecorder(Node):
-    def __init__(self, out_path: str):
+    def __init__(self, out_path: str, topic: str = "/lio/odom"):
         super().__init__("exp_odom_recorder")
         self._f = open(out_path, "w", newline="")
         self._w = csv.writer(self._f)
@@ -30,8 +30,8 @@ class OdomRecorder(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
-        self.create_subscription(Odometry, "/lio/odom", self._cb, qos)
-        self.get_logger().info("recording /lio/odom")
+        self.create_subscription(Odometry, topic, self._cb, qos)
+        self.get_logger().info(f"recording {topic}")
 
     def _cb(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -57,10 +57,11 @@ class OdomRecorder(Node):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
+    ap.add_argument("--topic", default="/lio/odom")
     args = ap.parse_args()
 
     rclpy.init()
-    node = OdomRecorder(args.out)
+    node = OdomRecorder(args.out, args.topic)
 
     def _stop(signum, frame):
         raise KeyboardInterrupt
