@@ -3,6 +3,8 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
 基线版本：lio/Super-LIO @ b528aec（scalar = float，ROS2），配置 livox_360_drone.yaml
 用途：换设备 / 换 agent 后，按“第五节的实验”直接改代码或改参数即可复现与判定；
       第二节的代码事实是动手前的唯一依据，不要沿用旧版本文档里的过时描述。
+最新状态（2026-10-23）：TL;DR 5k + 正文 M.22（补扫与组合回归）+ M.23（交接清单：
+      全部 run 目录与参数、判据口径、可引用结论、被推翻的旧结论、未完成项）。接手先读这三处。
 ================================================================================
 
 〇、TL;DR
@@ -191,9 +193,11 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
    - 楼梯：单参数最优 plane_fit 0.05 = 0.299（−35%）；组合最优 pft05+gsc102 = **0.246 / 301.8 m
      = 0.081%**（−47%）。gsc 1.02 单开把 yaw 从 −2.11° 压到 +0.09°，但和 pft05 组合后又回到 −2.21°
      ⇒ 位移与 yaw 是互斥的两个目标。
-   - 1f：三个倒退都落在"末端竖直"——na0.3 2.516、nbg3 2.467、allbest 2.580（原 1.586）；
-     nw 在园区伤水平（1.682→2.877）。最优仍是 f1_hub20_gfz，且**重跑 odom.csv 的 md5 完全相同**
-     ⇒ 2.32 m 是确定性结果。
+   - 1f：**全是单变量对照**。freeze 竖直 2.770→2.280（hub0.05）/ 2.356→1.586（hub0.20），
+     代价是水平 +0.16；na0.3 与 nbg3 单独都只小幅伤竖直（+0.15 / +0.21）；
+     但把两者一起叠到 hub20+gfz 上，竖直 1.586→2.580（+0.99 = 单效应之和的 3.7 倍）
+     ⇒ **freeze 与"放宽 IMU 噪声"是负交互，不能叠加**。nw 在园区伤水平（1.682→2.877）。
+     最优仍是 f1_hub20_gfz 2.312 m，且**重跑 odom.csv 的 md5 完全相同**⇒ 确定性结果。
    - noshell：freeze 是唯一正收益（0.312→0.172）；huber 0.20 直接竖直崩塌 13 m。
    - **三个参数在两场景符号相反**：plane_fit（楼梯 −35% / 园区 +42%）、
      huber（园区 −31% / 楼梯 4.4× / noshell 崩）、normal_weight（楼梯 on / 园区 off）。
@@ -3713,20 +3717,33 @@ M.22-2 楼梯 bag 差模（slab_cmp，Δ=(上行斜率−下行斜率)/2，单�
   · nwoff 的两条路都失败（h20_nwoff 2.732 / h20_gfz_nwoff 2.578，Δyaw +0.16/+2.33）
     ⇒ 楼梯上法向加权是必要的（与 5h 一致），园区相反（见 M.22-3）。
 
-M.22-3 1f bag：6 格（777 m 双闭环，固定窗）
+M.22-3 1f bag：12 格（777 m 双闭环，固定窗，全部为单变量可归因）
 
-  | run                 | 参数增量                    | 中停 3D | 中停 水平 | 中停 竖直 | 末端 3D | 末端 水平 | 末端 竖直 | 末端 yaw |
-  |---------------------|-----------------------------|---------|-----------|-----------|---------|-----------|-----------|----------|
-  | f1_hub20_gfz        | huber20 + freeze（现最优）  | 2.316   | 1.682     | +1.592    | 2.312   | 1.682     | +1.586    | +1.90    |
-  | f1_h20_na03         | + imu_na 0.3                | 2.246   | 1.743     | +1.417    | 3.036   | 1.700     | **+2.516**| +2.01    |
-  | f1_h20_nbg3         | + imu_nbg 3e-3              | 2.414   | 1.691     | +1.723    | 2.976   | 1.666     | **+2.467**| +1.99    |
-  | f1_h20_gfz_nw035    | + normal_weight σ0.035      | 3.254   | **2.877** | +1.521    | 3.253   | **2.877** | +1.519    | +2.76    |
-  | f1_h20_gfz_gsc102   | + gyr_scale 1.02            | 2.611   | 1.981     | +1.701    | 2.610   | 1.983     | +1.697    | +1.86    |
-  | f1_allbest          | + nbg3 + na0.3              | 2.611   | 1.931     | +1.758    | 3.214   | 1.918     | **+2.580**| +1.76    |
+  | run                 | 参数（相对上一行为唯一增量） | 中停 3D | 中停 水平 | 中停 竖直 | 末端 3D | 末端 水平 | 末端 竖直 | 末端 yaw |
+  |---------------------|------------------------------|---------|-----------|-----------|---------|-----------|-----------|----------|
+  | f1_base             | 全默认                       | 2.697   | 2.223     | +1.527    | 3.519   | 2.170     | +2.770    | +2.42    |
+  | f1_gfz              | freeze                       | 2.680   | 2.233     | +1.482    | 3.181   | 2.219     | +2.280    | +2.28    |
+  | f1_gfz_nbg3         | 上 + nbg 3e-3                | 2.720   | 2.190     | +1.613    | 3.294   | 2.174     | +2.474    | +2.23    |
+  | f1_nbg3             | base + nbg 3e-3              | 2.675   | 2.113     | +1.640    | 3.626   | 2.063     | +2.982    | +2.39    |
+  | f1_na03             | base + na 0.3                | 2.671   | 2.229     | +1.470    | 3.638   | 2.174     | +2.917    | +2.43    |
+  | f1_hub20            | base + huber 0.20            | 2.362   | 1.541     | +1.791    | 2.803   | 1.519     | +2.356    | +1.87    |
+  | f1_hub20_gfz        | 上 + freeze（现最优）        | 2.316   | 1.682     | +1.592    | 2.312   | 1.682     | +1.586    | +1.90    |
+  | f1_h20_na03         | hub20 + na 0.3               | 2.246   | 1.743     | +1.417    | 3.036   | 1.700     | +2.516    | +2.01    |
+  | f1_h20_nbg3         | hub20 + nbg 3e-3             | 2.414   | 1.691     | +1.723    | 2.976   | 1.666     | +2.467    | +1.99    |
+  | f1_h20_gfz_nw035    | hub20+gfz + nw σ0.035        | 3.254   | **2.877** | +1.521    | 3.253   | **2.877** | +1.519    | +2.76    |
+  | f1_h20_gfz_gsc102   | hub20+gfz + gsc 1.02         | 2.611   | 1.981     | +1.701    | 2.610   | 1.983     | +1.697    | +1.86    |
+  | f1_allbest          | hub20+gfz + na0.3 + nbg3     | 2.611   | 1.931     | +1.758    | 3.214   | 1.918     | **+2.580**| +1.76    |
 
-  · 三个倒退：na0.3 与 nbg3 单独加都会让**末端竖直**从 1.586 涨到 2.47~2.52（+56%），
-    两个一起加（allbest）更差（2.580）⇒ M.18-6 的"freeze+nbg3 不叠加"在 na 上同样成立。
+  · freeze 的收益随 huber 放大：hub0.05 上竖直 2.770→2.280（−0.49），hub0.20 上 2.356→1.586（−0.77），
+    且 hub0.20 上是唯一让竖直"第 2 圈不再长"的组合（1.592→1.586，其余所有 run 第 2 圈都在长）。
+  · freeze 的代价是水平：hub0.20 上 1.519→1.682（+0.16）；hub0.05 上几乎不变（2.170→2.219）。
+  · nbg 3e-3 与 na 0.3 **单独都小幅伤竖直**：hub0.05 上 +0.21（nbg）/ +0.15（na），
+    hub0.20 上 +0.11（nbg）/ +0.16（na）⇒ 4 个独立对照全部同向，属于小效应但稳定。
+  · **真正的组合倒退在这里**：把 na0.3 + nbg3 一起叠到 hub20+gfz 上（f1_allbest），
+    末端竖直 1.586→2.580（**+0.99**），是单参数效应之和（0.16+0.11=0.27）的 **3.7 倍**
+    ⇒ 不是线性叠加，freeze 与"放宽 IMU 噪声"之间存在明确的负交互。
   · normal_weight 在园区确定有害（水平 1.682→2.877，+71%），与楼梯（−30%）符号相反。
+  · gsc 1.02 在 1f 无收益（3D 2.312→2.610 反而更差），只在楼梯修 yaw。
   · **重复性**：f1_hub20_gfz 与重跑的 f1_h20_gfz_r2 的 odom.csv **md5 完全相同**
     （939ac161b0260d451bb5571b0d60f75f），7 个锚点逐项相同
     ⇒ 2.32 m 是确定性结果，不是运气；同配置差异只能来自参数，不能来自噪声。
@@ -3818,16 +3835,145 @@ M.22-8 复现
   BAG=~/slam_data/livox_record_drone RESULT_ROOT=$PWD/exp/results_drone \
   NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.035 IMU_NBG=0.003 PLANE_FIT_THR=0.05 IMU_GYR_SCALE=1.02 \
   ROS_DOMAIN_ID=43 ./exp/run_one.sh sl_b_pft05_gsc102 6 0.25 0.3 0.1 0.25
-  # 1f：hub20+gfz 基座上加 na / nbg / nw / gsc（na 是第 4 个位置参数，不走环境变量）
+  # 1f：hub20 基座（不加 freeze）上加 na / nbg；hub20+gfz 基座上加 nw / gsc / na+nbg
   BAG=~/slam_data/livox_record_drone_1f RESULT_ROOT=$PWD/exp/results_drone_1f \
-  FREEZE_GRAVITY=true HUBER_BASE=0.20 \
+  HUBER_BASE=0.20 \
   ROS_DOMAIN_ID=44 ./exp/run_one.sh f1_h20_na03 6 0.25 0.3 0.1 0.25
+  BAG=~/slam_data/livox_record_drone_1f RESULT_ROOT=$PWD/exp/results_drone_1f \
+  HUBER_BASE=0.20 FREEZE_GRAVITY=true IMU_NBG=0.003 \
+  ROS_DOMAIN_ID=45 ./exp/run_one.sh f1_allbest 6 0.25 0.3 0.1 0.25
+  # 注意：imu_na 是位置参数第 4 位（0.3），imu_nbg 只能走环境变量 IMU_NBG
   # 判据（固定窗；不要用默认的 odom 速度锚点做跨 run 对比）
   python3 -B exp/loop_error.py --bag $BAG --loops --win 12:21,392:420,440:465 exp/results_drone/sl_*
   python3 -B exp/loop_error.py --bag ~/slam_data/livox_record_drone_1f --loops \
           --win 10:21,310:340,600:630 exp/results_drone_1f/f1_*
   python3 -B exp/map_slab_cmp.py --align-up --by-leg exp/results_drone/sl_*
   # noshell 无闭环真值：改为"相对 sl_noshell_base 的插值逐点差"（mean/p95/max + 末位置）
+
+
+M.23 交接清单：全部实验资产、判据口径、结论与未完成项（供下一次分析直接接手）
+
+M.23-1 三份 bag 与各自的"真值"口径
+
+  | bag | 路径 | 里程 | 闭环真值 | 主判据 |
+  |-----|------|------|----------|--------|
+  | 楼梯（无人机，单闭环） | ~/slam_data/livox_record_drone | 300.7 m | 起终点物理重合 | 固定窗闭环 + slab 上下行差模 + gz_pf6_hmoff 参照 |
+  | 园区 1f（无人机，双闭环） | ~/slam_data/livox_record_drone_1f | 777.5 m | 中停/末端各回起点 | M.16 静止场景配准 + 固定窗闭环 |
+  | 狗载 noshell | ~/slam_data/livox_record_noshell | 706 m | **无** | 相对 sl_noshell_base 的插值逐点差 |
+
+  固定窗（秒，相对**本 run 的 odom 起点**，不是 bag 绝对时间）：
+    楼梯  --win 12:21,392:420,440:465
+    1f    --win 10:21,310:340,600:630
+  为什么必须用固定窗：见 M.22-0（odom 速度锚点会被悬停发散切碎）。
+
+M.23-2 本轮新增 21 格 + 必要参照格的实际参数（可直接对照 params.yaml / meta.txt）
+
+  楼梯（exp/results_drone/，基座 = sl_nbg003_na03：na0.3 ng0.1 nbg3e-3 nw on/σ0.035 hub0.05 pft0.15 gsc1.0 gfz off）
+  | run | hub | pft | gsc | gfz | nw |
+  |-----|-----|-----|-----|-----|----|
+  | sl_nbg003_na03 | 0.05(默认) | 0.15 | 1.0 | off | on/0.035 |
+  | sl_b_h10 / h20 / h50 | 0.10 / 0.20 / 0.50 | 0.15 | 1.0 | off | on/0.035 |
+  | sl_b_gfz | 0.05 | 0.15 | 1.0 | **on** | on/0.035 |
+  | sl_b_pft05 | 0.05 | **0.05** | 1.0 | off | on/0.035 |
+  | sl_b_gsc102 | 0.05 | 0.15 | **1.02** | off | on/0.035 |
+  | sl_b_h20_gfz | 0.20 | 0.15 | 1.0 | on | on/0.035 |
+  | sl_b_h20_nwoff | 0.20 | 0.15 | 1.0 | off | **off** |
+  | sl_b_h20_gfz_nwoff | 0.20 | 0.15 | 1.0 | on | **off** |
+  | sl_b_pft05_gsc102 | 0.05 | 0.05 | 1.02 | off | on/0.035 |
+  | sl_b_pft05_gsc102_gfz | 0.05 | 0.05 | 1.02 | on | on/0.035 |
+
+  1f（exp/results_drone_1f/，除注明外 na0.1 ng0.1 nbg1e-4 gsc1.0 pft0.15 nw off）
+  | run | na | nbg | hub | gfz | nw | gsc |
+  |-----|----|-----|-----|-----|----|-----|
+  | f1_base | 0.1 | 1e-4 | 0.05 | off | off | 1.0 |
+  | f1_gfz | 0.1 | 1e-4 | 0.05 | on | off | 1.0 |
+  | f1_gfz_nbg3 | 0.1 | **3e-3** | 0.05 | on | off | 1.0 |
+  | f1_nbg3 | 0.1 | 3e-3 | 0.05 | off | off | 1.0 |
+  | f1_na03 | **0.3** | 1e-4 | 0.05 | off | off | 1.0 |
+  | f1_hub20 | 0.1 | 1e-4 | **0.20** | off | off | 1.0 |
+  | f1_hub20_gfz（最优） | 0.1 | 1e-4 | 0.20 | on | off | 1.0 |
+  | f1_h20_na03 | 0.3 | 1e-4 | 0.20 | off | off | 1.0 |
+  | f1_h20_nbg3 | 0.1 | 3e-3 | 0.20 | off | off | 1.0 |
+  | f1_h20_gfz_nw035 | 0.1 | 1e-4 | 0.20 | on | **on/0.035** | 1.0 |
+  | f1_h20_gfz_gsc102 | 0.1 | 1e-4 | 0.20 | on | off | **1.02** |
+  | f1_allbest | 0.3 | 3e-3 | 0.20 | on | off | 1.0 |
+  | f1_h20_gfz_r2 | 同 f1_hub20_gfz（重复性验证） | | | | | |
+
+  noshell（exp/results_noshell/，ng0.1 gsc1.0 toff0）
+  | run | na | nbg | hub | gfz | nw |
+  |-----|----|-----|-----|-----|----|
+  | sl_noshell_base | 0.1 | 1e-4 | 0.05 | off | off |
+  | sl_noshell_best | 0.3 | 3e-3 | 0.05 | off | on/0.035 |
+  | ns_gfz | 0.1 | 1e-4 | 0.05 | **on** | off |
+  | ns_h20 | 0.1 | 1e-4 | **0.20** | off | off |
+  | ns_global | 0.3 | 3e-3 | **0.20** | on | off |
+
+  每个 run 目录固定含：params.yaml（完整实际参数）、meta.txt（时长/odom 行数/地图点数/git head）、
+  odom.csv（t_ns,x,y,z,qx,qy,qz,qw,vx,vy,vz）、map.pcd、node.log、play.log。
+  results_drone 共 64 个 run、results_drone_1f 25 个、results_noshell 5 个（含更早的历史格）。
+
+  ※ 狗载"逐点差"的实现（本轮用过，脚本已删，按此可复现）：
+    读两 run 的 odom.csv，把 t 各自减去首帧时间戳，在 0.1 s 网格上线性插值到公共时间区间，
+    d(t)=||p_test(t) − p_base(t)||，报 mean / p95 / max；末位置 = 最后一个公共时刻的三轴差。
+
+M.23-3 结果数字
+
+  楼梯 → M.22-1（闭环）、M.22-2（差模）
+  1f   → M.22-3
+  狗载 → M.22-4
+
+M.23-4 可直接引用的结论（按可信度排序）
+
+  1. 判据本身要修：跨 run 比较闭环必须用固定时间窗（M.22-0）。
+  2. 三份 bag 上唯一同向的收益：imu_nbg 3e-3（小幅）、gyr_scale 1.0（不要动）、toff 0。
+  3. freeze_gravity 是唯一稳定的竖直杠杆（1f −0.49~−0.77 m，noshell 最好），代价是水平 +0.16 m。
+  4. 楼梯最优组合 pft05+gsc102 = 0.246 m / 301.8 m = 0.081%（基座 0.462，−47%）。
+  5. 1f 最优 f1_hub20_gfz = 2.312 m / 777.5 m = 0.30%（水平 1.682 / 竖直 1.586 m / yaw 1.9°），
+     且逐位可复现（md5 相同）。
+  6. noshell 最优 ns_gfz（freeze 单开）= 0.172 m 逐点差（历史最好）。
+  7. plane_fit_threshold / huber_delta_base / normal_weight 三项**在楼梯与园区符号相反**，
+     只能场景门控（数值见 M.22-5、M.22-7）。
+  8. 位移与 yaw 是互斥目标：楼梯 gsc102 单开 yaw +0.09° 但要 0.515 m；pft05+gsc102 0.246 m 但 yaw −2.21°。
+  9. freeze 与"放宽 IMU 噪声（na0.3/nbg3）"存在负交互：单加 +0.15/+0.21，叠加 +0.99 m 竖直。
+  10. 新失败模式：静止悬停时位姿一次崩塌 1.15~3.73 m（楼梯 3/12 个 run），
+      lidar 输入逐帧一致 ⇒ 不是外部物体，是估计器/地图内部失去自洽。
+
+M.23-5 被推翻或需要打折的旧结论
+
+  · "sl_b_h20 = 5.573（12× 恶化）"→ **2.046**（固定窗）。5.573 是悬停发散后的值。
+  · "pft05+gsc102+gfz = 1.355（比最优组合倒退 5.5×）"→ **0.294**（只差 20%），
+    真正的代价是它触发了悬停崩塌（1.367）。
+  · "na0.3 在 freeze 基座上让竖直 +56%"→ 归因错误：f1_h20_na03 / f1_h20_nbg3 这两个 run
+    **并没有开 freeze**（meta 里 freeze_gravity=false）。正确说法是"单独 +0.15/+0.21，叠加 +0.99"。
+  · "Δroll 是唯一没被压住的系统性项"仍然成立，但 h20_nwoff 把 Δroll 压到 +0.11 的同时
+    闭环 2.732、整体 yaw +5.60° 全是最差 ⇒ Δroll 不能单独当优化目标。
+
+M.23-6 还没做、但值得做的（按性价比排序）
+
+  1. **悬停崩塌机制判别**（最高优先）：楼梯 bag 从 380 s 起重跑 3 格，带 DEBUG_LEVEL=1，
+     run 选 sl_b_h20（崩）、sl_b_pft05_gsc102_gfz（崩）、sl_nbg003_na03（不崩），
+     对比 debug.csv 里的 fit_res、g 时间历程、修正量。这一步决定"悬停崩塌"能不能工程化规避。
+  2. **重录楼梯 bag**（M.21-5 的老账）：左圈 1/4、1/2、3/4 各停 3 s 并记录停车点，
+     出发前静置 5~10 min。这把楼梯的误差也切到"哪一段"。
+  3. imu_ng 上调（1f 未扫，楼梯已证全面变差）+ plane_fit 0.05 在 noshell（只能用逐点差）。
+  4. **场景门控的落地**：目前只知道"结构化 on / 非结构化 off"，但没有在线判据。
+     建议先统计 fit_res 分布、有效平面比例、法向一致性，看能否单指标分开楼梯与园区。
+  5. 若要把 huber 0.20 用于园区，必须先解释清楚为什么它在开阔场景会崩竖直
+     （需要 1 或 2 的 debug.csv）。
+
+M.23-7 工具、环境与耗时（接手必读）
+
+  构建：exp/build_ws.sh → /tmp/sl_install；依赖 /opt/ros/humble + livox_ros_driver2（~/dog_slam/... install）
+  单 run：exp/run_one.sh <name> <filter_rate> <voxel_size> <imu_na> <imu_ng> <vox_res> [duration_s]
+    环境变量旋钮：BAG / RESULT_ROOT / START_OFFSET / DEBUG_LEVEL / NORMAL_WEIGHT_EN / NORMAL_SIGMA /
+      FREEZE_GRAVITY / OBS_WEIGHT / PLANE_FIT_THR / HUBER_BASE / MAP_* / HKNN_* / SC_PGO_* /
+      IMU_NBG / IMU_GYR_SCALE / LIDAR_TIME_OFFSET
+  判据脚本：exp/loop_error.py（--loops --win）、exp/map_slab_cmp.py（--align-up --by-leg）、
+    exp/lap_maps.py、exp/cloud_reg.py、exp/imu_bias_drift.py、exp/frame_tilt.py
+  并行：每 lane 一个独立 ROS_DOMAIN_ID（本轮用 42~46）；`setsid bash -c` 不继承 cwd，
+    必须写 `cd <绝对路径> && bash <绝对路径>/run_one.sh`
+  单 run 墙钟：楼梯 ≈472 s、1f ≈641 s、狗载 ≈685 s（含播 bag + saveMap）
+  坑：ROS 的 setup.bash 需要先 `set +u`；loop_error 的 --static 306 会污染重力估计，不要用
 
 
 六、埋点与 CSV（L1/L2 主体已实现，L3/L4 仍有缺口）
