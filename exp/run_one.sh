@@ -38,6 +38,10 @@ START_OFFSET=${START_OFFSET:-0}
 DEBUG_LEVEL=${DEBUG_LEVEL:-0}
 NORMAL_WEIGHT_EN=${NORMAL_WEIGHT_EN:-false}
 NORMAL_SIGMA=${NORMAL_SIGMA:-0.05}
+FREEZE_GRAVITY=${FREEZE_GRAVITY:-false}
+OBS_WEIGHT=${OBS_WEIGHT:-1000.0}
+PLANE_FIT_THR=${PLANE_FIT_THR:-0.15}
+HUBER_BASE=${HUBER_BASE:-0.05}
 MAP_REP_MODE=${MAP_REP_MODE:-0}
 MAP_CLAMP_MU=${MAP_CLAMP_MU:-false}
 MAP_MAX_POINTS=${MAP_MAX_POINTS:-20}
@@ -48,6 +52,11 @@ HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
 SC_PGO_EN=${SC_PGO_EN:-false}
 SC_KF_GAP=${SC_KF_GAP:-0.5}
 SC_KF_DEG=${SC_KF_DEG:-5.0}
+# 实验 C：固定地图 / 冻结地图更新
+MAP_FREEZE=${MAP_FREEZE:-false}
+MAP_LOAD_PATH=${MAP_LOAD_PATH:-}
+MAP_INIT_POSE=${MAP_INIT_POSE:-[]}
+MAP_DS_SIZE=${MAP_DS_SIZE:-0.25}
 
 BAG=${BAG:-/home/ywj/slam_data/livox_record_A_building}
 EXP_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -88,6 +97,10 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
     -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
     -e "s|__NORMAL_SIGMA__|$NORMAL_SIGMA|g" \
+    -e "s|__FREEZE_GRAVITY__|$FREEZE_GRAVITY|g" \
+    -e "s|__OBS_WEIGHT__|$OBS_WEIGHT|g" \
+    -e "s|__PLANE_FIT_THR__|$PLANE_FIT_THR|g" \
+    -e "s|__HUBER_BASE__|$HUBER_BASE|g" \
     -e "s|__MAP_REP_MODE__|$MAP_REP_MODE|g" \
     -e "s|__MAP_CLAMP_MU__|$MAP_CLAMP_MU|g" \
     -e "s|__MAP_MAX_POINTS__|$MAP_MAX_POINTS|g" \
@@ -97,7 +110,16 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__SC_PGO_EN__|$SC_PGO_EN|g" \
     -e "s|__SC_KF_GAP__|$SC_KF_GAP|g" \
     -e "s|__SC_KF_DEG__|$SC_KF_DEG|g" \
+    -e "s|__MAP_FREEZE__|$MAP_FREEZE|g" \
+    -e "s|__MAP_LOAD_PATH__|$MAP_LOAD_PATH|g" \
+    -e "s|__MAP_DS_SIZE__|$MAP_DS_SIZE|g" \
     "$TEMPLATE" > "$OUT/params.yaml"
+
+# 空列表在 YAML 里是无类型序列，rclcpp 读 vector<double> 会直接抛异常，
+# 所以初始位姿只在显式给出时追加。
+if [ -n "$MAP_INIT_POSE" ] && [ "$MAP_INIT_POSE" != "[]" ]; then
+  echo "    lio.map.init_pose: $MAP_INIT_POSE" >> "$OUT/params.yaml"
+fi
 
 {
   echo "exp_name=$EXP_NAME"
@@ -112,6 +134,10 @@ sed -e "s|__OUTDIR__|$OUT|g" \
   echo "debug_level=$DEBUG_LEVEL"
   echo "normal_weight_en=$NORMAL_WEIGHT_EN"
   echo "normal_sigma=$NORMAL_SIGMA"
+  echo "freeze_gravity=$FREEZE_GRAVITY"
+  echo "obs_weight=$OBS_WEIGHT"
+  echo "plane_fit_threshold=$PLANE_FIT_THR"
+  echo "huber_delta_base=$HUBER_BASE"
   echo "map_rep_mode=$MAP_REP_MODE"
   echo "map_clamp_mu=$MAP_CLAMP_MU"
   echo "map_max_points=$MAP_MAX_POINTS"
@@ -121,6 +147,10 @@ sed -e "s|__OUTDIR__|$OUT|g" \
   echo "sc_pgo_en=$SC_PGO_EN"
   echo "sc_kf_gap=$SC_KF_GAP"
   echo "sc_kf_deg=$SC_KF_DEG"
+  echo "map_freeze=$MAP_FREEZE"
+  echo "map_load_path=$MAP_LOAD_PATH"
+  echo "map_init_pose=$MAP_INIT_POSE"
+  echo "map_ds_size=$MAP_DS_SIZE"
   echo "duration=$DURATION"
   echo "start_offset=$START_OFFSET"
   echo "bag=$BAG"

@@ -1,4 +1,5 @@
 #include "lio/ESKF.h"
+#include "lio/params.h"
 
 #include <Eigen/Eigenvalues>
 
@@ -119,8 +120,12 @@ void ESKF::Update() {
   bg_ += dx_.template block<3, 1>(9, 0);
   ba_ += dx_.template block<3, 1>(12, 0);
 
-  g_ += dx_.template block<3, 1>(15, 0);
-  g_ = g_gravity_norm * (g_.normalized());
+  // freeze_gravity：不更新重力方向（FAST-LIO 式固定竖直参考）。
+  // 用于验证"世界系竖直缓慢转动"是否来自 g 状态的可动自由度。
+  if (!g_kf_freeze_gravity) {
+    g_ += dx_.template block<3, 1>(15, 0);
+    g_ = g_gravity_norm * (g_.normalized());
+  }
 
   fw_R_ = R_;
   fw_p_ = p_;

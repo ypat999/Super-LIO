@@ -87,6 +87,8 @@ protected:
   void stateProcess();
   virtual bool kf_init();
   virtual bool map_init();
+  /// 实验 C：载入固定初始地图并跳过 map_init（g_map_load_path 非空时启用）
+  bool loadFixedMap();
   void Propagation_Undistort();
   void undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
                       const std::vector<DynamicState>& propagate_states,

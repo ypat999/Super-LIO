@@ -63,6 +63,7 @@ namespace LI2Sup{
   int g_kf_type = 1;                // 1: ESKF, 2: InESKF
   int g_kf_max_iterations = 4;
   bool g_kf_align_gravity = true;
+  bool g_kf_freeze_gravity = false;
   int g_ref_gravity_axis = 2;       // 0: +X, 1: +Y, 2: -Z (default)
   double g_kf_quit_eps;
 
@@ -118,6 +119,12 @@ namespace LI2Sup{
   double g_map_merge_dist = 0.1;
   int    g_hknn_max_group = -1;
   double g_hknn_order_scale = 1.0;
+
+  /// 实验 C：固定地图 / 冻结地图更新
+  bool   g_map_freeze = false;
+  string g_map_load_path;
+  bool   g_map_load_use_pose = false;
+  double g_map_load_pose[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;

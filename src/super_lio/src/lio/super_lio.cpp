@@ -267,6 +267,16 @@ void SuperLIO::stateWaitMapInit()
     LOG(INFO) << GREEN << " ---> [SuperLIO]: Undistort-only mode, skip map init" << RESET;
     return;
   }
+  // 实验 C：用固定先验地图代替首帧建图，配合 g_map_freeze 隔离地图反馈
+  if(!g_map_load_path.empty()){
+    if (loadFixedMap()) {
+      kf_->init_ = true;
+      state_fn_ = &SuperLIO::stateProcess;
+      LOG(INFO) << GREEN << " ---> [SuperLIO]: Fixed-map mode (freeze="
+                << g_map_freeze << "), map init done" << RESET;
+    }
+    return;
+  }
   if (map_init()) {
     kf_->init_ = true;
     state_fn_ = &SuperLIO::stateProcess;
@@ -376,6 +386,51 @@ bool SuperLIO::map_init(){
     return true;
   }
   return false;
+}
+
+
+/// 实验 C：载入固定先验地图，替代"首帧点云建图"。
+/// 地图与该 run 的 odom 世界系一致（同一 bag 的 map.pcd 即可直接用），
+/// 起始位姿由 lio.map.init_pose = [x,y,z,roll,pitch,yaw(deg)] 覆盖，缺省为单位位姿。
+bool SuperLIO::loadFixedMap(){
+  static bool loaded = false;
+  if(loaded) return true;
+
+  auto cloud = std::make_shared<PointCloudType>();
+  if(pcl::io::loadPCDFile<PointType>(g_map_load_path, *cloud) == -1){
+    LOG(ERROR) << RED << " ---> Load fixed map failed: " << g_map_load_path << RESET;
+    return false;
+  }
+  std::vector<int> useless_indices;
+  pcl::removeNaNFromPointCloud(*cloud, *cloud, useless_indices);
+
+  VV3 pts;
+  pts.reserve(cloud->size());
+  for(const auto& p : *cloud){
+    pts.emplace_back(p.x, p.y, p.z);
+  }
+  ivox_->insert(pts);
+
+  if(g_map_load_use_pose){
+    const double d2r = M_PI / 180.0;
+    const V3 rpy(g_map_load_pose[3] * d2r, g_map_load_pose[4] * d2r,
+                 g_map_load_pose[5] * d2r);
+    const M3 R = (Eigen::AngleAxis<scalar>(rpy[2], V3::UnitZ())
+                * Eigen::AngleAxis<scalar>(rpy[1], V3::UnitY())
+                * Eigen::AngleAxis<scalar>(rpy[0], V3::UnitX())).toRotationMatrix();
+    auto state = kf_->GetSysState();
+    state.R = SO3(R);
+    state.p = V3(g_map_load_pose[0], g_map_load_pose[1], g_map_load_pose[2]);
+    kf_->SetX(state);
+    sys_init_pose_ = kf_->GetSE3();
+  }
+  kf_->SetLastObsTime(measures_.lidar.end_time);
+
+  LOG(INFO) << GREEN << " ---> Load fixed map: " << g_map_load_path
+            << "  points: " << cloud->size()
+            << "  init_pose: " << (g_map_load_use_pose ? "set" : "identity") << RESET;
+  loaded = true;
+  return true;
 }
 
 
@@ -1430,7 +1485,7 @@ void SuperLIO::Observe(){
       debug_csv_ << "t,ptsize,n_knn_fail,n_plane_fail,n_res_fail,n_effect,"
                     "fit_res_mean,fit_res_p95,iters,dx_inf,cond_yk,qk_finite,"
                     "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale,"
-                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz\n";
+                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt\n";
     }
     double fit_mean = 0.0, fit_p95 = 0.0;
     if (!fit_res_vec_.empty()) {
@@ -1467,7 +1522,17 @@ void SuperLIO::Observe(){
                << rv.x() << ',' << rv.y() << ',' << rv.z() << ','
                << kf_->GetImuScale() << ','
                << rv_pred.x() << ',' << rv_pred.y() << ',' << rv_pred.z() << ','
-               << sys_state.bg.x() << ',' << sys_state.bg.y() << ',' << sys_state.bg.z() << '\n';
+               << sys_state.bg.x() << ',' << sys_state.bg.y() << ',' << sys_state.bg.z() << ','
+               // 加计零偏：若姿态倾斜被 ba 吸收，这里会看到同形的地平分量
+               << sys_state.ba.x() << ',' << sys_state.ba.y() << ',' << sys_state.ba.z() << ','
+               // 重力状态：世界系固定于首帧，g 若转动即"地图竖直"在歪
+               << kf_->GetGravity().x() << ',' << kf_->GetGravity().y() << ','
+               << kf_->GetGravity().z() << ','
+               // 预测姿态只推进到帧内最后一个 IMU 采样，与 end_time 的差就是
+               // "观测修正 ∝ 角速度" 的候选来源，逐帧记下来可直接回归验证
+               << (measures_.imu.empty() ? 0.0
+                     : measures_.lidar.end_time - measures_.imu.back().secs) << ','
+               << (measures_.lidar.end_time - measures_.lidar.start_time) << '\n';
     debug_csv_.flush();
   }
 
@@ -1477,6 +1542,9 @@ void SuperLIO::Observe(){
 
 /// 更新 IVox 地图：将去畸变后的点云添加到地图中
 void SuperLIO::UpdateMap() {
+  // 实验 C：冻结地图更新，配准只用载入的先验地图（用于隔离地图反馈）
+  if (g_map_freeze) return;
+
   const size_t ptsize = ds_undistort_->size();
   if (ptsize == 0) return;
   

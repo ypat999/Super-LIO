@@ -90,6 +90,7 @@ namespace LI2Sup{
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;
   extern bool g_kf_align_gravity;
+  extern bool g_kf_freeze_gravity;   // true: 冻结重力方向（不把 dx 加到 g 上）
   extern int g_ref_gravity_axis;   // 0: +X, 1: +Y, 2: -Z (default)
   extern double g_kf_quit_eps;
 
@@ -174,6 +175,16 @@ namespace LI2Sup{
   /// HKNN 分组搜索显式化
   extern int    g_hknn_max_group;    // -1=全部 6 组；1..6=只搜前 N 组（有效半径递减）
   extern double g_hknn_order_scale;  // orders_min_dis2 乘子（随 vox_res 缩放用）
+
+  /// 实验 C：固定地图 / 冻结地图更新
+  /// freeze=true 时 UpdateMap() 不写 ivox，地图只保留 load_path 载入的先验，
+  /// 用于隔离"地图反馈是否放大方向相关误差"（只作机制定位，不作性能评价）
+  extern bool   g_map_freeze;
+  /// 非空时启动即载入该 pcd 作为地图，跳过 map_init（首帧点云不再入图）
+  extern std::string g_map_load_path;
+  /// 载入地图时的初始位姿 {x,y,z,roll,pitch,yaw(deg)}；未配置时为单位位姿
+  extern bool   g_map_load_use_pose;
+  extern double g_map_load_pose[6];
 
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;

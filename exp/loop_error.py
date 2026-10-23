@@ -139,15 +139,98 @@ def measure(run, up_imu, settle=1.0):
     }
 
 
+def detect_stops(t, xyz, v_thr=0.10, min_s=2.0):
+    """找静止段，用于"多圈各自回起点"的 bag 逐圈闭环。
+
+    判据：瞬时速度中值滤波后 < v_thr，且连续 >= min_s。
+    返回 [(i0, i1)] 闭区间索引；i0/i1 是静止段的首末帧。
+    """
+    v = np.linalg.norm(np.diff(xyz, axis=0), axis=1) / np.maximum(np.diff(t), 1e-6)
+    # 5 点中值滤波，压掉单帧跳变
+    k = 5
+    if len(v) >= k:
+        v = np.array([np.median(v[max(0, i - k // 2):i + k // 2 + 1])
+                      for i in range(len(v))])
+    still = v < v_thr
+    segs, i = [], 0
+    while i < len(still):
+        if not still[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(still) and still[j + 1]:
+            j += 1
+        if t[j] - t[i] >= min_s:
+            segs.append((i, j))
+        i = j + 1
+    return segs
+
+
+def measure_loops(run, up_imu, v_thr=0.10, min_s=2.0):
+    """逐圈闭环：以检测到的每个静止段为一个锚点，算相对首个锚点的偏差。"""
+    loaded = load_run(run)
+    if loaded is None:
+        return None
+    t, xyz, quat = loaded
+    up = quat_to_rot(quat[0]) @ up_imu
+    segs = detect_stops(t, xyz, v_thr, min_s)
+    if not segs:
+        return {"run": os.path.basename(run.rstrip("/")), "anchors": []}
+
+    anchors = []
+    for (i0, i1) in segs:
+        p = xyz[i0:i1 + 1].mean(0)
+        R = quat_to_rot(quat[i0:i1 + 1].mean(0) / np.linalg.norm(quat[i0:i1 + 1].mean(0)))
+        anchors.append({"t0": t[i0] - t[0], "t1": t[i1] - t[0],
+                        "dur": t[i1] - t[i0], "p": p, "R": R})
+    p0, R0 = anchors[0]["p"], anchors[0]["R"]
+    step = np.linalg.norm(np.diff(xyz, axis=0), axis=1)
+    for k, a in enumerate(anchors):
+        d = a["p"] - p0
+        a["d3"] = float(np.linalg.norm(d))
+        a["dh"] = float(np.linalg.norm(d - (d @ up) * up))
+        a["dv"] = float(d @ up)
+        rv = rotvec(R0.T @ a["R"])
+        a["yaw"] = float(np.degrees(rv @ up_imu))
+        a["rot"] = float(np.degrees(np.linalg.norm(rv)))
+        # 从上一个锚点走过来的里程，作分母
+        i_prev = segs[k - 1][0] if k > 0 else 0
+        i_now = segs[k][0]
+        a["leg"] = float(step[i_prev:i_now].sum())
+    return {"run": os.path.basename(run.rstrip("/")),
+            "anchors": anchors, "n": len(xyz), "dur": t[-1] - t[0],
+            "path": float(step.sum())}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bag", required=True)
     ap.add_argument("--static", type=float, default=3.0)
+    ap.add_argument("--loops", action="store_true",
+                    help="按检测到的静止段逐圈算闭环（用于多圈各自回起点的 bag）")
+    ap.add_argument("--still", type=float, default=0.10, help="静止判据 m/s")
+    ap.add_argument("--still-min", type=float, default=2.0, help="静止最短持续时间 s")
     ap.add_argument("runs", nargs="+")
     a = ap.parse_args()
 
     up_imu = imu_up(a.bag, a.static)
     print(f"[imu] up_imu = {up_imu.round(4)}")
+    if a.loops:
+        for run in a.runs:
+            r = measure_loops(run, up_imu, a.still, a.still_min)
+            if r is None:
+                print(f"{os.path.basename(run.rstrip('/'))}: 无 odom.csv 或行数不足")
+                continue
+            print(f"\n== {r['run']}  dur={r['dur']:.1f}s  path={r['path']:.1f}m  "
+                  f"锚点（静止段）{len(r['anchors'])} 个")
+            print(f"{'#':>3}{'t0(s)':>8}{'t1(s)':>8}{'停(s)':>7}{'上一段里程':>11}"
+                  f"{'闭环3D':>8}{'水平':>7}{'竖直':>7}{'占路径%':>9}{'yaw°':>8}")
+            for k, s in enumerate(r["anchors"]):
+                pct = 100.0 * s["d3"] / max(s["leg"], 1e-9) if k > 0 else 0.0
+                print(f"{k:>3}{s['t0']:>8.1f}{s['t1']:>8.1f}{s['dur']:>7.1f}"
+                      f"{s['leg']:>11.1f}{s['d3']:>8.3f}{s['dh']:>7.3f}"
+                      f"{s['dv']:>+7.3f}{pct:>9.3f}{s['yaw']:>+8.2f}")
+        return
     print(f"\n{'run':<26}{'dur(s)':>7}{'路径m':>8}{'v中':>6}{'闭环3D':>8}"
           f"{'水平':>7}{'竖直':>7}{'占路径%':>9}{'转角°':>8}{'其中yaw°':>10}{'高度m':>9}")
     for run in a.runs:

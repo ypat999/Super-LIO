@@ -48,6 +48,22 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.map.pcd_prefix", "");
   node.get_parameter("lio.map.pcd_prefix", g_pcd_prefix);
 
+  // 实验 C：固定地图 / 冻结地图更新（默认关闭，保持原行为）
+  node.declare_parameter<bool>("lio.map.freeze", false);
+  node.get_parameter("lio.map.freeze", g_map_freeze);
+  node.declare_parameter<std::string>("lio.map.load_path", "");
+  node.get_parameter("lio.map.load_path", g_map_load_path);
+  std::vector<double> map_init_pose;
+  node.declare_parameter<std::vector<double>>("lio.map.init_pose", std::vector<double>{});
+  node.get_parameter("lio.map.init_pose", map_init_pose);
+  if (map_init_pose.size() == 6) {
+    g_map_load_use_pose = true;
+    for (int i = 0; i < 6; ++i) g_map_load_pose[i] = map_init_pose[i];
+  }
+  LOG(INFO) << GREEN << " ---> [Param] map/freeze: " << g_map_freeze
+            << "  load_path: " << g_map_load_path
+            << "  init_pose: " << (g_map_load_use_pose ? "set" : "identity") << RESET;
+
   LOG(INFO) << GREEN << " ---> [Param] map/pcd_prefix: "
             << g_pcd_prefix << RESET;
 
@@ -196,6 +212,9 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<bool>("lio.kf.kf_align_gravity", false);
   node.get_parameter("lio.kf.kf_align_gravity", g_kf_align_gravity);
+
+  node.declare_parameter<bool>("lio.kf.freeze_gravity", false);
+  node.get_parameter("lio.kf.freeze_gravity", g_kf_freeze_gravity);
 
   node.declare_parameter<int>("lio.kf.ref_gravity_axis", 2);
   node.get_parameter("lio.kf.ref_gravity_axis", g_ref_gravity_axis);
@@ -579,6 +598,7 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.hash_map.hknn_order_scale") g_hknn_order_scale = p.as_double();
         else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
         else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
+        else if (name == "lio.kf.freeze_gravity") g_kf_freeze_gravity = p.as_bool();
       }
       rcl_interfaces::msg::SetParametersResult result;
       result.successful = true;

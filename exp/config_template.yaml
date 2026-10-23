@@ -8,8 +8,18 @@
     lio.map.map_name: "map.pcd"
     # -1: 不在运行过程中切片，全部累积到 point_map_，只在 saveMap() 时一次性落盘
     lio.map.save_interval: -1
-    lio.map.ds_size: 0.25
+    # 地图落盘时的体素降采样（默认 0.25 = 每 0.25m 体素只留 1 点，
+    # 比运行中的 ivox 稀疏一个量级；做固定地图实验时需调到 0.08 左右）
+    lio.map.ds_size: __MAP_DS_SIZE__
     lio.map.pcd_prefix: ""
+
+    # 实验 C：固定地图 / 冻结地图更新（默认关闭）
+    # freeze=true 时不再把新点写入地图，只用 load_path 载入的先验地图做配准
+    lio.map.freeze: __MAP_FREEZE__
+    lio.map.load_path: "__MAP_LOAD_PATH__"
+    # 载入固定地图时的起始位姿 [x,y,z,roll,pitch,yaw(deg)] 由 run_one.sh 按需追加：
+    # 空列表在 YAML 里是无类型序列，rclcpp 会报 "parameter_value_from failed"，
+    # 所以这里不能写死占位符。
 
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
@@ -52,6 +62,8 @@
     lio.kf.kf_max_iterations: 4
     lio.kf.kf_align_gravity: true
     lio.kf.kf_quit_eps: 0.001
+    # 机制实验：true = 冻结重力方向（世界系竖直钉死在首帧，不再作为状态估计）
+    lio.kf.freeze_gravity: __FREEZE_GRAVITY__
 
     lio.output.robot: true
     lio.output.plan_env_world: false
@@ -94,6 +106,10 @@
     # 实验 1：按平面拟合残差 max|dist| 做质量加权
     lio.observe.normal_weight_en: __NORMAL_WEIGHT_EN__
     lio.observe.normal_sigma: __NORMAL_SIGMA__
+    # 每点观测权重（相对 IMU 先验的强弱）；Huber 核：delta = base + scale*range
+    lio.observe.obs_weight: __OBS_WEIGHT__
+    lio.observe.plane_fit_threshold: __PLANE_FIT_THR__
+    lio.observe.huber_delta_base: __HUBER_BASE__
     # 实验 2/5：地图端点代表与门控
     lio.hash_map.rep_mode: __MAP_REP_MODE__
     lio.hash_map.clamp_mu: __MAP_CLAMP_MU__
