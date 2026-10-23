@@ -252,6 +252,38 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.normal_sigma", 0.05);
   node.get_parameter("lio.observe.normal_sigma", g_normal_sigma);
 
+  node.declare_parameter<bool>("lio.observe.degeneracy_detect_en", false);
+  node.get_parameter("lio.observe.degeneracy_detect_en", g_degeneracy_detect_en);
+  node.declare_parameter<double>("lio.observe.degeneracy_threshold", 100.0);
+  node.get_parameter("lio.observe.degeneracy_threshold", g_degeneracy_threshold);
+  node.declare_parameter<bool>("lio.observe.degeneracy_truncate_en", false);
+  node.get_parameter("lio.observe.degeneracy_truncate_en", g_degeneracy_truncate_en);
+  node.declare_parameter<double>("lio.observe.tikhonov_lambda", 1e-3);
+  node.get_parameter("lio.observe.tikhonov_lambda", g_tikhonov_lambda);
+  node.declare_parameter<double>("lio.observe.degeneracy_hysteresis", 0.5);
+  node.get_parameter("lio.observe.degeneracy_hysteresis", g_degeneracy_hysteresis);
+  node.declare_parameter<int>("lio.observe.degeneracy_enter_frames", 3);
+  node.get_parameter("lio.observe.degeneracy_enter_frames", g_degeneracy_enter_frames);
+  node.declare_parameter<int>("lio.observe.degeneracy_exit_frames", 10);
+  node.get_parameter("lio.observe.degeneracy_exit_frames", g_degeneracy_exit_frames);
+  node.declare_parameter<bool>("lio.observe.adaptive_param_en", false);
+  node.get_parameter("lio.observe.adaptive_param_en", g_adaptive_param_en);
+  node.declare_parameter<bool>("lio.observe.adaptive_normal_weight_en", true);
+  node.get_parameter("lio.observe.adaptive_normal_weight_en", g_adaptive_normal_weight_en);
+  node.declare_parameter<double>("lio.observe.adaptive_normal_sigma", 0.035);
+  node.get_parameter("lio.observe.adaptive_normal_sigma", g_adaptive_normal_sigma);
+  node.declare_parameter<double>("lio.observe.adaptive_plane_fit", 0.0);
+  node.get_parameter("lio.observe.adaptive_plane_fit", g_adaptive_plane_fit);
+  node.declare_parameter<double>("lio.observe.adaptive_huber", 0.0);
+  node.get_parameter("lio.observe.adaptive_huber", g_adaptive_huber);
+
+  node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", false);
+  node.get_parameter("lio.observe.frame_gap_guard_en", g_frame_gap_guard_en);
+  node.declare_parameter<double>("lio.observe.frame_gap_max", 0.2);
+  node.get_parameter("lio.observe.frame_gap_max", g_frame_gap_max);
+  node.declare_parameter<double>("lio.observe.imu_cover_max", 0.03);
+  node.get_parameter("lio.observe.imu_cover_max", g_imu_cover_max);
+
   node.declare_parameter<int>("lio.hash_map.rep_mode", 0);
   node.get_parameter("lio.hash_map.rep_mode", g_map_rep_mode);
 

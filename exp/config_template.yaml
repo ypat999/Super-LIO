@@ -70,7 +70,7 @@
     lio.output.plan_env_body: false
     lio.output.ml_map: false
     lio.output.planner: false
-    lio.output.map: false
+    lio.output.map: __OUTPUT_MAP__
     lio.output.map_body: false
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: false
@@ -110,6 +110,23 @@
     lio.observe.obs_weight: __OBS_WEIGHT__
     lio.observe.plane_fit_threshold: __PLANE_FIT_THR__
     lio.observe.huber_delta_base: __HUBER_BASE__
+    # 退化检测 + 参数自适应（默认全关 = 原行为）
+    lio.observe.degeneracy_detect_en: __DEGENERACY_DETECT_EN__
+    lio.observe.degeneracy_threshold: __DEGENERACY_THRESHOLD__
+    lio.observe.degeneracy_truncate_en: __DEGENERACY_TRUNCATE_EN__
+    lio.observe.tikhonov_lambda: __TIKHONOV_LAMBDA__
+    lio.observe.degeneracy_hysteresis: __DEGENERACY_HYSTERESIS__
+    lio.observe.degeneracy_enter_frames: __DEGENERACY_ENTER_FRAMES__
+    lio.observe.degeneracy_exit_frames: __DEGENERACY_EXIT_FRAMES__
+    lio.observe.adaptive_param_en: __ADAPTIVE_PARAM_EN__
+    lio.observe.adaptive_normal_weight_en: __ADAPTIVE_NORMAL_WEIGHT_EN__
+    lio.observe.adaptive_normal_sigma: __ADAPTIVE_NORMAL_SIGMA__
+    lio.observe.adaptive_plane_fit: __ADAPTIVE_PLANE_FIT__
+    lio.observe.adaptive_huber: __ADAPTIVE_HUBER__
+    # 坏帧护栏：帧间隔过大 / IMU 头部覆盖不足的帧不参与配准建图
+    lio.observe.frame_gap_guard_en: __FRAME_GAP_GUARD_EN__
+    lio.observe.frame_gap_max: __FRAME_GAP_MAX__
+    lio.observe.imu_cover_max: __IMU_COVER_MAX__
     # 实验 2/5：地图端点代表与门控
     lio.hash_map.rep_mode: __MAP_REP_MODE__
     lio.hash_map.clamp_mu: __MAP_CLAMP_MU__

@@ -158,6 +158,43 @@ namespace LI2Sup{
   /// 推荐值: 0.003 (30m处阈值增加0.09m)
   extern double g_huber_delta_scale;
 
+  /// ===== 退化检测 + 参数自适应（源自 ros2 分支 degeneracy detection，默认全关 = 原行为）=====
+  /// 对观测信息矩阵 HTVH 做特征分解，判定是否存在退化方向（只检测 + 记录，不改行为）
+  extern bool   g_degeneracy_detect_en;
+  /// 退化判定阈值：cond(HTVH) = max_eig/min_eig 超过此值即认为存在退化方向
+  extern double g_degeneracy_threshold;
+  /// 退化"响应"之一（ros2 分支原实现）：把退化方向的 LiDAR 约束清零，交 IMU 预积分接管
+  extern bool   g_degeneracy_truncate_en;
+  /// Tikhonov 地板系数：λ = g_tikhonov_lambda * mean_eig，保证截断后信息矩阵可逆。
+  /// 注意 ros2 分支默认 0.1（=均特征值 10%）是语义 bug，正确语义约 1e-3（=0.1%）
+  extern double g_tikhonov_lambda;
+  /// 退化状态去抖：cond 在楼梯 bag 上中位 40、p90 138，阈值 100 时逐帧反复翻转
+  /// （实测 116 次翻转、中位持续 2 帧）。任何直接吃该信号的响应都会注入不连续权重，
+  /// 因此用"滞回 + 最短持续帧数"把状态机稳定下来：
+  ///   进入：cond > threshold            连续 g_degen_enter_frames 帧
+  ///   退出：cond < threshold/hysteresis 连续 g_degen_exit_frames  帧
+  extern double g_degeneracy_hysteresis;
+  extern int    g_degeneracy_enter_frames;
+  extern int    g_degeneracy_exit_frames;
+  /// 退化"响应"之二（新）：检测到退化时把观测参数切到"退化档"，未检出则回静态基线
+  extern bool   g_adaptive_param_en;
+
+  /// ===== 坏帧护栏 =====
+  /// 实测（楼梯 bag 悬停崩塌）：处理停顿会让 imu_buffer_ 欠载，一帧 100 ms 的雷达
+  /// 只有 55 ms 的 IMU 覆盖，去畸变用残缺轨迹把点云扭坏，配准一次跳变 1~3.7 m。
+  /// 开该护栏后，帧间隔过大或 IMU 头部覆盖不足的帧不参与配准/建图，只喂 IMU 预测。
+  extern bool   g_frame_gap_guard_en;
+  /// 相邻雷达帧 end_time 间隔上限（s），超过视为丢帧
+  extern double g_frame_gap_max;
+  /// 允许的 IMU 头部缺口（s）：meas.imu.front().secs - lidar.start_time
+  extern double g_imu_cover_max;
+  /// 退化档：强制开启法向质量加权及其 sigma
+  extern bool   g_adaptive_normal_weight_en;
+  extern double g_adaptive_normal_sigma;
+  /// 退化档：plane_fit / huber 覆盖值；<=0 表示退化时沿用静态配置值
+  extern double g_adaptive_plane_fit;
+  extern double g_adaptive_huber;
+
   /// ===== 实验埋点 =====
   /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
   extern int g_debug_level;

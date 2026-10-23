@@ -99,12 +99,71 @@ inline bool compute_error(
 }
 
 
+/// 观测信息矩阵（HTVH）的退化签名：条件数 + 退化轴数。
+/// Hessian 顺序为 [rotation(3), translation(3)]，退化方向 = 特征值远小于最大特征值的方向。
+struct DegeneracySig {
+  bool   ok   = false;
+  double cond = 0.0;
+  int    axes = 0;
+  V6d    ev   = V6d::Zero();
+  M6d    eV   = M6d::Zero();
+};
+
+static DegeneracySig computeDegeneracy(const M6d& H, double threshold) {
+  DegeneracySig s;
+  if (!H.allFinite()) return s;
+  Eigen::SelfAdjointEigenSolver<M6d> es(H);
+  if (es.info() != Eigen::Success) return s;
+  s.ok = true;
+  s.ev = es.eigenvalues();
+  s.eV = es.eigenvectors();
+  const double min_eig = s.ev(0);
+  const double max_eig = s.ev(5);
+  s.cond = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
+  s.axes = 0;
+  for (int i = 0; i < 6; ++i) {
+    if (s.ev(i) < max_eig / threshold) ++s.axes;
+  }
+  return s;
+}
+
+/// 退化方向截断（修自 ros2 分支）：把退化轴（特征值 < max_eig/threshold）的
+/// LiDAR 约束清零，交 IMU 预积分接管；再叠加 Tikhonov 地板
+/// （λ = tikhonov_lambda * mean_eig）保证信息矩阵可逆。
+///
+/// 与 ros2 原实现的关键区别：**梯度 HTVr 必须一起投影**。
+/// 原版只截断 HTVH 不动 HTVr，信息矩阵在退化轴只剩 Tikhonov 地板（量级 ~1e-3），
+/// 而梯度在该方向仍有满量程分量 ⇒ Qk·b 在退化轴放大 1e3 倍，位姿直接被推飞
+/// （实测 deg_trunc 发散到 7.9e5 m、地图 4969 万点）。
+/// 正确做法是把 H 与 r 一起投影到"健康子空间": (H', r') = (P H P, P r)，P = Σ_healthy v vᵀ。
+static void truncateDegenerate(const M6d& H, const V6d& r, const DegeneracySig& s,
+                               double threshold, double tikhonov_lambda,
+                               M6d& H_out, V6d& r_out) {
+  M6d P = M6d::Zero();
+  const double max_eig = s.ev(5);
+  for (int i = 0; i < 6; ++i) {
+    if (s.ev(i) < max_eig / threshold) continue;   // 退化方向：丢弃 LiDAR 约束
+    P += s.eV.col(i) * s.eV.col(i).transpose();
+  }
+  const double tikhonov = tikhonov_lambda * H.trace() / 6.0;
+  H_out = P * H * P.transpose() + tikhonov * M6d::Identity();
+  r_out = P * r;   // 梯度同投影，保证 H 与 r 在同一子空间内一致
+}
+
+
 /// 初始化：创建 IVox 地图、ESKF 滤波器、加载参数
 void SuperLIO::init(){
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
   kf_.reset(new ESKF());
   data_wrapper_->setESKF(kf_);
-  
+
+  // 参数自适应：缓存观测静态基线（配置已由 ROSWrapper 读入），
+  // 供"退化档 ↔ 正常档"运行时切换后恢复用。
+  base_normal_weight_en_ = g_normal_weight_en;
+  base_normal_sigma_      = g_normal_sigma;
+  base_plane_fit_         = g_plane_fit_threshold;
+  base_huber_             = g_huber_delta_base;
+
   scan_undistort_full_.reset(new PointCloudType());
   ds_undistort_.reset(new PointCloudType());
 
@@ -458,19 +517,47 @@ void SuperLIO::stateProcess(){
     time_record_.Evaluate([this](){Propagation_Undistort();},  "[Undistort]");
     time_record_.Evaluate([this]() { PublishBodyCloud(); },    "[PublishBody]");
     time_record_.Evaluate([this]() { DownSample(); },          "[DownSample]");
-    time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
-    time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
-    time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
   }else{
     Propagation_Undistort();
     PublishBodyCloud();   // immediate, pre-ESKF (minimum latency)
     DownSample();
-    Observe();
-    ApplyDeltaCorrection();
-    UpdateMap();
   }
-  Output();                // world cloud via queue (high precision)
-  enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+
+  // ===== 坏帧护栏 =====
+  // 丢帧/IMU 欠载的帧，其去畸变点云是坏的（实测一帧 100 ms 只有 55 ms IMU 覆盖，
+  // 配准一次跳变 1~3.7 m）。这类帧不参与配准与建图，只让 IMU 预测继续推进。
+  bool frame_trusted = true;
+  if(g_frame_gap_guard_en){
+    const double gap = (last_lidar_end_time_ < 0.0)
+        ? 0.0 : (measures_.lidar.end_time - last_lidar_end_time_);
+    const double imu_head_gap = measures_.imu.empty()
+        ? 1e9 : (measures_.imu.front().secs - measures_.lidar.start_time);
+    if(gap > g_frame_gap_max || imu_head_gap > g_imu_cover_max){
+      frame_trusted = false;
+      ++guard_skip_count_;
+      if(frame_num_ - guard_last_log_frame_ > 20){
+        LOG(WARNING) << "[Guard] skip untrusted frame: lidar_gap=" << gap * 1000.0
+                     << " ms, imu_head_gap=" << imu_head_gap * 1000.0
+                     << " ms, total_skipped=" << guard_skip_count_;
+        guard_last_log_frame_ = frame_num_;
+      }
+    }
+  }
+  last_lidar_end_time_ = measures_.lidar.end_time;
+
+  if(frame_trusted){
+    if(g_time_eva){
+      time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
+      time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
+      time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
+    }else{
+      Observe();
+      ApplyDeltaCorrection();
+      UpdateMap();
+    }
+    Output();                // world cloud via queue (high precision)
+    enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+  }
   caceSCPGOData();
 }
 
@@ -1320,11 +1407,25 @@ void SuperLIO::Observe(){
   const bool debug = g_debug_level > 0;
   kf_->SetDebug(debug);
 
+  // 参数自适应：用上一帧退化签名切换观测参数档（退化档 ↔ 静态基线）。
+  // 观测侧参数只影响配准更新、不写地图（UpdateMap 全量插入，与这些参数无关），
+  // 运行时切换安全；这些全局仅在本线程的 Observe 路径被读取。
+  if (g_adaptive_param_en) {
+    const bool degen = degeneracy_active_;
+    g_normal_weight_en    = degen ? g_adaptive_normal_weight_en : base_normal_weight_en_;
+    g_normal_sigma        = degen ? g_adaptive_normal_sigma    : base_normal_sigma_;
+    g_plane_fit_threshold = (degen && g_adaptive_plane_fit > 0.0) ? g_adaptive_plane_fit : base_plane_fit_;
+    g_huber_delta_base    = (degen && g_adaptive_huber > 0.0)     ? g_adaptive_huber     : base_huber_;
+  }
+
   static std::vector<float> _lengths;
   static std::vector<float> _w_quality;
   points_body_v3_.resize(ptsize);
   _lengths.resize(ptsize);
   _w_quality.resize(ptsize, 1.0f);
+  // resize 在 size 不变时不清空旧值；normal_weight 运行时切换会复用上帧陈旧权重。
+  // 每帧强制回填为 1 消除隐患（只多一次 O(ptsize) 的 float 写，成本可忽略）。
+  std::fill(_w_quality.begin(), _w_quality.end(), 1.0f);
   if (debug) fit_res_vec_.clear();
 
   effect_knn_num_ = ptsize;
@@ -1464,12 +1565,66 @@ void SuperLIO::Observe(){
       }
     }
 
-    last_HTVH = sum_HTVH;
+    last_HTVH = sum_HTVH;   // 原始 Hessian（供埋点/退化检测，未经截断）
+
+    // 退化"响应"之一：截断。用**上一帧去抖后**的退化状态驱动，不用本帧原始 cond，
+    // 否则帧级抖动会让约束每两帧开一次关一次（实测 116 次翻转）。
+    if (g_degeneracy_truncate_en && degeneracy_active_) {
+      DegeneracySig d = computeDegeneracy(sum_HTVH, g_degeneracy_threshold);
+      if (d.ok) {
+        truncateDegenerate(sum_HTVH, sum_HTVr, d, g_degeneracy_threshold,
+                           g_tikhonov_lambda, sum_HTVH, sum_HTVr);
+      }
+    }
+
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
     iter_num++;
   });
+
+  // ===== 退化检测 + 去抖状态机（每帧一次，用最后迭代的原始 Hessian）=====
+  // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
+  // 滞回（进 cond>thr，出 cond<thr·hysteresis）+ 最短持续帧数，避免帧级抖动。
+  if (debug || g_degeneracy_detect_en || g_adaptive_param_en || g_degeneracy_truncate_en) {
+    DegeneracySig deg = computeDegeneracy(last_HTVH, g_degeneracy_threshold);
+    degeneracy_cond_ = deg.ok ? deg.cond : 0.0;
+    degeneracy_axes_ = deg.ok ? deg.axes : 0;
+
+    const double hi = g_degeneracy_threshold;
+    const double lo = g_degeneracy_threshold * std::max(0.05, g_degeneracy_hysteresis);
+    if (!degeneracy_active_) {
+      if (deg.ok && deg.cond > hi) {
+        if (++degen_state_cnt_ >= std::max(1, g_degeneracy_enter_frames)) {
+          degeneracy_active_ = true;
+          degen_state_cnt_ = 0;
+        }
+      } else {
+        degen_state_cnt_ = 0;
+      }
+    } else {
+      if (deg.ok && deg.cond < lo) {
+        if (++degen_state_cnt_ >= std::max(1, g_degeneracy_exit_frames)) {
+          degeneracy_active_ = false;
+          degen_state_cnt_ = 0;
+        }
+      } else {
+        degen_state_cnt_ = 0;
+      }
+    }
+  }
+
+  if (g_degeneracy_detect_en) {
+    static auto last_degen_log = std::chrono::steady_clock::now();
+    auto now_degen = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now_degen - last_degen_log).count() > 2.0) {
+      LOG(WARNING) << "[Degeneracy] cond=" << degeneracy_cond_
+                   << " axes=" << degeneracy_axes_
+                   << " active=" << (degeneracy_active_ ? 1 : 0)
+                   << " effect_pts=" << n_effect;
+      last_degen_log = now_degen;
+    }
+  }
 
   // ===== 埋点 CSV（lio.debug.level > 0）=====
   if (debug) {
@@ -1485,7 +1640,7 @@ void SuperLIO::Observe(){
       debug_csv_ << "t,ptsize,n_knn_fail,n_plane_fail,n_res_fail,n_effect,"
                     "fit_res_mean,fit_res_p95,iters,dx_inf,cond_yk,qk_finite,"
                     "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale,"
-                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt\n";
+                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt,deg_cond,deg_axes\n";
     }
     double fit_mean = 0.0, fit_p95 = 0.0;
     if (!fit_res_vec_.empty()) {
@@ -1532,7 +1687,8 @@ void SuperLIO::Observe(){
                // "观测修正 ∝ 角速度" 的候选来源，逐帧记下来可直接回归验证
                << (measures_.imu.empty() ? 0.0
                      : measures_.lidar.end_time - measures_.imu.back().secs) << ','
-               << (measures_.lidar.end_time - measures_.lidar.start_time) << '\n';
+               << (measures_.lidar.end_time - measures_.lidar.start_time) << ','
+               << degeneracy_cond_ << ',' << degeneracy_axes_ << '\n';
     debug_csv_.flush();
   }
 
@@ -1662,6 +1818,13 @@ void SuperLIO::OutputThread(){
     // odom is always published with state.timestamp (same as body/world cloud)
     if (!data.is_undistort_only) {
       data_wrapper_->pub_odom(data.state, data.body_omega);
+      // 端到端延迟：雷达接收 → odom 落盘。odom 始终发布，因此该指标在任何配置下可比；
+      // 点云话题默认关闭（lio.output.map=false）时，用它作为管线延迟的等价口径。
+      if (data.lidar_receive_time > 0.0) {
+        auto now_s = std::chrono::duration<double>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+        data_wrapper_->recordLatency("[Lidar->Odom]", (now_s - data.lidar_receive_time) * 1000.0);
+      }
     }
 
     if (data.has_body_pc && data.body_pc) {

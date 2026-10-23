@@ -109,6 +109,24 @@ namespace LI2Sup{
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
 
+  /// 退化检测 + 参数自适应（默认全关 = 原行为）
+  bool   g_degeneracy_detect_en = false;
+  double g_degeneracy_threshold = 100.0;
+  bool   g_degeneracy_truncate_en = false;
+  double g_tikhonov_lambda = 1e-3;
+  double g_degeneracy_hysteresis = 0.5;
+  int    g_degeneracy_enter_frames = 3;
+  int    g_degeneracy_exit_frames = 10;
+  bool   g_adaptive_param_en = false;
+  /// 坏帧护栏
+  bool   g_frame_gap_guard_en = false;
+  double g_frame_gap_max = 0.2;
+  double g_imu_cover_max = 0.03;
+  bool   g_adaptive_normal_weight_en = true;
+  double g_adaptive_normal_sigma = 0.035;
+  double g_adaptive_plane_fit = 0.0;
+  double g_adaptive_huber = 0.0;
+
   /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
   int    g_debug_level = 0;
   bool   g_normal_weight_en = false;

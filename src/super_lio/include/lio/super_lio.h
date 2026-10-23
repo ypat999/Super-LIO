@@ -149,6 +149,22 @@ protected:
   std::vector<BASIC::scalar> fit_res_vec_;
   std::ofstream debug_csv_;
 
+  // ===== 退化检测 + 参数自适应 =====
+  // 上一帧观测信息矩阵的退化签名（cond / 退化轴数 / 是否触发），供本帧参数自适应使用
+  double degeneracy_cond_   = 0.0;
+  int    degeneracy_axes_   = 0;
+  bool   degeneracy_active_ = false;   // 去抖后的退化状态（响应机制都用它）
+  int    degen_state_cnt_   = 0;       // 状态机连续帧计数
+  // 坏帧护栏
+  double last_lidar_end_time_   = -1.0;
+  long   guard_skip_count_      = 0;
+  long   guard_last_log_frame_  = -10000;
+  // 观测静态基线（init 时从配置缓存），供"退化档 ↔ 正常档"切换时恢复
+  bool   base_normal_weight_en_ = false;
+  double base_normal_sigma_      = 0.05;
+  double base_plane_fit_         = 0.15;
+  double base_huber_             = 0.05;
+
   Timer time_record_;
 
   std::thread output_thread_;
