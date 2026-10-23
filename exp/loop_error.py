@@ -166,14 +166,26 @@ def detect_stops(t, xyz, v_thr=0.10, min_s=2.0):
     return segs
 
 
-def measure_loops(run, up_imu, v_thr=0.10, min_s=2.0):
-    """逐圈闭环：以检测到的每个静止段为一个锚点，算相对首个锚点的偏差。"""
+def measure_loops(run, up_imu, v_thr=0.10, min_s=2.0, wins=None):
+    """逐圈闭环：以检测到的每个静止段为一个锚点，算相对首个锚点的偏差。
+
+    wins 非空时改用固定时间窗 [[t0,t1], ...]（相对本 run odom 起点）当锚点。
+    注意：detect_stops 用的是 odom 自身速度，run 一旦在静止悬停时发散，就会把
+    同一段物理静止切成两个锚点、并把发散量算进"闭环"⇒ 跨 run 对比必须用 wins。
+    """
     loaded = load_run(run)
     if loaded is None:
         return None
     t, xyz, quat = loaded
     up = quat_to_rot(quat[0]) @ up_imu
-    segs = detect_stops(t, xyz, v_thr, min_s)
+    if wins:
+        segs = []
+        for (ta, tb) in wins:
+            idx = np.where(((t - t[0]) >= ta) & ((t - t[0]) <= tb))[0]
+            if len(idx) >= 5:
+                segs.append((int(idx[0]), int(idx[-1])))
+    else:
+        segs = detect_stops(t, xyz, v_thr, min_s)
     if not segs:
         return {"run": os.path.basename(run.rstrip("/")), "anchors": []}
 
@@ -210,14 +222,20 @@ def main():
                     help="按检测到的静止段逐圈算闭环（用于多圈各自回起点的 bag）")
     ap.add_argument("--still", type=float, default=0.10, help="静止判据 m/s")
     ap.add_argument("--still-min", type=float, default=2.0, help="静止最短持续时间 s")
+    ap.add_argument("--win", default=None,
+                    help="固定锚点时间窗，如 '12:21,392:420'（秒，相对 odom 起点）。"
+                         "跨 run 对比时应显式给出，避免发散 run 的锚点切分不一致")
     ap.add_argument("runs", nargs="+")
     a = ap.parse_args()
+    wins = None
+    if a.win:
+        wins = [tuple(float(x) for x in w.split(":")) for w in a.win.split(",")]
 
     up_imu = imu_up(a.bag, a.static)
     print(f"[imu] up_imu = {up_imu.round(4)}")
     if a.loops:
         for run in a.runs:
-            r = measure_loops(run, up_imu, a.still, a.still_min)
+            r = measure_loops(run, up_imu, a.still, a.still_min, wins)
             if r is None:
                 print(f"{os.path.basename(run.rstrip('/'))}: 无 odom.csv 或行数不足")
                 continue
