@@ -170,8 +170,10 @@ static DegeneracySig computeDegeneracy(const M6d& H, double threshold, int mode)
         : V6d(es.eigenvectors().col(i));
   }
   if (n_healthy > 0) {
-    const M6d Uh = U.leftCols(n_healthy);
-    s.P = Uh * (Uh.transpose() * Uh).inverse() * Uh.transpose();
+    // 先落到动态尺寸：n_healthy<6 时 6x3 的 block 直接构造 M6d 会触发 Eigen resize 断言
+    const Eigen::MatrixXd Uh = U.leftCols(n_healthy);
+    const Eigen::MatrixXd Ph = Uh * (Uh.transpose() * Uh).inverse() * Uh.transpose();
+    s.P = M6d(Ph);
   } else {
     s.P.setZero();
   }
@@ -1240,8 +1242,14 @@ void SuperLIO::Propagation_Undistort(){
     imu_gyr.emplace_back(imu.gyr - bg);
   }
 
+  // 本帧平均角速度模（2.D 阈值随运动幅度自适应用）
+  double omega_sum = 0.0;
+  for (const auto& w : imu_gyr) omega_sum += w.norm();
+  frame_omega_ = imu_gyr.empty() ? 0.0 : omega_sum / static_cast<double>(imu_gyr.size());
+
   undistortCloud(measures_.lidar.pc, propagate_states_, imu_gyr,
-                 measures_.lidar.start_time, T_end, scan_undistort_full_);
+                 measures_.lidar.start_time, T_end, scan_undistort_full_,
+                 g_delta_interp_en ? &scan_offsets_full_ : nullptr);
 }
 
 /// 通用去畸变：对 raw_pc 按 IMU 传播轨迹(propagate_states)去畸变到 out_pc。
@@ -1251,7 +1259,8 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
                               const std::vector<V3>& imu_gyr,
                               double start_time,
                               const SE3& T_end,
-                              CloudPtr& out_pc){
+                              CloudPtr& out_pc,
+                              std::vector<float>* out_offsets){
   const M3  R_inv = T_end.R_.transpose();
   const V3  T_end_t = T_end.t_;
 
@@ -1302,6 +1311,7 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
     ic.time_end = s1.time;
   }
 
+  if (out_offsets) out_offsets->clear();
   // 预提取 offset_time 到连续数组，改善 cache 局部性
   const double back_time = propagate_states.back().time;
   std::vector<double> offset_times(ptsize);
@@ -1324,6 +1334,8 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
 
     auto& pt_full = out_pc->points[write_idx++];
     pt_full.intensity = pt.intensity;
+    // 2.E：点时刻对齐输出（点类型无 offset_time 字段，用并列数组承载）
+    if (out_offsets) out_offsets->push_back(static_cast<float>(pt.offset_time));
 
     // Advance j while next interval starts before query_time
     while (j + 1 < M - 1 && interval_cache[j + 1].time_start < query_time) ++j;
@@ -1373,25 +1385,48 @@ void SuperLIO::ApplyDeltaCorrection() {
   const M3  dR = T_corrected.R_.transpose() * T_pred.R_;
   const V3  dp = T_corrected.R_.transpose() * (T_pred.t_ - T_corrected.t_);
 
-  // Apply to full-resolution cloud
-  if (scan_undistort_full_ && !scan_undistort_full_->empty()) {
-    for (auto& pt : scan_undistort_full_->points) {
-      const float px = pt.x, py = pt.y, pz = pt.z;
-      pt.x = dR(0,0)*px + dR(0,1)*py + dR(0,2)*pz + dp[0];
-      pt.y = dR(1,0)*px + dR(1,1)*py + dR(1,2)*pz + dp[1];
-      pt.z = dR(2,0)*px + dR(2,1)*py + dR(2,2)*pz + dp[2];
+  // 2.E：按点时刻分配 ΔT。整帧刚性修正的残差 ∝ 帧内位置×修正量，
+  // 与 M.11 的"非速率型俯仰偏置"形态吻合，因此按点时刻做 3 段线性插值：
+  // 段内修正量 = s·(ΔR, Δp)，s ∈ {1/3, 2/3, 1}；s=1 段与刚性修正完全一致。
+  M3 dR_seg[3] = {dR, dR, dR};
+  V3 dp_seg[3] = {dp, dp, dp};
+  // offsets 是相对 start_time 的秒偏移，故只用帧时长做归一化
+  double t_span = 1.0;
+  if (g_delta_interp_en && !scan_undistort_full_->empty()) {
+    const Eigen::Matrix3d dRd = dR.cast<double>();
+    const Eigen::AngleAxisd aa(dRd);
+    for (int k = 0; k < 3; ++k) {
+      const double sk = static_cast<double>(k + 1) / 3.0;
+      dR_seg[k] = Eigen::AngleAxisd(aa.angle() * sk, aa.axis()).toRotationMatrix().cast<float>();
+      dp_seg[k] = dp * sk;
     }
+    t_span = std::max(1e-3, measures_.lidar.end_time - measures_.lidar.start_time);
   }
 
-  // Apply to downsampled cloud (subset of full cloud, corrected independently)
-  if (ds_undistort_ && !ds_undistort_->empty()) {
-    for (auto& pt : ds_undistort_->points) {
+  auto apply_delta = [&](BASIC::CloudPtr& cloud, const std::vector<float>* offsets) {
+    if (!cloud || cloud->empty()) return;
+    const bool use_off = g_delta_interp_en && offsets && offsets->size() == cloud->size();
+    for (size_t pi = 0; pi < cloud->points.size(); ++pi) {
+      auto& pt = cloud->points[pi];
+      int k = 2;
+      if (use_off) {
+        double frac = (*offsets)[pi] / t_span;
+        frac = std::min(1.0, std::max(0.0, frac));
+        k = std::min(2, static_cast<int>(frac * 3.0));
+      }
+      const M3& R = dR_seg[k];
+      const V3& T = dp_seg[k];
       const float px = pt.x, py = pt.y, pz = pt.z;
-      pt.x = dR(0,0)*px + dR(0,1)*py + dR(0,2)*pz + dp[0];
-      pt.y = dR(1,0)*px + dR(1,1)*py + dR(1,2)*pz + dp[1];
-      pt.z = dR(2,0)*px + dR(2,1)*py + dR(2,2)*pz + dp[2];
+      pt.x = R(0,0)*px + R(0,1)*py + R(0,2)*pz + T[0];
+      pt.y = R(1,0)*px + R(1,1)*py + R(1,2)*pz + T[1];
+      pt.z = R(2,0)*px + R(2,1)*py + R(2,2)*pz + T[2];
     }
-  }
+  };
+
+  // Apply to full-resolution cloud
+  apply_delta(scan_undistort_full_, &scan_offsets_full_);
+  // Apply to downsampled cloud (subset of full cloud, corrected independently)
+  apply_delta(ds_undistort_, &scan_offsets_ds_);
 
   // Re-sync points_body_v3_ for UpdateMap() consistency
   const size_t ptsize = ds_undistort_->size();
@@ -1413,7 +1448,18 @@ void SuperLIO::PublishBodyCloud() {
 
 void SuperLIO::DownSample(){
   voxel_grid_fliter_.setInputCloud(scan_undistort_full_);
-  voxel_grid_fliter_.filter(ds_undistort_);
+  std::vector<int> src_idx;
+  voxel_grid_fliter_.filter(ds_undistort_, &src_idx);
+  // 2.E：把全量点的时刻映射到降采样点（保持逐点 ΔT 分段可用）
+  scan_offsets_ds_.clear();
+  if (g_delta_interp_en && src_idx.size() == ds_undistort_->size()) {
+    scan_offsets_ds_.resize(src_idx.size());
+    for (size_t i = 0; i < src_idx.size(); ++i) {
+      const int si = src_idx[i];
+      scan_offsets_ds_[i] = (si >= 0 && si < static_cast<int>(scan_offsets_full_.size()))
+          ? scan_offsets_full_[si] : 0.0f;
+    }
+  }
 }
 
 
@@ -1496,6 +1542,13 @@ void SuperLIO::Observe(){
     _lengths[i] = points_body_v3_[i].norm();
   }
 
+  // 2.A：世界系 up（ESKF 的重力反向），用于地面/天花板点的对齐软约束
+  V3d up_world = V3d::Zero();
+  if (g_ground_weight > 0.0) {
+    const V3 g_vec = kf_->GetGravity();
+    if (g_vec.norm() > 1e-6) up_world = (-g_vec.normalized()).cast<double>();
+  }
+
   ivox_->reset_max_group();
   int iter_num = 0;
   // 首轮统计（仅埋点用）
@@ -1551,13 +1604,33 @@ void SuperLIO::Observe(){
         J.tail<3>() = normvec;
 
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
-        const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        // 2.D：高速旋转段放宽阈值，避免运动畸变残差被误降权
+        if (g_thresh_motion_k > 0.0) {
+          huber_delta *= static_cast<float>(1.0 + g_thresh_motion_k * frame_omega_);
+        }
         const float abs_error = std::abs(error);
         float w = (abs_error <= huber_delta) ? g_obs_weight
                                              : g_obs_weight * huber_delta / abs_error;
         if (g_normal_weight_en) w *= _w_quality[idx];
+        // 2.B：观测噪声按距离建模 w /= (1 + (k*r)^2)
+        if (g_obs_dist_k > 0.0) {
+          const double kr = g_obs_dist_k * _lengths[idx];
+          w *= static_cast<float>(1.0 / (1.0 + kr * kr));
+        }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
+        if (g_ground_weight > 0.0) {
+          const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
+          const double cosang = s_up * normvec.dot(up_world);
+          if (cosang > 0.95) {
+            const V3d Jg = s_up * normvec.cross(up_world);
+            const double eg = cosang - 1.0;
+            sum_HTVH.block<3, 3>(0, 0) += g_ground_weight * Jg * Jg.transpose();
+            sum_HTVr.head<3>() -= g_ground_weight * Jg * eg;
+          }
+        }
       }
 
       // Build compact index array for subsequent iterations
@@ -1603,13 +1676,33 @@ void SuperLIO::Observe(){
         J.tail<3>() = normvec;
 
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
-        const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
+        // 2.D：高速旋转段放宽阈值，避免运动畸变残差被误降权
+        if (g_thresh_motion_k > 0.0) {
+          huber_delta *= static_cast<float>(1.0 + g_thresh_motion_k * frame_omega_);
+        }
         const float abs_error = std::abs(error);
         float w = (abs_error <= huber_delta) ? g_obs_weight
                                              : g_obs_weight * huber_delta / abs_error;
         if (g_normal_weight_en) w *= _w_quality[idx];
+        // 2.B：观测噪声按距离建模 w /= (1 + (k*r)^2)
+        if (g_obs_dist_k > 0.0) {
+          const double kr = g_obs_dist_k * _lengths[idx];
+          w *= static_cast<float>(1.0 / (1.0 + kr * kr));
+        }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
+        if (g_ground_weight > 0.0) {
+          const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
+          const double cosang = s_up * normvec.dot(up_world);
+          if (cosang > 0.95) {
+            const V3d Jg = s_up * normvec.cross(up_world);
+            const double eg = cosang - 1.0;
+            sum_HTVH.block<3, 3>(0, 0) += g_ground_weight * Jg * Jg.transpose();
+            sum_HTVr.head<3>() -= g_ground_weight * Jg * eg;
+          }
+        }
       }
 
       if(!need_converge) {

@@ -109,6 +109,10 @@ namespace LI2Sup{
   double g_obs_weight = 1000.0;
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
+  double g_ground_weight = 0.0;
+  double g_obs_dist_k = 0.0;
+  double g_thresh_motion_k = 0.0;
+  bool   g_delta_interp_en = false;
 
   /// 退化检测 + 参数自适应（默认全关 = 原行为）
   bool   g_degeneracy_detect_en = false;

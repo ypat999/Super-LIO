@@ -95,7 +95,8 @@ protected:
                       const std::vector<BASIC::V3>& imu_gyr,
                       double start_time,
                       const BASIC::SE3& T_end,
-                      BASIC::CloudPtr& out_pc);
+                      BASIC::CloudPtr& out_pc,
+                      std::vector<float>* out_offsets = nullptr);
   void ApplyDeltaCorrection();
   void PublishBodyCloud();
   void DownSample();
@@ -148,6 +149,11 @@ protected:
   // ===== 实验埋点（lio.debug.level > 0 时生效，不参与滤波）=====
   std::vector<BASIC::scalar> fit_res_vec_;
   std::ofstream debug_csv_;
+  /// 本帧平均角速度模（rad/s），2.D 阈值随运动幅度自适应用
+  double frame_omega_ = 0.0;
+  /// 2.E：实时点云的逐点时刻（offset_time，s），与 scan_undistort_full_/ds_undistort_ 对齐
+  std::vector<float> scan_offsets_full_;
+  std::vector<float> scan_offsets_ds_;
 
   // ===== 退化检测 + 参数自适应 =====
   // 上一帧观测信息矩阵的退化签名（cond / 退化轴数 / 是否触发），供本帧参数自适应使用

@@ -26,6 +26,7 @@ private:
 
   std::vector<Point, Eigen::aligned_allocator<Point>> points_;
   std::vector<float> dist2_;
+  std::vector<int> src_idx_;   // 每个输出点来自输入点云的哪个索引（2.E 用）
   const Eigen::Vector3i offset_ = Eigen::Vector3i(1000, 1000, 1000);
 
 public:
@@ -44,11 +45,13 @@ public:
     cloud_ = cloud;
   }
 
-  void filter(CloudPtr& output) {
+  void filter(CloudPtr& output, std::vector<int>* src_idx_out = nullptr) {
     voxel_map_.clear();
     dist2_.clear();
     points_.clear();
+    src_idx_.clear();
 
+    int src = 0;
     for (const auto& pt : cloud_->points) {
       Eigen::Vector3f pf = pt.getVector3fMap();
       Eigen::Vector3i idx = (pf * inv_voxel_size_).array().round().cast<int>();
@@ -65,10 +68,13 @@ public:
         voxel_map_.emplace(key, points_.size());
         points_.push_back(pt);
         dist2_.push_back(d2);
+        src_idx_.push_back(src);
       } else if (d2 < dist2_[it->second]) {
         points_[it->second] = pt;
         dist2_[it->second] = d2;
+        src_idx_[it->second] = src;
       }
+      ++src;
     }
 
     output->points.swap(points_);
@@ -76,6 +82,7 @@ public:
     output->height = 1;
     output->is_dense = true;
     output->header = cloud_->header;
+    if (src_idx_out) *src_idx_out = src_idx_;
   }
 };
 

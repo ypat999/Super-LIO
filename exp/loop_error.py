@@ -97,7 +97,7 @@ def load_run(run):
     return a[:, 0], a[:, 1:4].astype(np.float64), a[:, 4:8].astype(np.float64)
 
 
-def measure(run, up_imu, settle=1.0):
+def measure(run, up_imu, settle=1.0, health=False):
     loaded = load_run(run)
     if loaded is None:
         return None
@@ -121,7 +121,7 @@ def measure(run, up_imu, settle=1.0):
     dt = np.diff(t)
     v = step / np.maximum(dt, 1e-6)
     h = xyz @ up
-    return {
+    out = {
         "run": os.path.basename(run.rstrip("/")),
         "n": len(xyz),
         "dur": t[-1] - t[0],
@@ -137,6 +137,9 @@ def measure(run, up_imu, settle=1.0):
         "zlo": float(h.min()),
         "zhi": float(h.max()),
     }
+    if health:
+        out["_hm"] = health_metrics(t, xyz)
+    return out
 
 
 def detect_stops(t, xyz, v_thr=0.10, min_s=2.0):
@@ -164,6 +167,24 @@ def detect_stops(t, xyz, v_thr=0.10, min_s=2.0):
             segs.append((i, j))
         i = j + 1
     return segs
+
+
+def health_metrics(t, xyz, v_thr=0.10, min_s=2.0, gap_thr=0.15):
+    """健康度两列（M.22-6 / M.24-5）：odom 时间缺口次数、静止段最大位移。
+
+    带处理停顿（丢帧/IMU 欠载）的 run 会被悬停崩塌污染，结论不可信，
+    因此每次跨 run 比较都要同时看这两列。
+    """
+    dt = np.diff(t)
+    gaps = int((dt > gap_thr).sum())
+    segs = detect_stops(t, xyz, v_thr, min_s)
+    hover, hover_at = 0.0, None
+    for (i0, i1) in segs:
+        dp = float(np.linalg.norm(xyz[i1] - xyz[i0]))
+        if dp > hover:
+            hover, hover_at = dp, (float(t[i0] - t[0]), float(t[i1] - t[0]))
+    return {"gaps": gaps, "gap_max": float(dt.max()) if len(dt) else 0.0,
+            "hover": hover, "hover_at": hover_at, "n_stop": len(segs)}
 
 
 def measure_loops(run, up_imu, v_thr=0.10, min_s=2.0, wins=None):
@@ -222,6 +243,8 @@ def main():
                     help="按检测到的静止段逐圈算闭环（用于多圈各自回起点的 bag）")
     ap.add_argument("--still", type=float, default=0.10, help="静止判据 m/s")
     ap.add_argument("--still-min", type=float, default=2.0, help="静止最短持续时间 s")
+    ap.add_argument("--health", action="store_true",
+                    help="额外输出健康度两列：odom gap>0.15s 次数、静止段最大位移")
     ap.add_argument("--win", default=None,
                     help="固定锚点时间窗，如 '12:21,392:420'（秒，相对 odom 起点）。"
                          "跨 run 对比时应显式给出，避免发散 run 的锚点切分不一致")
@@ -241,6 +264,13 @@ def main():
                 continue
             print(f"\n== {r['run']}  dur={r['dur']:.1f}s  path={r['path']:.1f}m  "
                   f"锚点（静止段）{len(r['anchors'])} 个")
+            if a.health:
+                loaded = load_run(run)
+                if loaded is not None:
+                    hm = health_metrics(loaded[0], loaded[1])
+                    flag = "  << 污染" if (hm["gaps"] > 0 or hm["hover"] > 1.0) else ""
+                    print(f"   [health] odom_gap(>0.15s)={hm['gaps']}  gap_max={hm['gap_max']:.2f}s  "
+                          f"静止段最大位移={hm['hover']:.3f}m 静止段数={hm['n_stop']}{flag}")
             print(f"{'#':>3}{'t0(s)':>8}{'t1(s)':>8}{'停(s)':>7}{'上一段里程':>11}"
                   f"{'闭环3D':>8}{'水平':>7}{'竖直':>7}{'占路径%':>9}{'yaw°':>8}")
             for k, s in enumerate(r["anchors"]):
@@ -252,14 +282,20 @@ def main():
     print(f"\n{'run':<26}{'dur(s)':>7}{'路径m':>8}{'v中':>6}{'闭环3D':>8}"
           f"{'水平':>7}{'竖直':>7}{'占路径%':>9}{'转角°':>8}{'其中yaw°':>10}{'高度m':>9}")
     for run in a.runs:
-        r = measure(run, up_imu)
+        r = measure(run, up_imu, health=a.health)
         if r is None:
             print(f"{os.path.basename(run.rstrip('/')):<26}  无 odom.csv 或行数不足")
             continue
-        print(f"{r['run']:<26}{r['dur']:>7.1f}{r['path']:>8.1f}{r['v_med']:>6.2f}"
-              f"{r['d3']:>8.3f}{r['dh']:>7.3f}{r['dv']:>+7.3f}{r['d_pct']:>9.3f}"
-              f"{r['rot']:>8.3f}{r['yaw']:>+10.3f}"
-              f"{r['zlo']:>+6.2f}..{r['zhi']:>+5.2f}")
+        line = (f"{r['run']:<26}{r['dur']:>7.1f}{r['path']:>8.1f}{r['v_med']:>6.2f}"
+                f"{r['d3']:>8.3f}{r['dh']:>7.3f}{r['dv']:>+7.3f}{r['d_pct']:>9.3f}"
+                f"{r['rot']:>8.3f}{r['yaw']:>+10.3f}"
+                f"{r['zlo']:>+6.2f}..{r['zhi']:>+5.2f}")
+        if a.health:
+            hm = r.get("_hm")
+            if hm:
+                line += (f"{hm['gaps']:>7d}{hm['hover']:>8.3f}"
+                         + ("  污染" if (hm['gaps'] > 0 or hm['hover'] > 1.0) else ""))
+        print(line)
 
 
 if __name__ == "__main__":

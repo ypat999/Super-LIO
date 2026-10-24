@@ -158,6 +158,17 @@ namespace LI2Sup{
   /// 推荐值: 0.003 (30m处阈值增加0.09m)
   extern double g_huber_delta_scale;
 
+  /// ===== 阶段 2 机制开关（默认全关 = 原行为）=====
+  /// 2.A 地面/重力软约束：对 |n·up|>0.95 的地板/天花板点追加"法向对齐重力"的
+  /// 旋转残差，权重独立于 obs_weight（0 = 关闭）。这是新信息，不是重加权。
+  extern double g_ground_weight;
+  /// 2.B 观测噪声按距离建模：w /= (1 + (g_obs_dist_k * range)^2)，0 = 关闭
+  extern double g_obs_dist_k;
+  /// 2.D 阈值随运动幅度自适应：huber_delta *= (1 + g_thresh_motion_k * |omega|)，0 = 关闭
+  extern double g_thresh_motion_k;
+  /// 2.E 按点时刻分配 ΔT：ApplyDeltaCorrection 用帧内 3 段插值代替整帧刚性修正
+  extern bool   g_delta_interp_en;
+
   /// ===== 退化检测 + 参数自适应（源自 ros2 分支 degeneracy detection，默认全关 = 原行为）=====
   /// 对观测信息矩阵 HTVH 做特征分解，判定是否存在退化方向（只检测 + 记录，不改行为）
   extern bool   g_degeneracy_detect_en;

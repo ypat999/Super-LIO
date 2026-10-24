@@ -44,6 +44,10 @@ PLANE_FIT_THR=${PLANE_FIT_THR:-0.15}
 HUBER_BASE=${HUBER_BASE:-0.05}
 HUBER_SCALE=${HUBER_SCALE:-0.003}
 KF_MAX_ITER=${KF_MAX_ITER:-4}
+GROUND_WEIGHT=${GROUND_WEIGHT:-0.0}
+OBS_DIST_K=${OBS_DIST_K:-0.0}
+THRESH_MOTION_K=${THRESH_MOTION_K:-0.0}
+DELTA_INTERP_EN=${DELTA_INTERP_EN:-false}
 DEGENERACY_DETECT_EN=${DEGENERACY_DETECT_EN:-false}
 DEGENERACY_THRESHOLD=${DEGENERACY_THRESHOLD:-100.0}
 DEGENERACY_TRUNCATE_EN=${DEGENERACY_TRUNCATE_EN:-false}
@@ -85,7 +89,7 @@ RESULT_ROOT=${RESULT_ROOT:-$EXP_ROOT/results}
 OUT=$RESULT_ROOT/$EXP_NAME
 TEMPLATE=$EXP_ROOT/config_template.yaml
 
-WS_SETUP=/tmp/sl_install/setup.bash
+WS_SETUP=${WS_SETUP:-/tmp/sl_install/setup.bash}
 LIVOX_SETUP=/home/ywj/dog_slam/LIO-SAM_MID360_ROS2_PKG/ros2/install/setup.bash
 
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
@@ -124,6 +128,10 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__HUBER_BASE__|$HUBER_BASE|g" \
     -e "s|__HUBER_SCALE__|$HUBER_SCALE|g" \
     -e "s|__KF_MAX_ITER__|$KF_MAX_ITER|g" \
+    -e "s|__GROUND_WEIGHT__|$GROUND_WEIGHT|g" \
+    -e "s|__OBS_DIST_K__|$OBS_DIST_K|g" \
+    -e "s|__THRESH_MOTION_K__|$THRESH_MOTION_K|g" \
+    -e "s|__DELTA_INTERP_EN__|$DELTA_INTERP_EN|g" \
     -e "s|__DEGENERACY_DETECT_EN__|$DEGENERACY_DETECT_EN|g" \
     -e "s|__DEGENERACY_THRESHOLD__|$DEGENERACY_THRESHOLD|g" \
     -e "s|__DEGENERACY_TRUNCATE_EN__|$DEGENERACY_TRUNCATE_EN|g" \
@@ -181,6 +189,10 @@ fi
   echo "huber_delta_base=$HUBER_BASE"
   echo "huber_delta_scale=$HUBER_SCALE"
   echo "kf_max_iterations=$KF_MAX_ITER"
+  echo "ground_weight=$GROUND_WEIGHT"
+  echo "obs_dist_k=$OBS_DIST_K"
+  echo "thresh_motion_k=$THRESH_MOTION_K"
+  echo "delta_interp_en=$DELTA_INTERP_EN"
   echo "degeneracy_detect_en=$DEGENERACY_DETECT_EN"
   echo "degeneracy_threshold=$DEGENERACY_THRESHOLD"
   echo "degeneracy_truncate_en=$DEGENERACY_TRUNCATE_EN"

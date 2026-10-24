@@ -242,7 +242,22 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
 
-  // ================= debug / experiment switches ==========  node.declare_parameter<int>("lio.debug.level", 0);
+  // ================= 阶段 2 机制开关（默认全关） =================
+  node.declare_parameter<double>("lio.observe.ground_weight", 0.0);
+  node.get_parameter("lio.observe.ground_weight", g_ground_weight);
+  node.declare_parameter<double>("lio.observe.obs_dist_k", 0.0);
+  node.get_parameter("lio.observe.obs_dist_k", g_obs_dist_k);
+  node.declare_parameter<double>("lio.observe.thresh_motion_k", 0.0);
+  node.get_parameter("lio.observe.thresh_motion_k", g_thresh_motion_k);
+  node.declare_parameter<bool>("lio.observe.delta_interp_en", false);
+  node.get_parameter("lio.observe.delta_interp_en", g_delta_interp_en);
+  LOG(INFO) << GREEN << " ---> [Param] observe/ground_weight: " << g_ground_weight
+            << " obs_dist_k: " << g_obs_dist_k
+            << " thresh_motion_k: " << g_thresh_motion_k
+            << " delta_interp_en: " << g_delta_interp_en << RESET;
+
+  // ================= debug / experiment switches =================
+  node.declare_parameter<int>("lio.debug.level", 0);
   node.get_parameter("lio.debug.level", g_debug_level);
 
   node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
