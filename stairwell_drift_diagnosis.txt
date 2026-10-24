@@ -4440,7 +4440,7 @@ M.25-A 【2026-10-24 阶段 0 执行结果】代码对齐 + 污染审计 + 判�
 M.25-B 【2026-10-24 阶段 1 执行结果】判据修正 + h20 复测 + 参数欠账
 
 ■ 口径
-  代码：exp/degeneracy-adaptive @ b701d7b（生产 + 实验开关），本轮共 44 个 run
+  代码：exp/degeneracy-adaptive @ b701d7b（生产 + 实验开关），本轮共 42 个 run
   楼梯：livox_record_drone 467 s / 300.4 m，win 12:21 / 392:420 / 440:465，
         主指标取锚点 1（mid，392~420 s）的闭环 3D
   基线：m25_base = mid 1.599 m（H 1.488 / V +0.586），0 gap，hover 0.036 m
@@ -4601,7 +4601,8 @@ M.25-D 【2026-10-24 总结论与下一步】
   脚本：exp/lane_a_11.sh ~ lane_i_1f_champ.sh（9 条 lane），
         exp/pollution_audit.py（污染审计），exp/run_one.sh（已参数化
         GROUND_WEIGHT / OBS_DIST_K / THRESH_MOTION_K / DELTA_INTERP_EN）
-  结果：exp/results/ 下 44 个 run（meta/params/node.log/play.log/health 全部入库，
+  结果：exp/results/ 下 42 个 run（meta/params/node.log/play.log 入库，
+        健康度两列由 loop_error.py --health 现算；
         odom.csv 与 *.pcd 按 .gitignore 不入库）
   复现：`loop_error.py --bag <bag> --loops --win <win> --health results/<run> ...`
         已固定为跨 run 唯一对比口径。
