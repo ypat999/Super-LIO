@@ -1,0 +1,106 @@
+/laserMapping:
+  ros__parameters:
+    check_satu: true
+    common:
+      con_frame: false
+      con_frame_num: 4
+      cut_frame: false
+      cut_frame_time_interval: 0.1
+      imu_topic: /livox/imu
+      lid_topic: /livox/lidar
+      time_lag_imu_to_lidar: 0.0
+    cube_side_length: 200.0
+    filter_size_map: 0.5
+    filter_size_surf: 0.5
+    init_map_size: 100
+    mapping:
+      acc_cov_input: 0.1
+      acc_cov_output: 500.0
+      acc_norm: 1.0
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      det_range: 100.0
+      extrinsic_R:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      extrinsic_T:
+      - -0.011
+      - -0.02329
+      - 0.04412
+      extrinsic_est_en: false
+      fov_degree: 360.0
+      gravity:
+      - 0.0
+      - 0.0
+      - -9.81
+      gravity_align: true
+      gravity_init:
+      - 0.0
+      - 0.0
+      - -9.81
+      gyr_cov_input: 0.01
+      gyr_cov_output: 1000.0
+      imu_en: true
+      imu_meas_acc_cov: 0.1
+      imu_meas_omg_cov: 0.1
+      imu_time_inte: 0.005
+      lidar_meas_cov: 0.001
+      match_s: 81.0
+      plane_thr: 0.1
+      satu_acc: 3.0
+      satu_gyro: 35.0
+      start_in_aggressive_motion: false
+      vel_cov: 20.0
+    odom_child_frame_id: aft_mapped
+    odom_header_frame_id: camera_init
+    odom_only: false
+    odometry:
+      publish_odometry_without_downsample: false
+    pcd_save:
+      interval: 5
+      pcd_save_en: false
+    point_filter_num: 2
+    preprocess:
+      blind: 0.3
+      lidar_type: 1
+      scan_line: 4
+      scan_rate: 10
+      timestamp_unit: 3
+    prop_at_freq_of_imu: true
+    publish:
+      footprint_pub_en: true
+      path_en: true
+      scan_bodyframe_pub_en: true
+      scan_publish_en: true
+      tf_base_footprint_frame: rkbot/base_footprint
+      tf_base_link_frame: base_link
+      tf_camera_init_frame: rkbot/odom
+      tf_imu_frame: rkbot/base_link
+      tf_lidar_frame: rkbot/livox_frame
+      tf_odom_frame: rkbot/odom
+      tf_world_frame: rkbot/odom
+    qos_overrides:
+      /parameter_events:
+        publisher:
+          depth: 1000
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+      /tf:
+        publisher:
+          depth: 100
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    runtime_pos_log_enable: false
+    space_down_sample: true
+    use_imu_as_input: true
+    use_sim_time: false
+

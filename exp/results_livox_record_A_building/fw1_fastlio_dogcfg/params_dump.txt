@@ -1,0 +1,69 @@
+/laser_mapping:
+  ros__parameters:
+    common:
+      frame_id_body: base_link
+      frame_id_camera_init: odom
+      gravity_constant: 9.8066
+      imu_topic: /livox/imu
+      lid_topic: /livox/lidar
+      time_offset_lidar_to_imu: 0.0
+      time_sync_en: false
+    cube_side_length: 300.0
+    feature_extract_enable: false
+    filter_size_corner: 0.5
+    filter_size_map: 0.5
+    filter_size_surf: 0.1
+    map_file_path: /home/ywj/slam_data/pcd/test.pcd
+    mapping:
+      acc_cov: 0.2
+      b_acc_cov: 0.01
+      b_gyr_cov: 0.01
+      det_range: 100.0
+      extrinsic_R:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      extrinsic_T:
+      - -0.011
+      - -0.02329
+      - 0.04412
+      extrinsic_est_en: false
+      fov_degree: 360.0
+      gyr_cov: 0.2
+      max_velocity: 3.0
+    max_iteration: 3
+    pcd_save:
+      interval: 5
+      pcd_save_en: true
+    point_filter_num: 3
+    preprocess:
+      blind: 0.3
+      lidar_type: 1
+      scan_line: 4
+      scan_rate: 10
+      timestamp_unit: 3
+    publish:
+      dense_publish_en: true
+      effect_map_en: false
+      footprint_pub_en: true
+      map_en: false
+      path_en: false
+      scan_bodyframe_pub_en: true
+      scan_publish_en: true
+      tf_base_footprint_frame: base_footprint
+    qos_overrides:
+      /tf:
+        publisher:
+          depth: 100
+          durability: volatile
+          history: keep_last
+          reliability: reliable
+    runtime_pos_log_enable: false
+    use_sim_time: false
+

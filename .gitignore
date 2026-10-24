@@ -8,11 +8,11 @@ install
 .catkin_tools
 src/CMakeLists.txt
 
-# 参数实验的产物（点云/日志/CSV，单组几 MB ~ 几十 MB），不入库；
-# 只有汇总表（exp/experiments_all.csv）与图（exp/results/figs/）入库
-exp/results/*
-!exp/results/figs/
-# 每个 bag 一套结果目录（results_<bag>），同样只保留 figs
-exp/results_*/*
-!exp/results_*/figs/
+# 实验产物：debug CSV、日志、meta、params、图全部入库；
+# 不入库：点云（整批 2.6 GB）、逐帧轨迹 odom.csv（单 run 2~7 MB，158 个共 205 MB）、
+#         Python 字节码。
+exp/**/*.pcd
+*.pcd
+odom.csv
 exp/__pycache__/
+*.pyc

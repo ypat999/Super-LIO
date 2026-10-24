@@ -1,0 +1,120 @@
+/**:
+  ros__parameters:
+    # ===== 实验专用覆盖项：由 run_one.sh 用 sed 替换占位符 =====
+    # /home/ywj/git/xtd2_ws/XTDrone2_ego_planner/lio/Super-LIO/exp/results_drone_1f/f1_hub50_gfz: 每次实验独立的结果目录（PCD 落盘位置）
+    lio.map.save_map: true
+    lio.map.if_filter: false
+    lio.map.save_map_dir: "/home/ywj/git/xtd2_ws/XTDrone2_ego_planner/lio/Super-LIO/exp/results_drone_1f/f1_hub50_gfz"
+    lio.map.map_name: "map.pcd"
+    # -1: 不在运行过程中切片，全部累积到 point_map_，只在 saveMap() 时一次性落盘
+    lio.map.save_interval: -1
+    # 地图落盘时的体素降采样（默认 0.25 = 每 0.25m 体素只留 1 点，
+    # 比运行中的 ivox 稀疏一个量级；做固定地图实验时需调到 0.08 左右）
+    lio.map.ds_size: 0.25
+    lio.map.pcd_prefix: ""
+
+    # 实验 C：固定地图 / 冻结地图更新（默认关闭）
+    # freeze=true 时不再把新点写入地图，只用 load_path 载入的先验地图做配准
+    lio.map.freeze: false
+    lio.map.load_path: ""
+    # 载入固定地图时的起始位姿 [x,y,z,roll,pitch,yaw(deg)] 由 run_one.sh 按需追加：
+    # 空列表在 YAML 里是无类型序列，rclcpp 会报 "parameter_value_from failed"，
+    # 所以这里不能写死占位符。
+
+    lio.ros.lidar_topic: "/livox/lidar"
+    lio.ros.imu_topic: "/livox/imu"
+    lio.ros.map_save_service_topic: "/map_save"
+    # bag 里记录的 QoS 是 RELIABLE(1)/VOLATILE(2)
+    lio.ros.imu_qos_reliable: true
+    lio.ros.lidar_qos_reliable: true
+
+    lio.sensor.lidar_type: 1
+    lio.sensor.blind: 0.5
+    lio.sensor.maxrange: 100.0
+    lio.sensor.filter_rate: 6
+    lio.sensor.enable_filter_offset: false
+    lio.sensor.enable_downsample: true
+    lio.sensor.voxel_fliter_size: 0.25
+
+    lio.sensor.intensity_filter_en: true
+    lio.sensor.intensity_min: 10.0
+    lio.sensor.lidar_channels: 0
+    lio.sensor.full_column_interval: 0
+    lio.sensor.gravity_norm: 9.8066
+    lio.sensor.imu_type: 1
+    lio.sensor.imu_na: 0.1
+    lio.sensor.imu_ng: 0.1
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.0001
+    lio.sensor.imu_gyr_scale: 1.0
+    lio.sensor.lidar_time_offset: 0.0
+
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
+                              1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+    lio.extrinsic.odom_robo: [0.05, 0.0, -0.1, 180.0, -30.0, 0.0]
+
+    lio.hash_map.hash_capacity: 2000000
+    lio.hash_map.vox_resolution: 0.25
+
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+    # 机制实验：true = 冻结重力方向（世界系竖直钉死在首帧，不再作为状态估计）
+    lio.kf.freeze_gravity: true
+
+    lio.output.robot: true
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.map: false
+    lio.output.map_body: false
+    lio.output.pub_step: 1
+    lio.output.footprint_pub_en: false
+    lio.output.tf_base_footprint_frame: "base_footprint"
+    lio.output.world_frame: "world"
+    lio.output.imu_frame: "imu"
+
+    # 每分钟打印一次各阶段耗时并清零窗口，退出时再打印一次
+    lio.eva.timer: true
+
+    # 关掉：saveMap() 里会 fork 一个 dynamic_remove_node，实验时不需要
+    lio.dynamic_removal.enable: false
+    lio.dynamic_removal.method: 0
+    lio.dynamic_removal.grid_size: 0.2
+    lio.dynamic_removal.min_neighbors: 1
+    lio.dynamic_removal.frame_window: 1
+    lio.dynamic_removal.raycast_min_hits: 2
+    lio.dynamic_removal.isolated_removal: false
+
+    # SC-PGO 兼容输出：true 时每关键帧落盘 Scans/*.pcd + odom_poses.txt，
+    # 只做导出、不改变 LIO 本身；用于离线按时间窗重建点云做 yaw 漂移诊断
+    lio.sc_pgo.enable: false
+    lio.sc_pgo.keyframe_gap: 0.5
+    lio.sc_pgo.keyframe_deg_gap: 5.0
+
+    # 组间保持一致
+    lio.single_core: true
+    lio.fast_tf: false
+
+    # ===== 代码级实验开关（默认全部保持原行为）=====
+    # 0=关；1=每帧写 <save_map_dir>/debug.csv；2=额外算 fit_res p95 与 HTVH 特征值
+    lio.debug.level: 0
+    # 实验 1：按平面拟合残差 max|dist| 做质量加权
+    lio.observe.normal_weight_en: false
+    lio.observe.normal_sigma: 0.05
+    # 每点观测权重（相对 IMU 先验的强弱）；Huber 核：delta = base + scale*range
+    lio.observe.obs_weight: 1000.0
+    lio.observe.plane_fit_threshold: 0.15
+    lio.observe.huber_delta_base: 0.50
+    # 实验 2/5：地图端点代表与门控
+    lio.hash_map.rep_mode: 0
+    lio.hash_map.clamp_mu: false
+    lio.hash_map.max_points: 20
+    lio.hash_map.merge_dist: 0.1
+    # HKNN 分组搜索：-1=全部 6 组；1..6=只搜前 N 组
+    lio.hash_map.hknn_max_group: -1
+    lio.hash_map.hknn_order_scale: 1.0
