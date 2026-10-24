@@ -398,19 +398,61 @@ void SuperLIO::stateProcess(){
     time_record_.Evaluate([this](){Propagation_Undistort();},  "[Undistort]");
     time_record_.Evaluate([this]() { PublishBodyCloud(); },    "[PublishBody]");
     time_record_.Evaluate([this]() { DownSample(); },          "[DownSample]");
-    time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
-    time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
-    time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
   }else{
     Propagation_Undistort();
     PublishBodyCloud();   // immediate, pre-ESKF (minimum latency)
     DownSample();
-    Observe();
-    ApplyDeltaCorrection();
-    UpdateMap();
   }
-  Output();                // world cloud via queue (high precision)
-  enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+
+  // ===== 坏帧护栏 =====
+  // 丢帧/IMU 欠载的帧，其去畸变点云是坏的（实测一帧 100 ms 只有 55 ms IMU 覆盖，
+  // 配准一次跳变 1~3.7 m 且不恢复）。这类帧不参与配准与建图，只让 IMU 预测推进。
+  // 安全阀：连续跳过 g_guard_max_consecutive 帧后强制放行一帧，避免雷达频率低于
+  // 阈值时永久跳过、退化成纯 IMU 积分。
+  bool frame_trusted = true;
+  if(g_frame_gap_guard_en){
+    const double gap = (last_lidar_end_time_ < 0.0)
+        ? 0.0 : (measures_.lidar.end_time - last_lidar_end_time_);
+    const double imu_head_gap = measures_.imu.empty()
+        ? 1e9 : (measures_.imu.front().secs - measures_.lidar.start_time);
+    if(gap > g_frame_gap_max || imu_head_gap > g_imu_cover_max){
+      frame_trusted = false;
+      ++guard_consec_skip_;
+      ++guard_skip_total_;
+      if(g_guard_max_consecutive > 0 && guard_consec_skip_ >= g_guard_max_consecutive){
+        // 安全阀触发：强制放行，并清零计数（下一次仍从 0 开始累计）
+        frame_trusted = true;
+        guard_consec_skip_ = 0;
+        LOG(WARNING) << "[Guard] safety valve: forced pass after "
+                     << g_guard_max_consecutive << " consecutive skips, total_skipped="
+                     << guard_skip_total_;
+      }
+      if(frame_num_ - guard_last_log_frame_ > 20){
+        LOG(WARNING) << "[Guard] skip untrusted frame: lidar_gap=" << gap * 1000.0
+                     << " ms, imu_head_gap=" << imu_head_gap * 1000.0
+                     << " ms, consec=" << guard_consec_skip_
+                     << ", total_skipped=" << guard_skip_total_;
+        guard_last_log_frame_ = frame_num_;
+      }
+    }else{
+      guard_consec_skip_ = 0;
+    }
+  }
+  last_lidar_end_time_ = measures_.lidar.end_time;
+
+  if(frame_trusted){
+    if(g_time_eva){
+      time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
+      time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
+      time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
+    }else{
+      Observe();
+      ApplyDeltaCorrection();
+      UpdateMap();
+    }
+    Output();                // world cloud via queue (high precision)
+    enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+  }
   caceSCPGOData();
 }
 
@@ -1380,6 +1422,8 @@ void SuperLIO::Observe(){
 
 
 /// 更新 IVox 地图：将去畸变后的点云添加到地图中
+/// 分段计时：g_time_eva 时分别统计世界系变换 [MapTransform] 与地图插入 [MapInsert]。
+/// 实测 [UpdateMap] 峰值 ~17.8 ms，是整条链路最大的单帧尖峰，需要定位是变换还是插入。
 void SuperLIO::UpdateMap() {
   const size_t ptsize = ds_undistort_->size();
   if (ptsize == 0) return;
@@ -1389,14 +1433,22 @@ void SuperLIO::UpdateMap() {
   
   const auto R = last_pose_.R_;
   const auto t = last_pose_.t_;
-  
-  for (size_t i = 0; i < ptsize; ++i) {
-    const auto& pt = points_body_v3_[i];
-    points_world_v3_[i] = R * pt + t;
-  }
-  
-  ivox_->insert(points_world_v3_);
 
+  auto transform_body_to_world = [&]() {
+    for (size_t i = 0; i < ptsize; ++i) {
+      const auto& pt = points_body_v3_[i];
+      points_world_v3_[i] = R * pt + t;
+    }
+  };
+  auto insert_into_map = [this]() { ivox_->insert(points_world_v3_); };
+
+  if (g_time_eva) {
+    time_record_.Evaluate(transform_body_to_world, "[MapTransform]");
+    time_record_.Evaluate(insert_into_map,       "[MapInsert]");
+  } else {
+    transform_body_to_world();
+    insert_into_map();
+  }
 }
 
 

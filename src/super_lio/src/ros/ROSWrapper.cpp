@@ -123,7 +123,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.sensor.imu_nba", 0.0);
   node.get_parameter("lio.sensor.imu_nba", g_imu_nba);
 
-  node.declare_parameter<double>("lio.sensor.imu_nbg", 0.0);
+  node.declare_parameter<double>("lio.sensor.imu_nbg", 0.003);
   node.get_parameter("lio.sensor.imu_nbg", g_imu_nbg);
 
   // ================= extrinsic =================
@@ -211,6 +211,20 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
+
+  // 坏帧护栏
+  node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", true);
+  node.get_parameter("lio.observe.frame_gap_guard_en", g_frame_gap_guard_en);
+  node.declare_parameter<double>("lio.observe.frame_gap_max", 0.2);
+  node.get_parameter("lio.observe.frame_gap_max", g_frame_gap_max);
+  node.declare_parameter<double>("lio.observe.imu_cover_max", 0.03);
+  node.get_parameter("lio.observe.imu_cover_max", g_imu_cover_max);
+  node.declare_parameter<int>("lio.observe.guard_max_consecutive", 9);
+  node.get_parameter("lio.observe.guard_max_consecutive", g_guard_max_consecutive);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/frame_gap_guard_en: " << g_frame_gap_guard_en
+            << " gap_max: " << g_frame_gap_max << " imu_cover_max: " << g_imu_cover_max
+            << " max_consecutive: " << g_guard_max_consecutive << RESET;
 
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);

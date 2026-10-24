@@ -47,7 +47,8 @@ namespace LI2Sup{
   double g_imu_na;
   double g_imu_ng;
   double g_imu_nba;
-  double g_imu_nbg;
+  double g_imu_nbg = 0.003;   // 陀螺零偏随机游走：实测 bg 一趟可漂 0.025 rad/s，
+                              // 1e-4 只允许其 1/500，滤波器跟不上；3e-3 才可自收敛
 
   SE3 g_lidar_imu;
   SE3 g_odom_robo;
@@ -105,6 +106,12 @@ namespace LI2Sup{
   double g_obs_weight = 1000.0;
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
+
+  /// 坏帧护栏（默认开启 skip 模式）
+  bool   g_frame_gap_guard_en = true;
+  double g_frame_gap_max = 0.2;
+  double g_imu_cover_max = 0.03;
+  int    g_guard_max_consecutive = 9;
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;
