@@ -168,6 +168,9 @@ namespace LI2Sup{
   /// Tikhonov 地板系数：λ = g_tikhonov_lambda * mean_eig，保证截断后信息矩阵可逆。
   /// 注意 ros2 分支默认 0.1（=均特征值 10%）是语义 bug，正确语义约 1e-3（=0.1%）
   extern double g_tikhonov_lambda;
+  /// 退化判据模式（实验 1.1）：0=全 6 维分解（原行为）；1=只对平移 3x3 块分解；
+  /// 2=对角预条件后 6 维分解。旋转块与平移块量纲不同，混排会产生假退化。
+  extern int    g_degen_trans_only;
   /// 退化状态去抖：cond 在楼梯 bag 上中位 40、p90 138，阈值 100 时逐帧反复翻转
   /// （实测 116 次翻转、中位持续 2 帧）。任何直接吃该信号的响应都会注入不连续权重，
   /// 因此用"滞回 + 最短持续帧数"把状态机稳定下来：
@@ -222,6 +225,8 @@ namespace LI2Sup{
   /// 载入地图时的初始位姿 {x,y,z,roll,pitch,yaw(deg)}；未配置时为单位位姿
   extern bool   g_map_load_use_pose;
   extern double g_map_load_pose[6];
+  /// 安全阀：连续跳过达到该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
+  extern int    g_guard_max_consecutive;
 
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;

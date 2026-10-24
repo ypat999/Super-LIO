@@ -47,7 +47,8 @@ namespace LI2Sup{
   double g_imu_na;
   double g_imu_ng;
   double g_imu_nba;
-  double g_imu_nbg;
+  double g_imu_nbg = 0.003;   // 陀螺零偏随机游走：实测 bg 一趟可漂 0.025 rad/s，
+                              // 1e-4 只允许其 1/500，滤波器跟不上；3e-3 才可自收敛
   double g_imu_gyr_scale = 1.0;
   double g_lidar_time_offset = 0.0;
 
@@ -114,6 +115,7 @@ namespace LI2Sup{
   double g_degeneracy_threshold = 100.0;
   bool   g_degeneracy_truncate_en = false;
   double g_tikhonov_lambda = 1e-3;
+  int    g_degen_trans_only = 0;
   double g_degeneracy_hysteresis = 0.5;
   int    g_degeneracy_enter_frames = 3;
   int    g_degeneracy_exit_frames = 10;
@@ -143,6 +145,7 @@ namespace LI2Sup{
   string g_map_load_path;
   bool   g_map_load_use_pose = false;
   double g_map_load_pose[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  int    g_guard_max_consecutive = 9;
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;

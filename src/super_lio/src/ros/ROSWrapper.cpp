@@ -139,7 +139,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.sensor.imu_nba", 0.0);
   node.get_parameter("lio.sensor.imu_nba", g_imu_nba);
 
-  node.declare_parameter<double>("lio.sensor.imu_nbg", 0.0);
+  node.declare_parameter<double>("lio.sensor.imu_nbg", 0.003);
   node.get_parameter("lio.sensor.imu_nbg", g_imu_nbg);
 
   // 陀螺 scale 修正（1.0 为不修正）。螺旋楼梯道里 yaw 净转角与层数成正比，
@@ -242,8 +242,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
 
-  // ================= debug / experiment switches =================
-  node.declare_parameter<int>("lio.debug.level", 0);
+  // ================= debug / experiment switches ==========  node.declare_parameter<int>("lio.debug.level", 0);
   node.get_parameter("lio.debug.level", g_debug_level);
 
   node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
@@ -260,6 +259,8 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.get_parameter("lio.observe.degeneracy_truncate_en", g_degeneracy_truncate_en);
   node.declare_parameter<double>("lio.observe.tikhonov_lambda", 1e-3);
   node.get_parameter("lio.observe.tikhonov_lambda", g_tikhonov_lambda);
+  node.declare_parameter<int>("lio.observe.degen_trans_only", 0);
+  node.get_parameter("lio.observe.degen_trans_only", g_degen_trans_only);
   node.declare_parameter<double>("lio.observe.degeneracy_hysteresis", 0.5);
   node.get_parameter("lio.observe.degeneracy_hysteresis", g_degeneracy_hysteresis);
   node.declare_parameter<int>("lio.observe.degeneracy_enter_frames", 3);
@@ -277,7 +278,8 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.adaptive_huber", 0.0);
   node.get_parameter("lio.observe.adaptive_huber", g_adaptive_huber);
 
-  node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", false);
+  // 坏帧护栏
+  node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", true);
   node.get_parameter("lio.observe.frame_gap_guard_en", g_frame_gap_guard_en);
   node.declare_parameter<double>("lio.observe.frame_gap_max", 0.2);
   node.get_parameter("lio.observe.frame_gap_max", g_frame_gap_max);
@@ -311,6 +313,12 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " merge_dist: " << g_map_merge_dist << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/hknn_max_group: " << g_hknn_max_group
             << " order_scale: " << g_hknn_order_scale << RESET;
+  node.declare_parameter<int>("lio.observe.guard_max_consecutive", 9);
+  node.get_parameter("lio.observe.guard_max_consecutive", g_guard_max_consecutive);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/frame_gap_guard_en: " << g_frame_gap_guard_en
+            << " gap_max: " << g_frame_gap_max << " imu_cover_max: " << g_imu_cover_max
+            << " max_consecutive: " << g_guard_max_consecutive << RESET;
 
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);

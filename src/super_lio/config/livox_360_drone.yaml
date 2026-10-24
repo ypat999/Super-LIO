@@ -35,7 +35,7 @@
     lio.sensor.imu_na: 0.1
     lio.sensor.imu_ng: 0.1
     lio.sensor.imu_nba: 0.0001
-    lio.sensor.imu_nbg: 0.0001
+    lio.sensor.imu_nbg: 0.003
 
     lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412, 
                               1.0, 0.0, 0.0, 
@@ -93,3 +93,14 @@
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
     lio.fast_tf: false
+
+    # ======================== 坏帧护栏 ========================
+    # 处理停顿会让 IMU 缓冲欠载，去畸变用残缺轨迹把点云扭坏，配准一次跳变
+    # 1~3.7 m 且不恢复（实测悬停崩塌即此机制）。开启后坏帧不参与配准/建图。
+    lio.observe.frame_gap_guard_en: true
+    # 相邻雷达帧 end_time 间隔上限（秒）。10 Hz 雷达正常 ~0.1 s，取 2 倍
+    lio.observe.frame_gap_max: 0.2
+    # 允许的 IMU 头部缺口（秒）：帧首点时刻之前缺失的 IMU 时长
+    lio.observe.imu_cover_max: 0.03
+    # 安全阀：连续跳过该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
+    lio.observe.guard_max_consecutive: 9

@@ -107,12 +107,51 @@ struct DegeneracySig {
   int    axes = 0;
   V6d    ev   = V6d::Zero();
   M6d    eV   = M6d::Zero();
+  /// 健康子空间投影矩阵（1.1：判据三种模式统一产出，截断直接用它）
+  M6d    P    = M6d::Identity();
 };
 
-static DegeneracySig computeDegeneracy(const M6d& H, double threshold) {
+/// 退化判据模式（g_degen_trans_only）：
+///   0 = 全 6 维直接分解（原行为）
+///   1 = 只对平移 3x3 块分解（TRaIL-Odom：旋转块与平移块量纲不同，混排会造
+///       成假退化；旋转轴退化不应吃掉平移约束）
+///   2 = 先对角预条件 D^-1 H D^-1（D=sqrt(diag H)）再全 6 维分解
+static DegeneracySig computeDegeneracy(const M6d& H, double threshold, int mode) {
   DegeneracySig s;
   if (!H.allFinite()) return s;
-  Eigen::SelfAdjointEigenSolver<M6d> es(H);
+  if (mode == 1) {
+    // 只判平移：旋转子空间保留全部约束，平移子空间按健康特征向量投影
+    const Eigen::Matrix3d T = H.block<3, 3>(3, 3);
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(T);
+    if (es.info() != Eigen::Success) return s;
+    const Eigen::Vector3d ev = es.eigenvalues();
+    s.ev.setZero(); s.ev.tail<3>() = ev;
+    s.eV = M6d::Identity();
+    s.eV.block<3, 3>(3, 3) = es.eigenvectors();
+    const double min_eig = ev(0), max_eig = ev(2);
+    s.cond = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
+    s.axes = 0;
+    Eigen::Matrix3d Pt = Eigen::Matrix3d::Zero();
+    for (int i = 0; i < 3; ++i) {
+      if (ev(i) < max_eig / threshold) { ++s.axes; continue; }
+      Pt += es.eigenvectors().col(i) * es.eigenvectors().col(i).transpose();
+    }
+    s.P.setZero();
+    s.P.block<3, 3>(0, 0).setIdentity();
+    s.P.block<3, 3>(3, 3) = Pt;
+    s.ok = true;
+    return s;
+  }
+
+  M6d Hn = H;
+  Eigen::Matrix<double, 6, 1> d = Eigen::Matrix<double, 6, 1>::Ones();
+  if (mode == 2) {
+    // 对角预条件：把六个方向压到同一量纲后再比较特征值
+    for (int i = 0; i < 6; ++i) d(i) = std::sqrt(std::max(H(i, i), 1e-12));
+    const Eigen::Matrix<double, 6, 1> dinv = d.cwiseInverse();
+    Hn = dinv.asDiagonal() * H * dinv.asDiagonal();
+  }
+  Eigen::SelfAdjointEigenSolver<M6d> es(Hn);
   if (es.info() != Eigen::Success) return s;
   s.ok = true;
   s.ev = es.eigenvalues();
@@ -121,8 +160,20 @@ static DegeneracySig computeDegeneracy(const M6d& H, double threshold) {
   const double max_eig = s.ev(5);
   s.cond = (min_eig > 1e-12) ? max_eig / min_eig : 1e12;
   s.axes = 0;
+  M6d U = M6d::Zero();
+  int n_healthy = 0;
   for (int i = 0; i < 6; ++i) {
-    if (s.ev(i) < max_eig / threshold) ++s.axes;
+    if (s.ev(i) < max_eig / threshold) { ++s.axes; continue; }
+    // 预条件空间的向量回到原空间：u = D^-1 v
+    U.col(n_healthy++) = (mode == 2)
+        ? V6d(d.cwiseInverse().asDiagonal() * es.eigenvectors().col(i))
+        : V6d(es.eigenvectors().col(i));
+  }
+  if (n_healthy > 0) {
+    const M6d Uh = U.leftCols(n_healthy);
+    s.P = Uh * (Uh.transpose() * Uh).inverse() * Uh.transpose();
+  } else {
+    s.P.setZero();
   }
   return s;
 }
@@ -137,14 +188,8 @@ static DegeneracySig computeDegeneracy(const M6d& H, double threshold) {
 /// （实测 deg_trunc 发散到 7.9e5 m、地图 4969 万点）。
 /// 正确做法是把 H 与 r 一起投影到"健康子空间": (H', r') = (P H P, P r)，P = Σ_healthy v vᵀ。
 static void truncateDegenerate(const M6d& H, const V6d& r, const DegeneracySig& s,
-                               double threshold, double tikhonov_lambda,
-                               M6d& H_out, V6d& r_out) {
-  M6d P = M6d::Zero();
-  const double max_eig = s.ev(5);
-  for (int i = 0; i < 6; ++i) {
-    if (s.ev(i) < max_eig / threshold) continue;   // 退化方向：丢弃 LiDAR 约束
-    P += s.eV.col(i) * s.eV.col(i).transpose();
-  }
+                               double tikhonov_lambda, M6d& H_out, V6d& r_out) {
+  const M6d& P = s.P;   // 健康子空间投影（判据模式已统一算好）
   const double tikhonov = tikhonov_lambda * H.trace() / 6.0;
   H_out = P * H * P.transpose() + tikhonov * M6d::Identity();
   r_out = P * r;   // 梯度同投影，保证 H 与 r 在同一子空间内一致
@@ -525,7 +570,9 @@ void SuperLIO::stateProcess(){
 
   // ===== 坏帧护栏 =====
   // 丢帧/IMU 欠载的帧，其去畸变点云是坏的（实测一帧 100 ms 只有 55 ms IMU 覆盖，
-  // 配准一次跳变 1~3.7 m）。这类帧不参与配准与建图，只让 IMU 预测继续推进。
+  // 配准一次跳变 1~3.7 m 且不恢复）。这类帧不参与配准与建图，只让 IMU 预测推进。
+  // 安全阀：连续跳过 g_guard_max_consecutive 帧后强制放行一帧，避免雷达频率低于
+  // 阈值时永久跳过、退化成纯 IMU 积分。
   bool frame_trusted = true;
   if(g_frame_gap_guard_en){
     const double gap = (last_lidar_end_time_ < 0.0)
@@ -534,13 +581,25 @@ void SuperLIO::stateProcess(){
         ? 1e9 : (measures_.imu.front().secs - measures_.lidar.start_time);
     if(gap > g_frame_gap_max || imu_head_gap > g_imu_cover_max){
       frame_trusted = false;
-      ++guard_skip_count_;
+      ++guard_consec_skip_;
+      ++guard_skip_total_;
+      if(g_guard_max_consecutive > 0 && guard_consec_skip_ >= g_guard_max_consecutive){
+        // 安全阀触发：强制放行，并清零计数（下一次仍从 0 开始累计）
+        frame_trusted = true;
+        guard_consec_skip_ = 0;
+        LOG(WARNING) << "[Guard] safety valve: forced pass after "
+                     << g_guard_max_consecutive << " consecutive skips, total_skipped="
+                     << guard_skip_total_;
+      }
       if(frame_num_ - guard_last_log_frame_ > 20){
         LOG(WARNING) << "[Guard] skip untrusted frame: lidar_gap=" << gap * 1000.0
                      << " ms, imu_head_gap=" << imu_head_gap * 1000.0
-                     << " ms, total_skipped=" << guard_skip_count_;
+                     << " ms, consec=" << guard_consec_skip_
+                     << ", total_skipped=" << guard_skip_total_;
         guard_last_log_frame_ = frame_num_;
       }
+    }else{
+      guard_consec_skip_ = 0;
     }
   }
   last_lidar_end_time_ = measures_.lidar.end_time;
@@ -1570,9 +1629,10 @@ void SuperLIO::Observe(){
     // 退化"响应"之一：截断。用**上一帧去抖后**的退化状态驱动，不用本帧原始 cond，
     // 否则帧级抖动会让约束每两帧开一次关一次（实测 116 次翻转）。
     if (g_degeneracy_truncate_en && degeneracy_active_) {
-      DegeneracySig d = computeDegeneracy(sum_HTVH, g_degeneracy_threshold);
+      DegeneracySig d = computeDegeneracy(sum_HTVH, g_degeneracy_threshold,
+                                          g_degen_trans_only);
       if (d.ok) {
-        truncateDegenerate(sum_HTVH, sum_HTVr, d, g_degeneracy_threshold,
+        truncateDegenerate(sum_HTVH, sum_HTVr, d,
                            g_tikhonov_lambda, sum_HTVH, sum_HTVr);
       }
     }
@@ -1587,7 +1647,8 @@ void SuperLIO::Observe(){
   // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
   // 滞回（进 cond>thr，出 cond<thr·hysteresis）+ 最短持续帧数，避免帧级抖动。
   if (debug || g_degeneracy_detect_en || g_adaptive_param_en || g_degeneracy_truncate_en) {
-    DegeneracySig deg = computeDegeneracy(last_HTVH, g_degeneracy_threshold);
+    DegeneracySig deg = computeDegeneracy(last_HTVH, g_degeneracy_threshold,
+                                         g_degen_trans_only);
     degeneracy_cond_ = deg.ok ? deg.cond : 0.0;
     degeneracy_axes_ = deg.ok ? deg.axes : 0;
 
@@ -1697,6 +1758,8 @@ void SuperLIO::Observe(){
 
 
 /// 更新 IVox 地图：将去畸变后的点云添加到地图中
+/// 分段计时：g_time_eva 时分别统计世界系变换 [MapTransform] 与地图插入 [MapInsert]。
+/// 实测 [UpdateMap] 峰值 ~17.8 ms，是整条链路最大的单帧尖峰，需要定位是变换还是插入。
 void SuperLIO::UpdateMap() {
   // 实验 C：冻结地图更新，配准只用载入的先验地图（用于隔离地图反馈）
   if (g_map_freeze) return;
@@ -1709,14 +1772,22 @@ void SuperLIO::UpdateMap() {
   
   const auto R = last_pose_.R_;
   const auto t = last_pose_.t_;
-  
-  for (size_t i = 0; i < ptsize; ++i) {
-    const auto& pt = points_body_v3_[i];
-    points_world_v3_[i] = R * pt + t;
-  }
-  
-  ivox_->insert(points_world_v3_);
 
+  auto transform_body_to_world = [&]() {
+    for (size_t i = 0; i < ptsize; ++i) {
+      const auto& pt = points_body_v3_[i];
+      points_world_v3_[i] = R * pt + t;
+    }
+  };
+  auto insert_into_map = [this]() { ivox_->insert(points_world_v3_); };
+
+  if (g_time_eva) {
+    time_record_.Evaluate(transform_body_to_world, "[MapTransform]");
+    time_record_.Evaluate(insert_into_map,       "[MapInsert]");
+  } else {
+    transform_body_to_world();
+    insert_into_map();
+  }
 }
 
 

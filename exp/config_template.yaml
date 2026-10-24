@@ -59,7 +59,7 @@
     lio.hash_map.vox_resolution: __VOX_RES__
 
     lio.kf.kf_type: 0
-    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_max_iterations: __KF_MAX_ITER__
     lio.kf.kf_align_gravity: true
     lio.kf.kf_quit_eps: 0.001
     # 机制实验：true = 冻结重力方向（世界系竖直钉死在首帧，不再作为状态估计）
@@ -110,11 +110,13 @@
     lio.observe.obs_weight: __OBS_WEIGHT__
     lio.observe.plane_fit_threshold: __PLANE_FIT_THR__
     lio.observe.huber_delta_base: __HUBER_BASE__
+    lio.observe.huber_delta_scale: __HUBER_SCALE__
     # 退化检测 + 参数自适应（默认全关 = 原行为）
     lio.observe.degeneracy_detect_en: __DEGENERACY_DETECT_EN__
     lio.observe.degeneracy_threshold: __DEGENERACY_THRESHOLD__
     lio.observe.degeneracy_truncate_en: __DEGENERACY_TRUNCATE_EN__
     lio.observe.tikhonov_lambda: __TIKHONOV_LAMBDA__
+    lio.observe.degen_trans_only: __DEGEN_TRANS_ONLY__
     lio.observe.degeneracy_hysteresis: __DEGENERACY_HYSTERESIS__
     lio.observe.degeneracy_enter_frames: __DEGENERACY_ENTER_FRAMES__
     lio.observe.degeneracy_exit_frames: __DEGENERACY_EXIT_FRAMES__
@@ -127,6 +129,7 @@
     lio.observe.frame_gap_guard_en: __FRAME_GAP_GUARD_EN__
     lio.observe.frame_gap_max: __FRAME_GAP_MAX__
     lio.observe.imu_cover_max: __IMU_COVER_MAX__
+    lio.observe.guard_max_consecutive: __GUARD_MAX_CONSEC__
     # 实验 2/5：地图端点代表与门控
     lio.hash_map.rep_mode: __MAP_REP_MODE__
     lio.hash_map.clamp_mu: __MAP_CLAMP_MU__

@@ -42,10 +42,13 @@ FREEZE_GRAVITY=${FREEZE_GRAVITY:-false}
 OBS_WEIGHT=${OBS_WEIGHT:-1000.0}
 PLANE_FIT_THR=${PLANE_FIT_THR:-0.15}
 HUBER_BASE=${HUBER_BASE:-0.05}
+HUBER_SCALE=${HUBER_SCALE:-0.003}
+KF_MAX_ITER=${KF_MAX_ITER:-4}
 DEGENERACY_DETECT_EN=${DEGENERACY_DETECT_EN:-false}
 DEGENERACY_THRESHOLD=${DEGENERACY_THRESHOLD:-100.0}
 DEGENERACY_TRUNCATE_EN=${DEGENERACY_TRUNCATE_EN:-false}
 TIKHONOV_LAMBDA=${TIKHONOV_LAMBDA:-0.001}
+DEGEN_TRANS_ONLY=${DEGEN_TRANS_ONLY:-0}
 DEGENERACY_HYSTERESIS=${DEGENERACY_HYSTERESIS:-0.5}
 DEGENERACY_ENTER_FRAMES=${DEGENERACY_ENTER_FRAMES:-3}
 DEGENERACY_EXIT_FRAMES=${DEGENERACY_EXIT_FRAMES:-10}
@@ -57,6 +60,7 @@ ADAPTIVE_HUBER=${ADAPTIVE_HUBER:-0.0}
 FRAME_GAP_GUARD_EN=${FRAME_GAP_GUARD_EN:-false}
 FRAME_GAP_MAX=${FRAME_GAP_MAX:-0.2}
 IMU_COVER_MAX=${IMU_COVER_MAX:-0.03}
+GUARD_MAX_CONSEC=${GUARD_MAX_CONSEC:-9}
 # 点云话题输出（默认关）。测 [Lidar->CloudWorld] 端到端延迟时置 true
 OUTPUT_MAP=${OUTPUT_MAP:-false}
 MAP_REP_MODE=${MAP_REP_MODE:-0}
@@ -118,10 +122,13 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__OBS_WEIGHT__|$OBS_WEIGHT|g" \
     -e "s|__PLANE_FIT_THR__|$PLANE_FIT_THR|g" \
     -e "s|__HUBER_BASE__|$HUBER_BASE|g" \
+    -e "s|__HUBER_SCALE__|$HUBER_SCALE|g" \
+    -e "s|__KF_MAX_ITER__|$KF_MAX_ITER|g" \
     -e "s|__DEGENERACY_DETECT_EN__|$DEGENERACY_DETECT_EN|g" \
     -e "s|__DEGENERACY_THRESHOLD__|$DEGENERACY_THRESHOLD|g" \
     -e "s|__DEGENERACY_TRUNCATE_EN__|$DEGENERACY_TRUNCATE_EN|g" \
     -e "s|__TIKHONOV_LAMBDA__|$TIKHONOV_LAMBDA|g" \
+    -e "s|__DEGEN_TRANS_ONLY__|$DEGEN_TRANS_ONLY|g" \
     -e "s|__DEGENERACY_HYSTERESIS__|$DEGENERACY_HYSTERESIS|g" \
     -e "s|__DEGENERACY_ENTER_FRAMES__|$DEGENERACY_ENTER_FRAMES|g" \
     -e "s|__DEGENERACY_EXIT_FRAMES__|$DEGENERACY_EXIT_FRAMES|g" \
@@ -133,6 +140,7 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__FRAME_GAP_GUARD_EN__|$FRAME_GAP_GUARD_EN|g" \
     -e "s|__FRAME_GAP_MAX__|$FRAME_GAP_MAX|g" \
     -e "s|__IMU_COVER_MAX__|$IMU_COVER_MAX|g" \
+    -e "s|__GUARD_MAX_CONSEC__|$GUARD_MAX_CONSEC|g" \
     -e "s|__OUTPUT_MAP__|$OUTPUT_MAP|g" \
     -e "s|__MAP_REP_MODE__|$MAP_REP_MODE|g" \
     -e "s|__MAP_CLAMP_MU__|$MAP_CLAMP_MU|g" \
@@ -171,10 +179,13 @@ fi
   echo "obs_weight=$OBS_WEIGHT"
   echo "plane_fit_threshold=$PLANE_FIT_THR"
   echo "huber_delta_base=$HUBER_BASE"
+  echo "huber_delta_scale=$HUBER_SCALE"
+  echo "kf_max_iterations=$KF_MAX_ITER"
   echo "degeneracy_detect_en=$DEGENERACY_DETECT_EN"
   echo "degeneracy_threshold=$DEGENERACY_THRESHOLD"
   echo "degeneracy_truncate_en=$DEGENERACY_TRUNCATE_EN"
   echo "tikhonov_lambda=$TIKHONOV_LAMBDA"
+  echo "degen_trans_only=$DEGEN_TRANS_ONLY"
   echo "degeneracy_hysteresis=$DEGENERACY_HYSTERESIS"
   echo "degeneracy_enter_frames=$DEGENERACY_ENTER_FRAMES"
   echo "degeneracy_exit_frames=$DEGENERACY_EXIT_FRAMES"
@@ -186,6 +197,7 @@ fi
   echo "frame_gap_guard_en=$FRAME_GAP_GUARD_EN"
   echo "frame_gap_max=$FRAME_GAP_MAX"
   echo "imu_cover_max=$IMU_COVER_MAX"
+  echo "guard_max_consecutive=$GUARD_MAX_CONSEC"
   echo "output_map=$OUTPUT_MAP"
   echo "map_rep_mode=$MAP_REP_MODE"
   echo "map_clamp_mu=$MAP_CLAMP_MU"
