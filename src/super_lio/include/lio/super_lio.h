@@ -140,6 +140,12 @@ protected:
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
 
+  // ===== 坏帧护栏 =====
+  double last_lidar_end_time_  = -1.0;   // 上一帧雷达 end_time
+  int    guard_consec_skip_    = 0;      // 连续跳过帧数（安全阀计数）
+  long   guard_skip_total_     = 0;      // 累计跳过帧数
+  long   guard_last_log_frame_ = -10000; // 限频日志用
+
   Timer time_record_;
 
   std::thread output_thread_;

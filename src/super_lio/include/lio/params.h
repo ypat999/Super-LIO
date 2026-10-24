@@ -147,6 +147,18 @@ namespace LI2Sup{
   /// 推荐值: 0.003 (30m处阈值增加0.09m)
   extern double g_huber_delta_scale;
 
+  /// ===== 坏帧护栏 =====
+  /// 处理停顿会让 imu_buffer_ 欠载（实测一帧 100 ms 的雷达只有 55 ms IMU 覆盖），
+  /// 去畸变用残缺轨迹把点云扭坏，配准一次跳变 1~3.7 m 且不恢复。
+  /// 开启后：帧间隔过大或 IMU 头部覆盖不足的帧不参与配准/建图，只喂 IMU 预测。
+  extern bool   g_frame_gap_guard_en;
+  /// 相邻雷达帧 end_time 间隔上限（s），超过视为丢帧
+  extern double g_frame_gap_max;
+  /// 允许的 IMU 头部缺口（s）：meas.imu.front().secs - lidar.start_time
+  extern double g_imu_cover_max;
+  /// 安全阀：连续跳过达到该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
+  extern int    g_guard_max_consecutive;
+
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
   extern int  g_dynamic_removal_method;     // 0: Temporal, 1: Raycast
