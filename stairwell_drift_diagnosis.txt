@@ -4115,3 +4115,127 @@ Q5 逐层相对位姿误差随“转角”线性增长还是随“高度”线�
 7. 若最终确认是“退化方向 + 零偏积分”，优先工程手段（关键帧约束、楼层高度先验、
    回环/SC-PGO），不要继续压 filter_rate 或调观测权重。
 ================================================================================
+
+
+M.24 【2026-10-24】退化检测 / 参数自适应 / 坏帧护栏 + 计时与端到端延迟
+--------------------------------------------------------------------------------
+M.24-0 分支与产物
+  生产基线：no-de-check @ 51f9dcb（实验开始前的提交，已 reset 到该点管理）
+  实验分支：exp/degeneracy-adaptive（本批全部改动、脚本与下表数据）
+  注意：51f9dcb 不含 b528aec「扫描尾部点剔除」修复（该提交落在实验区间内），
+        若要把该项上生产需单独 cherry-pick。
+  新增脚本：exp/hover_collapse_diag.py、exp/timing_summary.py
+  新增参数（全部默认关 = 原行为）：
+    lio.observe.degeneracy_detect_en / degeneracy_threshold / degeneracy_truncate_en
+    lio.observe.tikhonov_lambda / degeneracy_hysteresis / degeneracy_enter_frames
+    lio.observe.degeneracy_exit_frames / adaptive_param_en / adaptive_normal_weight_en
+    lio.observe.adaptive_normal_sigma / adaptive_plane_fit / adaptive_huber
+    lio.observe.frame_gap_guard_en / frame_gap_max / imu_cover_max
+
+M.24-1 退化检测三种响应的 A/B（楼梯 bag，固定窗 12:21,392:420,440:465）
+  run                          闭环3D   水平    竖直    yaw°   上行deg/m 下行deg/m 地图闭环°
+  deg_base（全默认）             1.594  1.485  +0.580  +0.360   +0.094   -0.053   +4.61
+  deg_trunc（ros2 原样截断）      **发散 7.9e5 m，地图 4969 万点**
+  deg_trunc2（去抖 + 梯度投影）   0.967  0.832  +0.492  -0.164   +0.113   -0.049   +4.87
+  deg_adapt（自适应，无去抖）     1.804  1.711  +0.573  +0.081     —        —       —
+  deg_adapt2（自适应 + 去抖）     1.701  1.629  +0.487  +0.136   +0.098   -0.035   +3.89
+  deg_h20_dbg（见 M.24-7b 的干净 h20） 0.025 / 0.022 / -0.013 / -2.375 / +0.026 / -0.038 / +2.04
+
+M.24-2 ros2 分支截断实现自身有 bug（先记这条）
+  原实现只把退化方向从 HTVH 里删掉、**不投影 HTVr**。信息矩阵在退化轴只剩
+  Tikhonov 地板（~1e-3），而梯度在该方向仍是满量程 ⇒ Qk·b 放大千倍，位姿被推飞。
+  改为 (P H P, P r) 一致投影后，同一配置从发散变成 0.967 m。
+  ⇒ ros2 分支当年「检出了退化却弃用」，很可能是实现问题，不是检测本身没用。
+
+M.24-3 退化信号是帧级抖动的（这是能否用它的关键）
+  楼梯 bag：cond p50=40 / p90=138 / max=305，阈值 100 下触发率仅 30.2%，
+  但**状态翻转 116 次、中位持续只有 2 帧**。直接拿它驱动任何响应，等于每两帧
+  开一次关一次。去抖（滞回 0.5 + 进入 3 帧 / 退出 10 帧）后才可用。
+
+M.24-4 参数自适应不划算（即使去抖）
+  deg_adapt2 = 1.701，比基线 1.594 还差。30% 占空比的间歇切换，既不如「一直开
+  normal_weight」（0.646）、也不如「一直关」（1.594）⇒ **不连续本身就是损失**。
+  结论：要做自适应，必须是「稀疏但持续」的档位切换（秒级），不是帧级。
+
+M.24-5 悬停崩塌根因：丢帧/IMU 欠载，不是估计器失去自洽（决定性）
+  历史崩塌 run 与干净 run 的对照（odom 逐帧 gap + 日志）：
+    run                        悬停段位移   gap>0.15s  最大gap    IMU Lag 告警
+    sl_b_h20                     4.527 m      7 次     1.766 s     1 次 (245 ms)
+    sl_b_h20_nwoff               4.880 m      3 次     2.660 s      —
+    sl_b_pft05_gsc102_gfz        1.800 m     11 次     1.900 s      —
+    sl_nbg003_na03（不崩）        0.272 m      0 次     0.106 s      0
+    deg_h20_dbg（同 h20 配置重跑） 0.075 m      0 次     0.106 s      0
+    hov_h20（从 380 s 重新初始化） 0.003 m      0 次     0.106 s      0
+  崩塌形态：t≈421~425 s 一次性锁定跳变（单步 2.1~3.3 m），之后不恢复。
+  机制链：处理停顿 ⇒ imu_buffer_ 欠载（日志 IMU buf: 11 = 55 ms，一帧 100 ms）
+  ⇒ sync_measure 拿不到完整 IMU 窗口 ⇒ 去畸变用残缺轨迹把点云扭坏 ⇒ 配准一次跳变。
+  代码里原先没有任何「帧连续性 / IMU 覆盖度」防护。
+  ⇒ M.22-6 的三条候选机制（地图重写 / freeze 失回正 / 权重累积跳变）全部收口：
+    不是估计器内部问题，是**坏帧进了配准**。
+
+M.24-6 坏帧护栏（新增开关，默认关）
+  判据：相邻雷达帧 end_time 间隔 > frame_gap_max(0.2 s)，或
+        meas.imu.front().secs - lidar.start_time > imu_cover_max(0.03 s)。
+  命中则该帧不参与 Observe / ApplyDeltaCorrection / UpdateMap / enqueueDense，
+  只让 IMU 预测推进；每轮停顿只会命中最靠后的那一帧。
+  验证：
+    默认阈值开启 vs 关闭 → odom.csv **md5 完全相同**（零副作用）；
+    阈值调到 0.104 s → 触发 12 次，闭环 1.594 → 1.217 m（-24%）。
+  额外发现：即使「干净」跑法，也有 1 次 296 ms 的帧间隔断裂（lat_base），
+  说明护栏不是空转。
+  仍需补的安全阀：连续命中 N 帧后应自动放行/告警，避免雷达频率低于阈值时永久跳过。
+
+M.24-7 被推翻 / 修正的旧结论（重要）
+  (a) 「normal_weight σ=0.05 单峰最优 0.646 m、0.41×」**是 bug 造出来的**。
+      Observe 里平面拟合失败的点 `continue` 早退，但 effect_knn_mask_ 已置 true，
+      索引仍留在 effect_knn_idxs_；后续迭代若拟合成功，读到的 `_w_quality[idx]`
+      是**上一帧遗留的陈旧权重**。修掉后重测（σ 四档）：
+        run     闭环3D   yaw°   上行deg/m  地图闭环°   归档值（带 bug）
+        nw off   1.594  +0.360   +0.094    +4.61        1.594
+        σ0.02    0.824  +0.487   +0.071    +4.74        0.868
+        σ0.035   1.420  +0.984   +0.097    +4.01        0.845
+        σ0.05    1.113  +0.476   +0.096    +4.72        0.646
+        σ0.06    0.811  +1.833   +0.090    +4.80        0.794
+      ⇒ 单峰消失，变成 0.81~1.42 的平坦噪声；且四个档位的地图闭环都在 4.0~4.8，
+        与基线 4.61 无差别 ⇒ **nw 只略改善位移闭环，对扭转无效**。
+  (b) 「huber 0.10 / 0.20 在楼梯上变差」被**停顿污染**。M.22-1 里 h10/h20/h20_gfz/
+      h20_nwoff 四个「变差」格子全部带 1.5~2.7 s 停顿；同配置干净重跑
+      deg_h20_dbg = 闭环 0.025 m、上行 +0.026 deg/m、地图闭环 +2.04°，
+      三项全为全表最好，且两次重跑 md5 完全一致。
+      ⇒ M.22-1 的 huber 单调性结论作废，需在无停顿条件下重做。
+  (c) 说明：同一配置的两次运行若一次带停顿、一次不带上，轨迹从 t≈257 s 起分叉
+      （到 380 s 已差 2.06 m），即「确定性」只在同负载条件下成立。
+
+M.24-8 计时与端到端延迟（串行、单实例、240 s/格、开点云发布、剔除含存图的末窗）
+  run        Observe     Undistort  DownSample  UpdateMap      Lidar→Odom    Lidar→CloudWorld
+  t_base   6.75/19.4    0.43       0.26       0.19/17.5    10.34/25.9    10.40/25.9
+  t_trunc  6.82/20.2    0.43       0.26       0.19/13.2    10.39/31.4    10.46/31.4
+  t_nw02   5.98/19.6    0.43       0.26       0.19/17.2     9.55/27.7     9.62/27.7
+  t_h20    6.68/20.2    0.42       0.26       0.19/17.8    10.22/27.6    10.29/27.7
+  （单位 ms，格式 平均/峰值）
+  1) 退化截断的代价可忽略：每帧 4 次 6x6 特征分解只 +0.07 ms。
+  2) 点云发布只多 0.06 ms（CloudWorld vs Odom），轨迹与不发布时差 max 2.8 mm。
+  3) 端到端延迟 ≈ 10.3 ms；各阶段合计 ≈ 7.6 ms，其余 ~2.7 ms 在缓冲/队列/消息转换。
+  4) **UpdateMap 峰值 17.5~17.8 ms 是全链路最大单帧尖峰**，比 Observe 平均高 2.6 倍，
+     是最可能造成丢帧的环节（比 Observe 更值得优化）。
+  5) nw02 的 Observe 反而快 11%（5.98 vs 6.75），因质量加权让迭代更早收敛。
+  6) 并行回放时同配置 Observe 会从 4.04 ms 涨到 6.75 ms（+60%）⇒ 计时对比必须串行。
+
+M.24-9 复现
+  cd lio/Super-LIO/exp
+  export BAG=/home/ywj/slam_data/livox_record_drone RESULT_ROOT=$PWD/results_drone
+  # 退化 A/B（各一 lane，不同 ROS_DOMAIN_ID）
+  ./run_one.sh deg_base 6 0.25 0.1 0.1 0.25
+  DEGENERACY_TRUNCATE_EN=true DEBUG_LEVEL=1 ./run_one.sh deg_trunc2 6 0.25 0.1 0.1 0.25
+  ADAPTIVE_PARAM_EN=true ADAPTIVE_NORMAL_SIGMA=0.05 DEBUG_LEVEL=1 ./run_one.sh deg_adapt2 6 0.25 0.1 0.1 0.25
+  # 护栏
+  FRAME_GAP_GUARD_EN=true ./run_one.sh guard_noop 6 0.25 0.1 0.1 0.25
+  FRAME_GAP_GUARD_EN=true FRAME_GAP_MAX=0.104 ./run_one.sh guard_trig 6 0.25 0.1 0.1 0.25
+  # nw 重测（σ 0.02 / 0.035 / 0.05 / 0.06）
+  NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.02 ./run_one.sh nwfix_02 6 0.25 0.1 0.1 0.25
+  # 串行计时
+  OUTPUT_MAP=true ./run_one.sh t_base 6 0.25 0.1 0.1 0.25 240
+  python3 -B timing_summary.py --drop-tail=1 results_drone/t_base results_drone/t_h20
+  # 悬停崩塌判别
+  python3 -B hover_collapse_diag.py results_drone/deg_h20_dbg results_drone/hov_h20
+================================================================================
