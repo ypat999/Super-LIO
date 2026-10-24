@@ -4313,8 +4313,31 @@ M.25 【2026-10-24 实验路线图】全部待办实验（整合 M.23-6 / M.24 /
       保留最近 N 帧状态，退化方向用 Schmidt 正交化去耦合。
       滤波版、非局部 BA，单核可行。这是唯一不需要回环、不需要外部先验、
       又能动"地图钉住"型偏差的机制。前置：读 LODESTAR + Tuna field analysis。
+  2.G [候选借件，暂不排期]
+      · map-informed 选点（BIEVR-LIO）：不加密点云，而是每帧挑信息量高的点参与
+        匹配。与"点数不是普适轴"（G.5③）正向对口；若 2.B 证明远景降权有效，
+        再考虑从"降权"升级为"不采"。
+      · 按距离分层匹配半径（Adaptive-LIO）：近处细体素/小搜索半径、远处粗。
+        与 HKNN order_scale 不同（那是全局缩放）。仅在 UpdateMap/Observe 热点
+        定位到搜索成本问题后才值得做。
   机制采纳门槛：楼梯或 1f 至少一个 bag 三数中至少一项改善 ≥20%，
   且另一个 bag 不出现 >20% 恶化（或恶化项可被场景门控隔离）。
+
+■ 文献对应表（机制 → 出处）
+  1.1 退化只看平移      TRaIL-Odom 2026        arxiv.org/html/2609.03561
+  2.A 地面/重力软约束   Tuna et al. IEEE T-FR 2025（constrained 族）
+                        arxiv.org/pdf/2408.11809v2 ；M.16-5(a) 自有提案
+  2.B 距离加权          G-ICP 思路 + AKF-LIO 静态版
+                        arxiv.org/abs/2503.06891
+  2.C 自适应 R          AKF-LIO（同上）
+  2.D 阈值随运动幅度    D²-LIO                 arxiv.org/html/2508.14355
+  2.E 按点 ΔT           CT 一族最小可行版：LIO-MARS arxiv.org/html/2511.13985v1 /
+                        RESPLE arxiv.org/html/2504.11580v2 /
+                        SLICT2 github.com/brytsknguyen/slict
+  2.F 滑窗+Schmidt      LODESTAR               arxiv.org/html/2511.09142v1
+                        （同类更重：SW-LIO；对照综述首选 Tuna field analysis）
+  2.G 选点/分层         BIEVR-LIO arxiv.org/html/2604.14421 /
+                        Adaptive-LIO ieeexplore 10806842
 
 ■ 阶段 3：跨场景验证与生产收口
   3.1 阶段 2 存活的机制全部在 1f 园区复测（777 m 双圈，M.16 静止场景配准判据）。
