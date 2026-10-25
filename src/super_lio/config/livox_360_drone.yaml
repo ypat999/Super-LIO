@@ -32,7 +32,10 @@
     # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
     lio.sensor.gravity_norm: 9.8066
     lio.sensor.imu_type: 1
-    lio.sensor.imu_na: 0.1
+    # M.29 量产参数收口（B 线，见 stairwell_drift_diagnosis.txt M.28/M.29）：
+    # 连续时间加速度噪声 0.1 → 0.01；配合 lio.observe.huber_delta_base=0.20。
+    # 回放实测（nbg 保持 0.003）：楼梯段闭环 1.599 → 1.171 m，1f 走廊 3.519 → 3.050 m。
+    lio.sensor.imu_na: 0.01
     lio.sensor.imu_ng: 0.1
     lio.sensor.imu_nba: 0.0001
     lio.sensor.imu_nbg: 0.003
@@ -93,6 +96,13 @@
     # ======================== 快速TF模式 ========================
     # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
     lio.fast_tf: false
+
+    # ======================== 观测鲁棒核 ========================
+    # M.29 量产参数收口（B 线）：Huber 基础阈值 0.05 → 0.20。
+    # 配合 imu_na=0.01，两个回放 bag 同时改善（楼梯 1.599→1.171，1f 3.519→3.050）。
+    # 注意：不要与本文件外的"A 线"（hub0.20 + imu_na 0.3 + nbg 3e-3 + 法向权重 σ0.035）
+    # 混用——A 线只在螺旋楼梯上最优，在 1f 上明显变差，且对参数极敏感。
+    lio.observe.huber_delta_base: 0.20
 
     # ======================== 坏帧护栏 ========================
     # 处理停顿会让 IMU 缓冲欠载，去畸变用残缺轨迹把点云扭坏，配准一次跳变
