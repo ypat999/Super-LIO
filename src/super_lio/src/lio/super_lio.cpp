@@ -1883,7 +1883,9 @@ void SuperLIO::Observe(){
       debug_csv_ << "t,ptsize,n_knn_fail,n_plane_fail,n_res_fail,n_effect,"
                     "fit_res_mean,fit_res_p95,iters,dx_inf,cond_yk,qk_finite,"
                     "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale,"
-                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt,deg_cond,deg_axes\n";
+                    "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt,deg_cond,deg_axes,"
+                    // M.30 场景判别：平移块最弱方向的三项对齐度（见下方计算处注释）
+                    "deg_cond_t,deg_evt_min,deg_dir_v,deg_dir_g,deg_dir_z\n";
     }
     double fit_mean = 0.0, fit_p95 = 0.0;
     if (!fit_res_vec_.empty()) {
@@ -1909,6 +1911,36 @@ void SuperLIO::Observe(){
     // 更新前的预测姿态（去畸变基准），与后验一起给出每帧观测修正量
     const V3 rv_pred = SO3(T_predicted_end_.R_).log_vee();
     const auto sys_state = kf_->GetSysState();
+
+    // ===== M.30 场景判别埋点：雷达 Hessian 平移块的最弱方向 =====
+    // 动机：deg_cond / deg_axes 只回答"退化有多严重"，不回答"退化是否落在正在
+    // 运动的轴上"。后者才是 na（IMU 与雷达的相对权重）该不该降的直接依据：
+    //   走廊：退化轴 = 沿走廊水平轴，飞机正沿它飞 → |u_min·v̂| → 1（应低 na）
+    //   楼梯：退化轴随螺旋旋转、多为竖直 → |u_min·v̂| 低（可高 na）
+    // 平移块 H_tt 位于世界系（J 的平移行即世界系法向 u），故 u_min 可直接与
+    // 世界系速度、重力方向比较。这三项均为纯雷达量、不含先验，无反馈回路。
+    double deg_cond_t = 0.0, deg_evt_min = 0.0;
+    double deg_dir_v = -1.0, deg_dir_g = -1.0, deg_dir_z = -1.0;
+    {
+      const Eigen::Matrix3d Htt = last_HTVH.block<3, 3>(3, 3);
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> est(Htt);
+      if (est.info() == Eigen::Success) {
+        const Eigen::Vector3d evt = est.eigenvalues();
+        deg_evt_min = evt(0);
+        deg_cond_t = (evt(0) > 1e-12) ? evt(2) / evt(0) : 1e12;
+        const Eigen::Vector3d umin = est.eigenvectors().col(0);
+        const Eigen::Vector3d vel = state.v.cast<double>();
+        const double vn = vel.norm();
+        // 低速时速度方向无意义，记 -1，由分析侧剔除
+        if (vn > 0.1) deg_dir_v = std::abs(umin.dot(vel / vn));
+        const Eigen::Vector3d gv = kf_->GetGravity().cast<double>();
+        if (gv.norm() > 1e-3) {
+          deg_dir_g = std::abs(umin.dot(gv / gv.norm()));
+          deg_dir_z = std::abs(umin.z());
+        }
+      }
+    }
+
     debug_csv_ << state.timestamp << ',' << ptsize << ','
                << n_knn_fail << ',' << n_plane_fail << ',' << n_res_fail << ',' << n_effect << ','
                << fit_mean << ',' << fit_p95 << ','
@@ -1931,7 +1963,9 @@ void SuperLIO::Observe(){
                << (measures_.imu.empty() ? 0.0
                      : measures_.lidar.end_time - measures_.imu.back().secs) << ','
                << (measures_.lidar.end_time - measures_.lidar.start_time) << ','
-               << degeneracy_cond_ << ',' << degeneracy_axes_ << '\n';
+               << degeneracy_cond_ << ',' << degeneracy_axes_ << ','
+               << deg_cond_t << ',' << deg_evt_min << ','
+               << deg_dir_v << ',' << deg_dir_g << ',' << deg_dir_z << '\n';
     debug_csv_.flush();
   }
 
