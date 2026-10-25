@@ -5207,3 +5207,87 @@ M.30 【2026-10-26 场景自动切换判据：埋点验证与判据定型】
    ./lane_p_1f.sh         # 1f   → results/f1_dirs_dbg
    # 判据评估
    python3 autoswitch_diag.py results/m34_dirs_dbg results/f1_dirs_dbg
+
+================================================================================
+M.31 【2026-10-26 场景自动档：启动窗口判定一次，全程固定】
+
+■ 0. 结论摘要
+   自动档在两个 bag 上都判对了场景，并且都拿到（或超过）手动选线的最优：
+     楼梯：判 stair(A)  → 0.024 m（与固定 A 线 m26_h20_na03 **odom md5 逐字节相同**）
+     1f  ：判 corridor(B) → 2.976 m（固定 B 线 3.051，固定 A 线 4.097）
+   判定值与 M.30 离线预测一致：楼梯 hi_frac=0.020（预测 0）、1f hi_frac=0.953（预测 94.9%）。
+
+■ 1. 实现（默认关，关时行为完全不变）
+   判定量（M.30 §5 定型）：启动后 W 秒内 deg_cond > thr 的帧占比 > gate ⇒ 走廊。
+   参数（ROS）：
+     lio.auto_scene.en              false      总开关
+     lio.auto_scene.window          120.0      判定窗口 s（注意必须是浮点，写成 120
+                                               会与 double 声明冲突，节点启动即抛
+                                               InvalidParameterTypeException）
+     lio.auto_scene.cond_thr        150.0      高退化帧阈值
+     lio.auto_scene.gate            0.5        高退化帧占比门限
+     lio.auto_scene.stair_na        0.3        楼梯档（A 线）
+     lio.auto_scene.stair_nw        true
+     lio.auto_scene.stair_nw_sigma  0.035
+     lio.auto_scene.corridor_na     0.01       走廊档（B 线）
+     lio.auto_scene.corridor_nw     false
+   行为：
+     1) 窗口未满 = 楼梯档（A 线）。冷启动必须默认 A 线：误用 B 线在楼梯的代价
+        （0.024→1.171，50x）远大于误用 A 线在走廊的代价（3.051→4.097）。
+        实现上连 ESKF 初始 acce_var_ 也取 stair_na，保证第 1 帧起就是 A 线。
+     2) 满窗判定一次，用 ESKF::SetAcceVar() 换 na（只重建 Q_ 对角阵，不动 P_/名义
+        状态），同时把 nw 档位固定下来。
+     3) 判定后**不可撤销**，不再受帧级退化签名影响（auto_scene 优先于 adaptive_param）。
+     4) 打一行 [AutoScene] decided=... hi_frac=... -> na=... nw=...，供实机复盘。
+
+■ 2. 判定实测（每 bag 1202 帧 / 120 s）
+   楼梯：[AutoScene] decided=stair(A)    hi_frac=0.0199667 -> na=0.3  nw=1
+   1f  ：[AutoScene] decided=corridor(B) hi_frac=0.953372  -> na=0.01 nw=0
+   与 M.30 离线扫描（楼梯 0.00% / 1f 94.9%）一致，说明判据从离线搬到在线没有走样。
+
+■ 3. 验收：楼梯必须逐字节等于固定 A 线
+   md5(m35_auto_stair/odom.csv) = 6e01aa2dc05967f661450488dd56fc34
+   md5(m26_h20_na03/odom.csv)   = 6e01aa2dc05967f661450488dd56fc34  ⇒ 相同
+   ⇒ 判为 stair 后（na/nw/huber/nbg 全同）实现没有任何额外副作用，这是自动档
+     最硬的一条验收：两条完全不同的代码路径给出了同一位姿序列。
+
+■ 4. 漂移效果（固定窗闭环 3D，与 M.29 §5 同口径）
+   楼梯（--win 12:21,392:420,440:465，300 m 环）：
+     m35_auto_stair        0.024 m   ← 自动档（判 stair）
+     m26_h20_na03（A 线）  0.024 m
+     m33_bline_nbg3（B 线）1.171 m
+     健康度：odom_gap>0.15s 次数 0 / gap_max 0.11 s / 静止段最大位移 0.038 m
+   1f（--win 10:21,310:340,600:630，776 m 路径）：
+     run              锚点1(s) 锚点2(s)  末位置水平  末位置竖直
+     f1_auto          2.569    **2.976**  1.733      2.420
+     f1_h20_na03(A)   3.215    4.097      2.767      3.021
+     f1_bline_nbg3(B) 2.495    3.051      1.506      2.653
+     健康度：odom_gap 0 / gap_max 0.14 s / 静止段最大位移 0.107 m
+   ⇒ 1f 上自动档 2.976 甚至略好于全程 B 线 3.051（−2.5%）：前 120 s 走 A 线
+     并没有吃亏。竖直分量改善（2.420 vs 2.653）而水平略差（1.733 vs 1.506）。
+
+■ 5. 限制（实机前必须知道）
+   1) 判定只做一次且不可撤销。任务是"先楼梯后走廊"或"走廊中途进楼梯"时，
+      后段会沿用错误档位。真正连续场景需要分段感知 + 带滞回的重复判定
+      （M.30 §6 的完整设计），本例只解决"单一场景任务"。
+   2) 判定依赖前 120 s 的退化统计，飞机在 120 s 内必须已经在目标场景里运动；
+      若前 120 s 全是静止悬停（cond 无意义），判定会偏向楼梯档。
+   3) 全部结论来自两个回放 bag。实机的动态障碍、玻璃/反光、雨雾会改变 cond
+      分布，上机前建议先开着 debug.level=1 采一段看 hi_frac 落在哪。
+   4) 判据对"开阔户外"这类既不退化也不像楼梯的场景没有定义，默认落到楼梯档
+      （安全侧，代价仅是比 B 线多 0.6 m 量级的走廊漂移）。
+
+■ 6. 状态
+   已完成：判据定型（M.30）→ 在线判定实现 → 两 bag 回放验收 → 与手动选线对比
+   待办：实机验证（P0 未变）；连续多场景切换仍属研究项
+   不采纳：逐帧/短窗 cond 判据；退化方向对齐度判据（M.30 §3 证伪）
+
+■ 7. 复跑命令
+   ./lane_q_stair_auto.sh    # 楼梯 → results/m35_auto_stair（应与 m26_h20_na03 同 md5）
+   ./lane_q_1f_auto.sh       # 1f   → results/f1_auto
+   # 漂移对比
+   python3 -B exp/loop_error.py --bag ~/slam_data/livox_record_drone \
+       --loops --win 12:21,392:420,440:465 exp/results/m35_auto_stair exp/results/m26_h20_na03
+   python3 -B exp/loop_error.py --bag ~/slam_data/livox_record_drone_1f \
+       --loops --win 10:21,310:340,600:630 \
+       exp/results/f1_auto exp/results/f1_h20_na03 exp/results/f1_bline_nbg3
