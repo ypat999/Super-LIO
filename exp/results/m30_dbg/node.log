@@ -1,0 +1,870 @@
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I1025 03:42:27.730733 1763597 ROSWrapper.cpp:26] [32m ---> [Param] map/save_map: true[0m
+I1025 03:42:27.730942 1763597 ROSWrapper.cpp:63] [32m ---> [Param] map/freeze: 0  load_path:   init_pose: identity[0m
+I1025 03:42:27.730957 1763597 ROSWrapper.cpp:67] [32m ---> [Param] map/pcd_prefix: [0m
+I1025 03:42:27.730993 1763597 ROSWrapper.cpp:82] [32m ---> [Param] ros/imu_qos_reliable: true[0m
+I1025 03:42:27.731000 1763597 ROSWrapper.cpp:85] [32m ---> [Param] ros/lidar_qos_reliable: true[0m
+I1025 03:42:27.731218 1763597 ROSWrapper.cpp:229] [32m ---> [Param] observe/plane_fit_threshold: 0.15[0m
+I1025 03:42:27.731261 1763597 ROSWrapper.cpp:241] [32m ---> [Param] observe/obs_weight: 1000[0m
+I1025 03:42:27.731269 1763597 ROSWrapper.cpp:242] [32m ---> [Param] observe/huber_delta_base: 0.05[0m
+I1025 03:42:27.731276 1763597 ROSWrapper.cpp:243] [32m ---> [Param] observe/huber_delta_scale: 0.003[0m
+I1025 03:42:27.731310 1763597 ROSWrapper.cpp:254] [32m ---> [Param] observe/ground_weight: 0 obs_dist_k: 0 thresh_motion_k: 0 delta_interp_en: 0[0m
+I1025 03:42:27.731457 1763597 ROSWrapper.cpp:307] [32m ---> [Param] observe/fine_channel: en=0 weight=100 max_points=150 max_dist=0.5 min_gain=1.5[0m
+I1025 03:42:27.731534 1763597 ROSWrapper.cpp:339] [32m ---> [Param] debug/level: 2[0m
+I1025 03:42:27.731540 1763597 ROSWrapper.cpp:340] [32m ---> [Param] observe/normal_weight_en: 0 sigma: 0.05[0m
+I1025 03:42:27.731546 1763597 ROSWrapper.cpp:342] [32m ---> [Param] hash_map/rep_mode: 0 clamp_mu: 0 max_points: 20 merge_dist: 0.1[0m
+I1025 03:42:27.731552 1763597 ROSWrapper.cpp:346] [32m ---> [Param] hash_map/hknn_max_group: -1 order_scale: 1[0m
+I1025 03:42:27.731568 1763597 ROSWrapper.cpp:351] [32m ---> [Param] observe/frame_gap_guard_en: 0 gap_max: 0.2 imu_cover_max: 0.03 max_consecutive: 9[0m
+I1025 03:42:27.731822 1763597 ROSWrapper.cpp:405] [32m ---> [Param] output/footprint_pub_en: false[0m
+I1025 03:42:27.731832 1763597 ROSWrapper.cpp:408] [32m ---> [Param] output/tf_base_footprint_frame: base_footprint[0m
+I1025 03:42:27.731839 1763597 ROSWrapper.cpp:411] [32m ---> [Param] output/world_frame: world[0m
+I1025 03:42:27.731845 1763597 ROSWrapper.cpp:414] [32m ---> [Param] output/imu_frame: imu[0m
+I1025 03:42:27.731981 1763597 ROSWrapper.cpp:457] [32m ---> [Param] dynamic_removal/enable: false[0m
+I1025 03:42:27.731992 1763597 ROSWrapper.cpp:460] [32m ---> [Param] dynamic_removal/method: Temporal[0m
+I1025 03:42:27.731997 1763597 ROSWrapper.cpp:463] [32m ---> [Param] dynamic_removal/grid_size: 0.2[0m
+I1025 03:42:27.732002 1763597 ROSWrapper.cpp:466] [32m ---> [Param] dynamic_removal/min_neighbors: 1[0m
+I1025 03:42:27.732007 1763597 ROSWrapper.cpp:469] [32m ---> [Param] dynamic_removal/frame_window: 1[0m
+I1025 03:42:27.732012 1763597 ROSWrapper.cpp:472] [32m ---> [Param] dynamic_removal/raycast_min_hits: 2[0m
+I1025 03:42:27.732015 1763597 ROSWrapper.cpp:475] [32m ---> [Param] dynamic_removal/isolated_removal: false[0m
+I1025 03:42:27.732054 1763597 ROSWrapper.cpp:492] [32m ---> [Param] sc_pgo/enable: false[0m
+I1025 03:42:27.732061 1763597 ROSWrapper.cpp:495] [32m ---> [Param] sc_pgo/keyframe_gap: 0.5[0m
+I1025 03:42:27.732066 1763597 ROSWrapper.cpp:498] [32m ---> [Param] sc_pgo/keyframe_deg_gap: 5[0m
+I1025 03:42:27.732081 1763597 ROSWrapper.cpp:505] [32m ---> [Param] single_core: true[0m
+I1025 03:42:27.732097 1763597 ROSWrapper.cpp:512] [32m ---> [Param] fast_tf: false[0m
+I1025 03:42:27.732116 1763597 ROSWrapper.cpp:519] [32m ---> [Param] lio_only_undistort: false[0m
+I1025 03:42:27.732133 1763597 ROSWrapper.cpp:526] [32m ---> [Param] downsample_only: false[0m
+I1025 03:42:27.732139 1763597 ROSWrapper.cpp:529] [32m ---> [Params]: Load from ROS2 parameter server.[0m
+I1025 03:42:27.732143 1763597 ROSWrapper.cpp:615] [32m ---> Using Lidar type: LIVOX[0m
+I1025 03:42:27.742120 1763597 ROSWrapper.cpp:699] [32m ---> [Service] Save map service created: /map_save[0m
+ ---> OctVoxMap init. Resolution: 0.25 Capacity: 2000000
+I1025 03:42:27.742987 1763597 super_lio.cpp:317] [33m ---> [SuperLIO]: Single-core mode[0m
+I1025 03:42:27.743017 1763597 super_lio.cpp:320] [32m ---> [SuperLIO]: initialized.[0m
+W1025 03:42:36.342639 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.30281e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+I1025 03:42:36.585044 1763612 super_lio.cpp:435] [32m ---> [SuperLIO]: Gravity Alignment Results:[0m
+I1025 03:42:36.585083 1763612 super_lio.cpp:436] [32m      Mean Acceleration: [   0.480203 -0.00213164   -0.869377][0m
+I1025 03:42:36.585119 1763612 super_lio.cpp:437] [32m      Gravity Norm: 9.8066[0m
+I1025 03:42:36.585132 1763612 super_lio.cpp:438] [32m      Measured Gravity: [ -4.74147 0.0210476   8.58414][0m
+I1025 03:42:36.585150 1763612 super_lio.cpp:439] [32m      Reference Gravity: [      0       0 -9.8066][0m
+I1025 03:42:36.585167 1763612 super_lio.cpp:440] [32m      Yaw Angle: 179.455 degrees[0m
+I1025 03:42:36.585178 1763612 super_lio.cpp:441] [32m      IMU Scale: 9.8739[0m
+W1025 03:42:36.585218 1763612 ROSWrapper.cpp:1171] [33m ---> [odom reset] 声明 odom 内部状态/参考系重置 #1 原因: kf_init: filter re-initialized[0m
+I1025 03:42:36.585244 1763612 super_lio.cpp:356] [32m ---> [SuperLIO]: KF init done[0m
+I1025 03:42:36.991751 1763597 super_lio.cpp:389] [32m ---> [SuperLIO]: Map init done[0m
+W1025 03:42:37.342762 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:38.346902 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:39.088222 1763614 super_lio.cpp:1848] [Degeneracy] cond=130.438 axes=2 active=1 effect_pts=620
+W1025 03:42:39.352586 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:40.352909 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:41.099327 1763614 super_lio.cpp:1848] [Degeneracy] cond=130.955 axes=1 active=1 effect_pts=597
+W1025 03:42:41.357044 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:42.357223 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:43.200969 1763613 super_lio.cpp:1848] [Degeneracy] cond=129.463 axes=2 active=1 effect_pts=626
+W1025 03:42:43.357337 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:44.357388 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:45.293093 1763597 super_lio.cpp:1848] [Degeneracy] cond=129.563 axes=2 active=1 effect_pts=609
+W1025 03:42:45.363085 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:46.367173 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:47.367251 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:47.399142 1763613 super_lio.cpp:1848] [Degeneracy] cond=124.506 axes=2 active=1 effect_pts=604
+W1025 03:42:48.367311 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:49.372958 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:49.495613 1763613 super_lio.cpp:1848] [Degeneracy] cond=130.609 axes=2 active=1 effect_pts=615
+W1025 03:42:50.373078 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:51.377173 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:51.590096 1763613 super_lio.cpp:1848] [Degeneracy] cond=128.582 axes=2 active=1 effect_pts=607
+W1025 03:42:52.377312 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:53.377395 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:53.597499 1763597 super_lio.cpp:1848] [Degeneracy] cond=126.761 axes=2 active=1 effect_pts=612
+W1025 03:42:54.377744 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:55.377755 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:55.693063 1763613 super_lio.cpp:1848] [Degeneracy] cond=123.37 axes=2 active=1 effect_pts=616
+W1025 03:42:56.383191 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:57.383481 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:57.696378 1763613 super_lio.cpp:1848] [Degeneracy] cond=122.007 axes=1 active=1 effect_pts=613
+W1025 03:42:58.387578 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:59.392954 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:42:59.796202 1763597 super_lio.cpp:1848] [Degeneracy] cond=98.2463 axes=0 active=1 effect_pts=682
+W1025 03:43:00.393399 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:01.397436 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:01.887904 1763597 super_lio.cpp:1848] [Degeneracy] cond=58.7092 axes=0 active=1 effect_pts=873
+W1025 03:43:02.403041 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:03.403259 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:03.892633 1763597 super_lio.cpp:1848] [Degeneracy] cond=62.07 axes=0 active=1 effect_pts=965
+W1025 03:43:04.407317 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:05.413069 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:05.989387 1763597 super_lio.cpp:1848] [Degeneracy] cond=134.872 axes=1 active=1 effect_pts=886
+W1025 03:43:06.413208 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:07.417364 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:07.992543 1763612 super_lio.cpp:1848] [Degeneracy] cond=76.2623 axes=0 active=1 effect_pts=1018
+W1025 03:43:08.423060 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:09.427358 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:10.087915 1763613 super_lio.cpp:1848] [Degeneracy] cond=166.479 axes=1 active=1 effect_pts=932
+W1025 03:43:10.427452 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:11.427874 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:12.090401 1763614 super_lio.cpp:1848] [Degeneracy] cond=50.7975 axes=0 active=1 effect_pts=580
+W1025 03:43:12.433310 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:13.433408 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:14.093611 1763597 super_lio.cpp:1848] [Degeneracy] cond=5.8211 axes=0 active=0 effect_pts=406
+W1025 03:43:14.437988 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:15.443341 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:16.194321 1763612 super_lio.cpp:1848] [Degeneracy] cond=38.2838 axes=0 active=0 effect_pts=536
+W1025 03:43:16.443363 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:17.447651 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:18.289041 1763612 super_lio.cpp:1848] [Degeneracy] cond=16.5177 axes=0 active=0 effect_pts=560
+W1025 03:43:18.453029 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:19.453162 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:20.289837 1763612 super_lio.cpp:1848] [Degeneracy] cond=18.1778 axes=0 active=0 effect_pts=510
+W1025 03:43:20.453262 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:21.457470 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:22.290261 1763613 super_lio.cpp:1848] [Degeneracy] cond=26.5741 axes=0 active=0 effect_pts=836
+W1025 03:43:22.463146 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:23.463397 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:24.290596 1763612 super_lio.cpp:1848] [Degeneracy] cond=27.6319 axes=0 active=0 effect_pts=707
+W1025 03:43:24.467630 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:25.467643 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:26.386678 1763613 super_lio.cpp:1848] [Degeneracy] cond=30.4385 axes=0 active=0 effect_pts=561
+W1025 03:43:26.467742 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:27.473729 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+I1025 03:43:27.742895 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:43:27.742949 1763597 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0276953 ms , max: 0.258015 ms , calls: 507
+I1025 03:43:27.742982 1763597 timer.h:59] > [ [DownSample] ] avg: 0.148116 ms , max: 0.457495 ms , calls: 507
+I1025 03:43:27.743002 1763597 timer.h:59] > [ [MapInsert] ] avg: 0.12227 ms , max: 1.06912 ms , calls: 507
+I1025 03:43:27.743023 1763597 timer.h:59] > [ [MapTransform] ] avg: 0.00253503 ms , max: 0.127401 ms , calls: 507
+I1025 03:43:27.743040 1763597 timer.h:59] > [ [Observe] ] avg: 4.07454 ms , max: 8.99462 ms , calls: 507
+I1025 03:43:27.743057 1763597 timer.h:59] > [ [PublishBody] ] avg: 0.000293041 ms , max: 0.00102 ms , calls: 507
+I1025 03:43:27.743075 1763597 timer.h:59] > [ [Undistort] ] avg: 0.270861 ms , max: 3.77432 ms , calls: 507
+I1025 03:43:27.743091 1763597 timer.h:59] > [ [UpdateMap] ] avg: 0.128302 ms , max: 1.07473 ms , calls: 507
+I1025 03:43:27.743109 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:43:27.743189 1763597 timer.h:59] > [ [IMU->Odom] ] avg: 0.0761159 ms , max: 3.35336 ms , calls: 10149
+I1025 03:43:27.743278 1763597 timer.h:59] > [ [IMU->TF] ] avg: 0.0979451 ms , max: 8.12816 ms , calls: 10150
+I1025 03:43:27.743297 1763597 timer.h:59] > [ [Lidar->Odom] ] avg: 6.49313 ms , max: 19.9609 ms , calls: 507
+W1025 03:43:28.388424 1763613 super_lio.cpp:1848] [Degeneracy] cond=22.0436 axes=0 active=0 effect_pts=454
+W1025 03:43:28.477954 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:29.483501 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:30.389117 1763612 super_lio.cpp:1848] [Degeneracy] cond=32.9497 axes=0 active=0 effect_pts=461
+W1025 03:43:30.483557 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:31.487836 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:32.488241 1763613 super_lio.cpp:1848] [Degeneracy] cond=84.9824 axes=0 active=0 effect_pts=203
+W1025 03:43:32.493620 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:33.494014 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:34.498570 1763613 super_lio.cpp:1848] [Degeneracy] cond=44.3067 axes=0 active=0 effect_pts=510
+W1025 03:43:34.498904 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:35.503604 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:36.507936 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:36.590482 1763612 super_lio.cpp:1848] [Degeneracy] cond=21.0727 axes=0 active=0 effect_pts=322
+W1025 03:43:37.508316 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:38.508569 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:38.593111 1763612 super_lio.cpp:1848] [Degeneracy] cond=29.091 axes=0 active=0 effect_pts=417
+W1025 03:43:39.513705 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:40.513950 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:40.593286 1763614 super_lio.cpp:1848] [Degeneracy] cond=19.0448 axes=0 active=0 effect_pts=318
+W1025 03:43:41.518163 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:42.523893 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:42.596019 1763612 super_lio.cpp:1848] [Degeneracy] cond=43.5156 axes=0 active=0 effect_pts=536
+W1025 03:43:43.527949 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:44.533962 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:44.597407 1763613 super_lio.cpp:1848] [Degeneracy] cond=43.5423 axes=0 active=0 effect_pts=555
+W1025 03:43:45.537988 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:46.543659 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:46.685657 1763613 super_lio.cpp:1848] [Degeneracy] cond=7.98326 axes=0 active=0 effect_pts=202
+W1025 03:43:47.543753 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:48.547984 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:48.691365 1763614 super_lio.cpp:1848] [Degeneracy] cond=25.8606 axes=0 active=0 effect_pts=461
+W1025 03:43:49.548028 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:50.553658 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:50.691493 1763614 super_lio.cpp:1848] [Degeneracy] cond=12.8082 axes=0 active=0 effect_pts=271
+W1025 03:43:51.553758 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:52.554106 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:52.698828 1763597 super_lio.cpp:1848] [Degeneracy] cond=26.6062 axes=0 active=0 effect_pts=429
+W1025 03:43:53.557972 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:54.558012 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:54.803036 1763614 super_lio.cpp:1848] [Degeneracy] cond=21.6703 axes=0 active=0 effect_pts=550
+W1025 03:43:55.558295 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:56.563993 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:56.896137 1763612 super_lio.cpp:1848] [Degeneracy] cond=32.5477 axes=0 active=0 effect_pts=628
+W1025 03:43:57.564092 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:58.567816 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:43:58.903092 1763597 super_lio.cpp:1848] [Degeneracy] cond=28.2881 axes=0 active=0 effect_pts=534
+W1025 03:43:59.568518 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:00.574156 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:00.992177 1763597 super_lio.cpp:1848] [Degeneracy] cond=11.2579 axes=0 active=0 effect_pts=294
+W1025 03:44:01.574198 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:02.578485 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:02.997601 1763613 super_lio.cpp:1848] [Degeneracy] cond=44.3808 axes=0 active=0 effect_pts=604
+W1025 03:44:03.584116 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:04.588402 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:05.094655 1763614 super_lio.cpp:1848] [Degeneracy] cond=14.8109 axes=0 active=0 effect_pts=552
+W1025 03:44:05.589190 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:06.594360 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:07.097971 1763612 super_lio.cpp:1848] [Degeneracy] cond=15.9173 axes=0 active=0 effect_pts=742
+W1025 03:44:07.598383 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:08.598557 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:09.195218 1763612 super_lio.cpp:1848] [Degeneracy] cond=22.8482 axes=0 active=0 effect_pts=542
+W1025 03:44:09.604127 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:10.608193 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:11.198804 1763614 super_lio.cpp:1848] [Degeneracy] cond=13.4004 axes=0 active=0 effect_pts=297
+W1025 03:44:11.608264 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:12.608493 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:13.295293 1763614 super_lio.cpp:1848] [Degeneracy] cond=25.4039 axes=0 active=0 effect_pts=664
+W1025 03:44:13.614053 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:14.618489 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:15.396544 1763614 super_lio.cpp:1848] [Degeneracy] cond=11.6626 axes=0 active=0 effect_pts=520
+W1025 03:44:15.618542 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:16.624244 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:17.495340 1763614 super_lio.cpp:1848] [Degeneracy] cond=22.3012 axes=0 active=0 effect_pts=601
+W1025 03:44:17.624274 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:18.624486 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:19.495878 1763612 super_lio.cpp:1848] [Degeneracy] cond=20.0744 axes=0 active=0 effect_pts=549
+W1025 03:44:19.624606 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:20.628831 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:21.586192 1763597 super_lio.cpp:1848] [Degeneracy] cond=31.9203 axes=0 active=0 effect_pts=534
+W1025 03:44:21.634073 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:22.634620 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:23.601652 1763597 super_lio.cpp:1848] [Degeneracy] cond=25.0768 axes=0 active=0 effect_pts=635
+W1025 03:44:23.634768 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:24.638618 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:25.638707 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:25.703378 1763614 super_lio.cpp:1848] [Degeneracy] cond=13.2742 axes=0 active=0 effect_pts=561
+W1025 03:44:26.644305 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:27.644596 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:27.707610 1763614 super_lio.cpp:1848] [Degeneracy] cond=15.0271 axes=0 active=0 effect_pts=632
+I1025 03:44:27.742676 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:44:27.742786 1763613 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0360169 ms , max: 0.412582 ms , calls: 600
+I1025 03:44:27.742892 1763613 timer.h:59] > [ [DownSample] ] avg: 0.230485 ms , max: 0.735093 ms , calls: 600
+I1025 03:44:27.742959 1763613 timer.h:59] > [ [MapInsert] ] avg: 0.11847 ms , max: 0.528962 ms , calls: 600
+I1025 03:44:27.743011 1763613 timer.h:59] > [ [MapTransform] ] avg: 0.00234595 ms , max: 0.022901 ms , calls: 600
+I1025 03:44:27.743063 1763613 timer.h:59] > [ [Observe] ] avg: 4.99875 ms , max: 12.3451 ms , calls: 600
+I1025 03:44:27.743117 1763613 timer.h:59] > [ [PublishBody] ] avg: 0.00037605 ms , max: 0.001054 ms , calls: 600
+I1025 03:44:27.743199 1763613 timer.h:59] > [ [Undistort] ] avg: 0.396446 ms , max: 1.15868 ms , calls: 600
+I1025 03:44:27.743247 1763613 timer.h:59] > [ [UpdateMap] ] avg: 0.125596 ms , max: 0.538124 ms , calls: 600
+I1025 03:44:27.743302 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:44:27.743542 1763613 timer.h:59] > [ [IMU->Odom] ] avg: 0.0994196 ms , max: 3.25179 ms , calls: 12000
+I1025 03:44:27.743796 1763613 timer.h:59] > [ [IMU->TF] ] avg: 0.127377 ms , max: 11.189 ms , calls: 11999
+I1025 03:44:27.743851 1763613 timer.h:59] > [ [Lidar->Odom] ] avg: 8.19826 ms , max: 17.8301 ms , calls: 600
+W1025 03:44:28.648315 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:29.648818 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:29.801556 1763614 super_lio.cpp:1848] [Degeneracy] cond=16.4543 axes=0 active=0 effect_pts=689
+W1025 03:44:30.654369 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:31.654557 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:31.904176 1763612 super_lio.cpp:1848] [Degeneracy] cond=20.5267 axes=0 active=0 effect_pts=499
+W1025 03:44:32.658399 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:33.658725 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:33.992177 1763597 super_lio.cpp:1848] [Degeneracy] cond=20.7815 axes=0 active=0 effect_pts=732
+W1025 03:44:34.658967 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:35.664451 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:36.007191 1763613 super_lio.cpp:1848] [Degeneracy] cond=17.3348 axes=0 active=0 effect_pts=712
+W1025 03:44:36.668510 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:37.668749 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:38.101914 1763597 super_lio.cpp:1848] [Degeneracy] cond=25.6287 axes=0 active=0 effect_pts=564
+W1025 03:44:38.668922 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:39.668946 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:40.103989 1763613 super_lio.cpp:1848] [Degeneracy] cond=23.1025 axes=0 active=0 effect_pts=727
+W1025 03:44:40.669011 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:41.682237 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:42.196046 1763614 super_lio.cpp:1848] [Degeneracy] cond=17.8789 axes=0 active=0 effect_pts=597
+W1025 03:44:42.682279 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:43.683210 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:44.295253 1763614 super_lio.cpp:1848] [Degeneracy] cond=19.0652 axes=0 active=0 effect_pts=772
+W1025 03:44:44.684706 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:45.689481 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:46.386890 1763614 super_lio.cpp:1848] [Degeneracy] cond=19.7873 axes=0 active=0 effect_pts=743
+W1025 03:44:46.694595 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:47.695231 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:48.404409 1763612 super_lio.cpp:1848] [Degeneracy] cond=17.5295 axes=0 active=0 effect_pts=598
+W1025 03:44:48.699003 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:49.700505 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:50.502823 1763597 super_lio.cpp:1848] [Degeneracy] cond=14.0201 axes=0 active=0 effect_pts=647
+W1025 03:44:50.704107 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:51.704381 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:52.589395 1763597 super_lio.cpp:1848] [Degeneracy] cond=53.8763 axes=0 active=0 effect_pts=639
+W1025 03:44:52.704831 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:53.706714 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:54.597121 1763597 super_lio.cpp:1848] [Degeneracy] cond=16.1851 axes=0 active=0 effect_pts=703
+W1025 03:44:54.708940 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:55.709288 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:56.700052 1763597 super_lio.cpp:1848] [Degeneracy] cond=58.1225 axes=0 active=0 effect_pts=582
+W1025 03:44:56.709444 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:57.715411 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:58.719108 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:44:58.798365 1763613 super_lio.cpp:1848] [Degeneracy] cond=83.781 axes=0 active=0 effect_pts=570
+W1025 03:44:59.724810 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:00.724933 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:00.800002 1763613 super_lio.cpp:1848] [Degeneracy] cond=25.8146 axes=0 active=0 effect_pts=754
+W1025 03:45:01.729142 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:02.734814 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:02.894454 1763612 super_lio.cpp:1848] [Degeneracy] cond=26.6422 axes=0 active=0 effect_pts=577
+W1025 03:45:03.734846 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:04.739521 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:04.995365 1763597 super_lio.cpp:1848] [Degeneracy] cond=15.267 axes=0 active=0 effect_pts=400
+W1025 03:45:05.739634 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:06.745008 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:06.998551 1763613 super_lio.cpp:1848] [Degeneracy] cond=12.6157 axes=0 active=0 effect_pts=427
+W1025 03:45:07.749418 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:08.754827 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:09.001415 1763613 super_lio.cpp:1848] [Degeneracy] cond=3.17462 axes=0 active=0 effect_pts=456
+W1025 03:45:09.755198 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:10.759294 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:11.095055 1763613 super_lio.cpp:1848] [Degeneracy] cond=41.2926 axes=0 active=0 effect_pts=527
+W1025 03:45:11.765051 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:12.769512 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:13.193701 1763613 super_lio.cpp:1848] [Degeneracy] cond=113.169 axes=1 active=0 effect_pts=967
+W1025 03:45:13.782832 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:14.783058 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:15.207707 1763613 super_lio.cpp:1848] [Degeneracy] cond=80.8939 axes=0 active=1 effect_pts=946
+W1025 03:45:15.785192 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:16.790014 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:17.212389 1763597 super_lio.cpp:1848] [Degeneracy] cond=29.4557 axes=0 active=0 effect_pts=1065
+W1025 03:45:17.795199 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:18.799147 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:19.317610 1763614 super_lio.cpp:1848] [Degeneracy] cond=35.8084 axes=0 active=0 effect_pts=1107
+W1025 03:45:19.799322 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:20.803113 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:21.398725 1763613 super_lio.cpp:1848] [Degeneracy] cond=59.3496 axes=0 active=0 effect_pts=1067
+W1025 03:45:21.805249 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:22.805282 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:23.406459 1763597 super_lio.cpp:1848] [Degeneracy] cond=53.1577 axes=0 active=0 effect_pts=1147
+W1025 03:45:23.809388 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:24.809455 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:25.407622 1763614 super_lio.cpp:1848] [Degeneracy] cond=88.9321 axes=0 active=0 effect_pts=1127
+W1025 03:45:25.809543 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:26.809726 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:27.500658 1763597 super_lio.cpp:1848] [Degeneracy] cond=77.3783 axes=0 active=1 effect_pts=1190
+I1025 03:45:27.742381 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:45:27.742467 1763597 timer.h:59] > [ [DeltaCorrect] ] avg: 0.051934 ms , max: 0.526099 ms , calls: 600
+I1025 03:45:27.742520 1763597 timer.h:59] > [ [DownSample] ] avg: 0.311336 ms , max: 0.995969 ms , calls: 600
+I1025 03:45:27.742576 1763597 timer.h:59] > [ [MapInsert] ] avg: 0.226842 ms , max: 9.92964 ms , calls: 600
+I1025 03:45:27.742609 1763597 timer.h:59] > [ [MapTransform] ] avg: 0.00406148 ms , max: 0.076196 ms , calls: 600
+I1025 03:45:27.742640 1763597 timer.h:59] > [ [Observe] ] avg: 7.53869 ms , max: 21.0519 ms , calls: 600
+I1025 03:45:27.742672 1763597 timer.h:59] > [ [PublishBody] ] avg: 0.000439762 ms , max: 0.010854 ms , calls: 600
+I1025 03:45:27.742704 1763597 timer.h:59] > [ [Undistort] ] avg: 0.473421 ms , max: 1.16837 ms , calls: 600
+I1025 03:45:27.742734 1763597 timer.h:59] > [ [UpdateMap] ] avg: 0.236156 ms , max: 9.94486 ms , calls: 600
+I1025 03:45:27.742766 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:45:27.742949 1763597 timer.h:59] > [ [IMU->Odom] ] avg: 0.122488 ms , max: 10.9246 ms , calls: 12000
+I1025 03:45:27.743134 1763597 timer.h:59] > [ [IMU->TF] ] avg: 0.264834 ms , max: 20.5 ms , calls: 12000
+I1025 03:45:27.743172 1763597 timer.h:59] > [ [Lidar->Odom] ] avg: 11.4051 ms , max: 28.9264 ms , calls: 600
+W1025 03:45:27.815264 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:28.819238 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:29.589934 1763597 super_lio.cpp:1848] [Degeneracy] cond=71.2784 axes=0 active=1 effect_pts=1218
+W1025 03:45:29.819319 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:30.819572 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:31.615695 1763612 super_lio.cpp:1848] [Degeneracy] cond=68.2513 axes=0 active=1 effect_pts=1199
+W1025 03:45:31.825364 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:32.825438 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:33.702816 1763614 super_lio.cpp:1848] [Degeneracy] cond=181.092 axes=1 active=1 effect_pts=1435
+W1025 03:45:33.829730 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:34.835186 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:35.704489 1763613 super_lio.cpp:1848] [Degeneracy] cond=106.114 axes=1 active=1 effect_pts=1390
+W1025 03:45:35.839591 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:36.839732 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:37.705871 1763614 super_lio.cpp:1848] [Degeneracy] cond=232.975 axes=1 active=1 effect_pts=1539
+W1025 03:45:37.839954 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:38.845412 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:39.793112 1763613 super_lio.cpp:1848] [Degeneracy] cond=108.207 axes=1 active=1 effect_pts=1026
+W1025 03:45:39.849615 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:40.855334 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:41.855507 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:41.892560 1763597 super_lio.cpp:1848] [Degeneracy] cond=131.184 axes=1 active=1 effect_pts=1280
+W1025 03:45:42.859560 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:43.865309 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:43.990505 1763597 super_lio.cpp:1848] [Degeneracy] cond=226.251 axes=1 active=1 effect_pts=1114
+W1025 03:45:44.869637 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:45.881455 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:45.990746 1763614 super_lio.cpp:1848] [Degeneracy] cond=81.9735 axes=0 active=1 effect_pts=1088
+W1025 03:45:46.882053 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:47.882843 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:48.091748 1763614 super_lio.cpp:1848] [Degeneracy] cond=54.4726 axes=0 active=1 effect_pts=961
+W1025 03:45:48.885728 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:49.889954 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:50.190748 1763614 super_lio.cpp:1848] [Degeneracy] cond=80.6927 axes=0 active=1 effect_pts=909
+W1025 03:45:50.895545 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:51.899752 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:52.191022 1763612 super_lio.cpp:1848] [Degeneracy] cond=47.9249 axes=0 active=1 effect_pts=946
+W1025 03:45:52.899766 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:53.907152 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:54.192689 1763614 super_lio.cpp:1848] [Degeneracy] cond=22.0678 axes=0 active=0 effect_pts=745
+W1025 03:45:54.909780 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:55.909938 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:56.198328 1763597 super_lio.cpp:1848] [Degeneracy] cond=128.405 axes=1 active=1 effect_pts=748
+W1025 03:45:56.910079 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:57.915514 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:58.296703 1763612 super_lio.cpp:1848] [Degeneracy] cond=101.83 axes=1 active=1 effect_pts=642
+W1025 03:45:58.915717 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:45:59.920202 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:00.297283 1763612 super_lio.cpp:1848] [Degeneracy] cond=123.702 axes=1 active=1 effect_pts=628
+W1025 03:46:00.925659 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:01.925664 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:02.394963 1763614 super_lio.cpp:1848] [Degeneracy] cond=127.08 axes=1 active=1 effect_pts=478
+W1025 03:46:02.930181 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:03.935606 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:04.493775 1763614 super_lio.cpp:1848] [Degeneracy] cond=108.598 axes=1 active=1 effect_pts=497
+W1025 03:46:04.935684 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:05.936197 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:06.587474 1763597 super_lio.cpp:1848] [Degeneracy] cond=84.2533 axes=0 active=1 effect_pts=432
+W1025 03:46:06.940042 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:07.940248 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:08.590958 1763614 super_lio.cpp:1848] [Degeneracy] cond=28.3439 axes=0 active=1 effect_pts=360
+W1025 03:46:08.945626 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:09.945742 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:10.599889 1763614 super_lio.cpp:1848] [Degeneracy] cond=8.17635 axes=0 active=0 effect_pts=318
+W1025 03:46:10.949501 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:11.950187 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:12.695581 1763613 super_lio.cpp:1848] [Degeneracy] cond=15.3691 axes=0 active=0 effect_pts=287
+W1025 03:46:12.950300 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:13.956023 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:14.699431 1763597 super_lio.cpp:1848] [Degeneracy] cond=12.0325 axes=0 active=0 effect_pts=279
+W1025 03:46:14.959983 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:15.965747 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:16.794636 1763613 super_lio.cpp:1848] [Degeneracy] cond=21.4006 axes=0 active=0 effect_pts=306
+W1025 03:46:16.965930 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:17.965952 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:18.798074 1763597 super_lio.cpp:1848] [Degeneracy] cond=25.5926 axes=0 active=0 effect_pts=356
+W1025 03:46:18.966123 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:19.966156 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:20.800796 1763614 super_lio.cpp:1848] [Degeneracy] cond=37.1494 axes=0 active=0 effect_pts=594
+W1025 03:46:20.970269 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:21.975898 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:22.895578 1763612 super_lio.cpp:1848] [Degeneracy] cond=34.9673 axes=0 active=0 effect_pts=653
+W1025 03:46:22.976284 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:23.976917 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:24.977012 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:24.997519 1763612 super_lio.cpp:1848] [Degeneracy] cond=22.5102 axes=0 active=0 effect_pts=571
+W1025 03:46:25.983227 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:26.983698 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:26.998543 1763597 super_lio.cpp:1848] [Degeneracy] cond=43.4711 axes=0 active=0 effect_pts=665
+I1025 03:46:27.742112 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:46:27.742223 1763597 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0397027 ms , max: 0.914104 ms , calls: 600
+I1025 03:46:27.742293 1763597 timer.h:59] > [ [DownSample] ] avg: 0.229789 ms , max: 1.15579 ms , calls: 600
+I1025 03:46:27.742342 1763597 timer.h:59] > [ [MapInsert] ] avg: 0.191297 ms , max: 0.825308 ms , calls: 600
+I1025 03:46:27.742388 1763597 timer.h:59] > [ [MapTransform] ] avg: 0.00314625 ms , max: 0.024975 ms , calls: 600
+I1025 03:46:27.742434 1763597 timer.h:59] > [ [Observe] ] avg: 6.36446 ms , max: 24.5016 ms , calls: 600
+I1025 03:46:27.742484 1763597 timer.h:59] > [ [PublishBody] ] avg: 0.000351988 ms , max: 0.001063 ms , calls: 600
+I1025 03:46:27.742532 1763597 timer.h:59] > [ [Undistort] ] avg: 0.350119 ms , max: 0.907905 ms , calls: 600
+I1025 03:46:27.742575 1763597 timer.h:59] > [ [UpdateMap] ] avg: 0.198423 ms , max: 0.845065 ms , calls: 600
+I1025 03:46:27.742619 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:46:27.742821 1763597 timer.h:59] > [ [IMU->Odom] ] avg: 0.104764 ms , max: 3.8383 ms , calls: 12000
+I1025 03:46:27.743062 1763597 timer.h:59] > [ [IMU->TF] ] avg: 0.193923 ms , max: 22.0308 ms , calls: 12000
+I1025 03:46:27.743127 1763597 timer.h:59] > [ [Lidar->Odom] ] avg: 9.4914 ms , max: 30.7615 ms , calls: 600
+W1025 03:46:27.986234 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:28.990183 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:29.090873 1763597 super_lio.cpp:1848] [Degeneracy] cond=12.2023 axes=0 active=0 effect_pts=570
+W1025 03:46:29.990581 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:30.991168 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:31.096582 1763612 super_lio.cpp:1848] [Degeneracy] cond=25.6 axes=0 active=0 effect_pts=648
+W1025 03:46:31.996083 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:32.996157 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:33.194749 1763597 super_lio.cpp:1848] [Degeneracy] cond=15.2517 axes=0 active=0 effect_pts=628
+W1025 03:46:34.000329 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:35.005942 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:35.288558 1763612 super_lio.cpp:1848] [Degeneracy] cond=18.7093 axes=0 active=0 effect_pts=568
+W1025 03:46:36.006099 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:37.006196 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:37.389573 1763597 super_lio.cpp:1848] [Degeneracy] cond=33.4353 axes=0 active=0 effect_pts=622
+W1025 03:46:38.006385 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:39.010296 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:39.400506 1763613 super_lio.cpp:1848] [Degeneracy] cond=12.9869 axes=0 active=0 effect_pts=572
+W1025 03:46:40.010697 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:41.016333 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:41.492578 1763597 super_lio.cpp:1848] [Degeneracy] cond=15.8802 axes=0 active=0 effect_pts=510
+W1025 03:46:42.020233 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:43.020256 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:43.592891 1763597 super_lio.cpp:1848] [Degeneracy] cond=20.8868 axes=0 active=0 effect_pts=537
+W1025 03:46:44.020469 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:45.026530 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:45.597707 1763597 super_lio.cpp:1848] [Degeneracy] cond=14.8969 axes=0 active=0 effect_pts=549
+W1025 03:46:46.030192 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:47.030264 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:47.694880 1763614 super_lio.cpp:1848] [Degeneracy] cond=31.5679 axes=0 active=0 effect_pts=478
+W1025 03:46:48.030511 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:49.030834 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:49.697561 1763597 super_lio.cpp:1848] [Degeneracy] cond=28.7825 axes=0 active=0 effect_pts=512
+W1025 03:46:50.036360 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:51.040529 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:51.699426 1763612 super_lio.cpp:1848] [Degeneracy] cond=10.6935 axes=0 active=0 effect_pts=504
+W1025 03:46:52.040660 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:53.040766 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:53.795688 1763597 super_lio.cpp:1848] [Degeneracy] cond=16.9563 axes=0 active=0 effect_pts=611
+W1025 03:46:54.046300 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:55.046301 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:55.796509 1763613 super_lio.cpp:1848] [Degeneracy] cond=17.4082 axes=0 active=0 effect_pts=653
+W1025 03:46:56.046617 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:57.050450 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:57.896456 1763613 super_lio.cpp:1848] [Degeneracy] cond=13.2126 axes=0 active=0 effect_pts=566
+W1025 03:46:58.050706 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:59.056406 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:46:59.995430 1763613 super_lio.cpp:1848] [Degeneracy] cond=30.1973 axes=0 active=0 effect_pts=566
+W1025 03:47:00.056455 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:01.056463 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:02.056653 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:02.095727 1763614 super_lio.cpp:1848] [Degeneracy] cond=14.2119 axes=0 active=0 effect_pts=590
+W1025 03:47:03.060956 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:04.066823 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:04.096130 1763612 super_lio.cpp:1848] [Degeneracy] cond=18.3758 axes=0 active=0 effect_pts=694
+W1025 03:47:05.070890 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:06.070892 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:06.200253 1763612 super_lio.cpp:1848] [Degeneracy] cond=15.9969 axes=0 active=0 effect_pts=669
+W1025 03:47:07.082304 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:08.086589 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:08.289986 1763613 super_lio.cpp:1848] [Degeneracy] cond=16.4849 axes=0 active=0 effect_pts=525
+W1025 03:47:09.091037 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:10.096592 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:10.388651 1763613 super_lio.cpp:1848] [Degeneracy] cond=28.8958 axes=0 active=0 effect_pts=604
+W1025 03:47:11.100840 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:12.106403 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:12.406625 1763613 super_lio.cpp:1848] [Degeneracy] cond=12.4022 axes=0 active=0 effect_pts=625
+W1025 03:47:13.106668 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:14.110503 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:14.492774 1763597 super_lio.cpp:1848] [Degeneracy] cond=21.8661 axes=0 active=0 effect_pts=668
+W1025 03:47:15.110754 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:16.110792 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:16.590672 1763614 super_lio.cpp:1848] [Degeneracy] cond=32.9288 axes=0 active=0 effect_pts=585
+W1025 03:47:17.110832 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:18.116685 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:18.592527 1763614 super_lio.cpp:1848] [Degeneracy] cond=25.8697 axes=0 active=0 effect_pts=582
+W1025 03:47:19.121057 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:20.121248 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:20.692045 1763613 super_lio.cpp:1848] [Degeneracy] cond=29.8451 axes=0 active=0 effect_pts=559
+W1025 03:47:21.121536 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:22.126760 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:22.788669 1763597 super_lio.cpp:1848] [Degeneracy] cond=85.383 axes=0 active=0 effect_pts=434
+W1025 03:47:23.131294 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:24.136785 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:24.789636 1763613 super_lio.cpp:1848] [Degeneracy] cond=29.2049 axes=0 active=0 effect_pts=580
+W1025 03:47:25.140983 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:26.141253 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:26.888830 1763613 super_lio.cpp:1848] [Degeneracy] cond=23.4907 axes=0 active=0 effect_pts=613
+W1025 03:47:27.146579 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+I1025 03:47:27.741756 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:47:27.741811 1763613 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0368972 ms , max: 0.25473 ms , calls: 600
+I1025 03:47:27.741845 1763613 timer.h:59] > [ [DownSample] ] avg: 0.251124 ms , max: 0.779798 ms , calls: 600
+I1025 03:47:27.741884 1763613 timer.h:59] > [ [MapInsert] ] avg: 0.125401 ms , max: 5.40414 ms , calls: 600
+I1025 03:47:27.741906 1763613 timer.h:59] > [ [MapTransform] ] avg: 0.0023997 ms , max: 0.009596 ms , calls: 600
+I1025 03:47:27.741926 1763613 timer.h:59] > [ [Observe] ] avg: 4.71345 ms , max: 12.5102 ms , calls: 600
+I1025 03:47:27.741950 1763613 timer.h:59] > [ [PublishBody] ] avg: 0.0003732 ms , max: 0.012784 ms , calls: 600
+I1025 03:47:27.741971 1763613 timer.h:59] > [ [Undistort] ] avg: 0.354235 ms , max: 1.02516 ms , calls: 600
+I1025 03:47:27.741997 1763613 timer.h:59] > [ [UpdateMap] ] avg: 0.131504 ms , max: 5.408 ms , calls: 600
+I1025 03:47:27.742017 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:47:27.742125 1763613 timer.h:59] > [ [IMU->Odom] ] avg: 0.0992286 ms , max: 6.65426 ms , calls: 12000
+I1025 03:47:27.742237 1763613 timer.h:59] > [ [IMU->TF] ] avg: 0.140988 ms , max: 10.708 ms , calls: 12000
+I1025 03:47:27.742261 1763613 timer.h:59] > [ [Lidar->Odom] ] avg: 8.13304 ms , max: 21.4305 ms , calls: 600
+W1025 03:47:28.146893 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:28.989034 1763614 super_lio.cpp:1848] [Degeneracy] cond=31.649 axes=0 active=0 effect_pts=574
+W1025 03:47:29.151041 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:30.156806 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:30.991791 1763597 super_lio.cpp:1848] [Degeneracy] cond=30.4317 axes=0 active=0 effect_pts=584
+W1025 03:47:31.161031 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:32.161135 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:33.089203 1763612 super_lio.cpp:1848] [Degeneracy] cond=17.6555 axes=0 active=0 effect_pts=593
+W1025 03:47:33.166754 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:34.166772 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:35.101330 1763597 super_lio.cpp:1848] [Degeneracy] cond=28.7972 axes=0 active=0 effect_pts=539
+W1025 03:47:35.166911 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:36.171192 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:37.183614 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:37.197510 1763614 super_lio.cpp:1848] [Degeneracy] cond=40.0403 axes=0 active=0 effect_pts=572
+W1025 03:47:38.186880 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:39.187220 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:39.293973 1763614 super_lio.cpp:1848] [Degeneracy] cond=24.6826 axes=0 active=0 effect_pts=598
+W1025 03:47:40.191283 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:41.197459 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:41.297425 1763612 super_lio.cpp:1848] [Degeneracy] cond=18.8259 axes=0 active=0 effect_pts=720
+W1025 03:47:42.201298 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:43.201454 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:43.301301 1763612 super_lio.cpp:1848] [Degeneracy] cond=18.2888 axes=0 active=0 effect_pts=694
+W1025 03:47:44.207038 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:45.207181 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:45.389559 1763613 super_lio.cpp:1848] [Degeneracy] cond=15.9453 axes=0 active=0 effect_pts=718
+W1025 03:47:46.210913 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:47.211083 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:47.389662 1763613 super_lio.cpp:1848] [Degeneracy] cond=22.2497 axes=0 active=0 effect_pts=737
+W1025 03:47:48.211229 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:49.217038 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:49.485945 1763614 super_lio.cpp:1848] [Degeneracy] cond=17.0512 axes=0 active=0 effect_pts=682
+W1025 03:47:50.217198 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:51.221163 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:51.499307 1763614 super_lio.cpp:1848] [Degeneracy] cond=14.5943 axes=0 active=0 effect_pts=499
+W1025 03:47:52.227078 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:53.227149 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:53.588868 1763612 super_lio.cpp:1848] [Degeneracy] cond=28.4951 axes=0 active=0 effect_pts=494
+W1025 03:47:54.231336 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:55.237035 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:55.590654 1763613 super_lio.cpp:1848] [Degeneracy] cond=46.5493 axes=0 active=0 effect_pts=515
+W1025 03:47:56.237206 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:57.241420 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:57.685221 1763614 super_lio.cpp:1848] [Degeneracy] cond=71.7403 axes=0 active=0 effect_pts=553
+W1025 03:47:58.241817 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:59.247386 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:47:59.690181 1763614 super_lio.cpp:1848] [Degeneracy] cond=44.1582 axes=0 active=0 effect_pts=651
+W1025 03:48:00.251741 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:01.257128 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:01.785491 1763614 super_lio.cpp:1848] [Degeneracy] cond=13.2831 axes=0 active=0 effect_pts=685
+W1025 03:48:02.261293 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:03.261389 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:03.885494 1763597 super_lio.cpp:1848] [Degeneracy] cond=25.0451 axes=0 active=0 effect_pts=560
+W1025 03:48:04.267269 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:05.271497 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:05.894389 1763597 super_lio.cpp:1848] [Degeneracy] cond=35.2069 axes=0 active=0 effect_pts=658
+W1025 03:48:06.282827 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:07.287647 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:07.895794 1763597 super_lio.cpp:1848] [Degeneracy] cond=21.2348 axes=0 active=0 effect_pts=705
+W1025 03:48:08.291520 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:09.291599 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:09.990967 1763597 super_lio.cpp:1848] [Degeneracy] cond=63.8553 axes=0 active=0 effect_pts=682
+W1025 03:48:10.297271 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:11.301705 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:12.089125 1763612 super_lio.cpp:1848] [Degeneracy] cond=51.2746 axes=0 active=0 effect_pts=704
+W1025 03:48:12.307394 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:13.311805 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:14.089454 1763597 super_lio.cpp:1848] [Degeneracy] cond=96.4026 axes=0 active=0 effect_pts=709
+W1025 03:48:14.317227 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:15.317253 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:16.194630 1763614 super_lio.cpp:1848] [Degeneracy] cond=73.3148 axes=0 active=1 effect_pts=571
+W1025 03:48:16.317603 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:17.321584 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:18.301759 1763612 super_lio.cpp:1848] [Degeneracy] cond=93.2271 axes=0 active=1 effect_pts=508
+W1025 03:48:18.321587 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:19.321774 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:20.302320 1763614 super_lio.cpp:1848] [Degeneracy] cond=26.5262 axes=0 active=0 effect_pts=539
+W1025 03:48:20.327519 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:21.331892 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:22.337677 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:22.398590 1763597 super_lio.cpp:1848] [Degeneracy] cond=12.1443 axes=0 active=0 effect_pts=297
+W1025 03:48:23.342024 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:24.347568 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:24.498339 1763612 super_lio.cpp:1848] [Degeneracy] cond=6.74797 axes=0 active=0 effect_pts=319
+W1025 03:48:25.347608 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:26.351781 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:26.499147 1763612 super_lio.cpp:1848] [Degeneracy] cond=29.6959 axes=0 active=0 effect_pts=294
+W1025 03:48:27.357487 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+I1025 03:48:27.741501 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:48:27.741578 1763613 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0354993 ms , max: 0.10621 ms , calls: 600
+I1025 03:48:27.741627 1763613 timer.h:59] > [ [DownSample] ] avg: 0.229073 ms , max: 1.41343 ms , calls: 600
+I1025 03:48:27.741655 1763613 timer.h:59] > [ [MapInsert] ] avg: 0.108521 ms , max: 0.525081 ms , calls: 600
+I1025 03:48:27.741680 1763613 timer.h:59] > [ [MapTransform] ] avg: 0.00230475 ms , max: 0.021291 ms , calls: 600
+I1025 03:48:27.741709 1763613 timer.h:59] > [ [Observe] ] avg: 4.37731 ms , max: 11.808 ms , calls: 600
+I1025 03:48:27.741741 1763613 timer.h:59] > [ [PublishBody] ] avg: 0.000360022 ms , max: 0.015133 ms , calls: 600
+I1025 03:48:27.741770 1763613 timer.h:59] > [ [Undistort] ] avg: 0.333137 ms , max: 0.942322 ms , calls: 600
+I1025 03:48:27.741799 1763613 timer.h:59] > [ [UpdateMap] ] avg: 0.114582 ms , max: 0.538354 ms , calls: 600
+I1025 03:48:27.741829 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:48:27.741987 1763613 timer.h:59] > [ [IMU->Odom] ] avg: 0.0886523 ms , max: 3.51429 ms , calls: 11999
+I1025 03:48:27.742125 1763613 timer.h:59] > [ [IMU->TF] ] avg: 0.108954 ms , max: 11.1863 ms , calls: 11999
+I1025 03:48:27.742149 1763613 timer.h:59] > [ [Lidar->Odom] ] avg: 7.40031 ms , max: 18.8799 ms , calls: 600
+W1025 03:48:28.357511 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:28.587601 1763614 super_lio.cpp:1848] [Degeneracy] cond=29.1949 axes=0 active=0 effect_pts=348
+W1025 03:48:29.357749 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:30.361939 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:30.597532 1763613 super_lio.cpp:1848] [Degeneracy] cond=39.5594 axes=0 active=0 effect_pts=324
+W1025 03:48:31.367758 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:32.372018 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:32.598220 1763613 super_lio.cpp:1848] [Degeneracy] cond=51.9296 axes=0 active=0 effect_pts=469
+W1025 03:48:33.382471 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:34.388125 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:34.697274 1763597 super_lio.cpp:1848] [Degeneracy] cond=87.8288 axes=0 active=0 effect_pts=715
+W1025 03:48:35.391625 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:36.391780 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:36.712148 1763612 super_lio.cpp:1848] [Degeneracy] cond=63.3035 axes=0 active=0 effect_pts=1084
+W1025 03:48:37.391849 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:38.391961 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:38.806499 1763613 super_lio.cpp:1848] [Degeneracy] cond=83.6139 axes=0 active=0 effect_pts=976
+W1025 03:48:39.392228 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:40.398147 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:40.904780 1763613 super_lio.cpp:1848] [Degeneracy] cond=62.079 axes=0 active=0 effect_pts=894
+W1025 03:48:41.401908 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:42.405435 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:42.905041 1763613 super_lio.cpp:1848] [Degeneracy] cond=71.179 axes=0 active=0 effect_pts=895
+W1025 03:48:43.407935 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:44.407949 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:44.908046 1763597 super_lio.cpp:1848] [Degeneracy] cond=32.7343 axes=0 active=0 effect_pts=1026
+W1025 03:48:45.409184 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:46.409462 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:47.007718 1763612 super_lio.cpp:1848] [Degeneracy] cond=44.5536 axes=0 active=0 effect_pts=1018
+W1025 03:48:47.412448 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:48.417961 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:49.105566 1763613 super_lio.cpp:1848] [Degeneracy] cond=38.3918 axes=0 active=0 effect_pts=975
+W1025 03:48:49.418073 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:50.422289 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:51.111611 1763597 super_lio.cpp:1848] [Degeneracy] cond=54.9614 axes=0 active=0 effect_pts=950
+W1025 03:48:51.428062 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:52.432174 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:53.202702 1763613 super_lio.cpp:1848] [Degeneracy] cond=94.2803 axes=0 active=0 effect_pts=721
+W1025 03:48:53.437951 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:54.438254 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:55.299418 1763613 super_lio.cpp:1848] [Degeneracy] cond=110.171 axes=1 active=1 effect_pts=623
+W1025 03:48:55.441968 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:56.442713 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:57.300540 1763597 super_lio.cpp:1848] [Degeneracy] cond=111.39 axes=2 active=1 effect_pts=612
+W1025 03:48:57.448065 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:58.448292 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:48:59.401361 1763612 super_lio.cpp:1848] [Degeneracy] cond=108.703 axes=2 active=1 effect_pts=615
+W1025 03:48:59.452605 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:00.458163 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:01.462477 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:01.498327 1763614 super_lio.cpp:1848] [Degeneracy] cond=126.905 axes=1 active=1 effect_pts=614
+W1025 03:49:02.467993 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:03.468021 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:03.500525 1763612 super_lio.cpp:1848] [Degeneracy] cond=116.894 axes=1 active=1 effect_pts=618
+W1025 03:49:04.468261 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:05.472323 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:05.599000 1763614 super_lio.cpp:1848] [Degeneracy] cond=111.535 axes=2 active=1 effect_pts=620
+W1025 03:49:06.481739 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:07.482497 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:07.689285 1763597 super_lio.cpp:1848] [Degeneracy] cond=114.245 axes=1 active=1 effect_pts=616
+W1025 03:49:08.488153 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:09.488229 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:09.699236 1763612 super_lio.cpp:1848] [Degeneracy] cond=99.7623 axes=0 active=1 effect_pts=630
+W1025 03:49:10.488283 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:11.488368 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:11.798471 1763612 super_lio.cpp:1848] [Degeneracy] cond=107.522 axes=1 active=1 effect_pts=633
+W1025 03:49:12.493166 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:13.498517 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:13.898111 1763613 super_lio.cpp:1848] [Degeneracy] cond=108.698 axes=1 active=1 effect_pts=618
+W1025 03:49:14.502300 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:15.502749 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:15.995795 1763612 super_lio.cpp:1848] [Degeneracy] cond=109.83 axes=1 active=1 effect_pts=634
+W1025 03:49:16.508227 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:17.508389 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:18.101238 1763613 super_lio.cpp:1848] [Degeneracy] cond=111.685 axes=2 active=1 effect_pts=616
+W1025 03:49:18.508503 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:19.512750 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:20.200552 1763597 super_lio.cpp:1848] [Degeneracy] cond=106.174 axes=1 active=1 effect_pts=602
+W1025 03:49:20.512835 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:21.518195 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:22.295024 1763614 super_lio.cpp:1848] [Degeneracy] cond=113.019 axes=2 active=1 effect_pts=633
+W1025 03:49:22.518332 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:23.522657 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:24.298847 1763597 super_lio.cpp:1848] [Degeneracy] cond=112.491 axes=1 active=1 effect_pts=614
+W1025 03:49:24.528468 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:25.533069 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:26.301543 1763614 super_lio.cpp:1848] [Degeneracy] cond=108.232 axes=1 active=1 effect_pts=614
+W1025 03:49:26.538425 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:27.538430 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+I1025 03:49:27.741276 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:49:27.741412 1763613 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0470401 ms , max: 0.180576 ms , calls: 600
+I1025 03:49:27.741508 1763613 timer.h:59] > [ [DownSample] ] avg: 0.242783 ms , max: 3.92681 ms , calls: 600
+I1025 03:49:27.741564 1763613 timer.h:59] > [ [MapInsert] ] avg: 0.266763 ms , max: 0.654457 ms , calls: 600
+I1025 03:49:27.741614 1763613 timer.h:59] > [ [MapTransform] ] avg: 0.00439501 ms , max: 0.028895 ms , calls: 600
+I1025 03:49:27.741665 1763613 timer.h:59] > [ [Observe] ] avg: 9.61044 ms , max: 22.665 ms , calls: 600
+I1025 03:49:27.741834 1763613 timer.h:59] > [ [PublishBody] ] avg: 0.000459068 ms , max: 0.008854 ms , calls: 600
+I1025 03:49:27.741940 1763613 timer.h:59] > [ [Undistort] ] avg: 0.437784 ms , max: 0.909404 ms , calls: 600
+I1025 03:49:27.741994 1763613 timer.h:59] > [ [UpdateMap] ] avg: 0.277158 ms , max: 0.670843 ms , calls: 600
+I1025 03:49:27.742043 1763613 timer.h:52] >>> ===== Printing run time =====
+I1025 03:49:27.742288 1763613 timer.h:59] > [ [IMU->Odom] ] avg: 0.120165 ms , max: 2.85292 ms , calls: 12000
+I1025 03:49:27.742551 1763613 timer.h:59] > [ [IMU->TF] ] avg: 0.358595 ms , max: 20.7741 ms , calls: 12000
+I1025 03:49:27.742614 1763613 timer.h:59] > [ [Lidar->Odom] ] avg: 13.2056 ms , max: 29.3932 ms , calls: 600
+W1025 03:49:28.387928 1763614 super_lio.cpp:1848] [Degeneracy] cond=115.098 axes=2 active=1 effect_pts=616
+W1025 03:49:28.542480 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:29.542802 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:30.404871 1763613 super_lio.cpp:1848] [Degeneracy] cond=102.015 axes=1 active=1 effect_pts=624
+W1025 03:49:30.542836 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:31.542956 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:32.501276 1763612 super_lio.cpp:1848] [Degeneracy] cond=116.613 axes=2 active=1 effect_pts=641
+W1025 03:49:32.543038 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:33.548421 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:34.548836 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:34.598495 1763613 super_lio.cpp:1848] [Degeneracy] cond=107.101 axes=2 active=1 effect_pts=646
+W1025 03:49:35.552955 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:36.558300 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:36.686970 1763613 super_lio.cpp:1848] [Degeneracy] cond=100.839 axes=1 active=1 effect_pts=617
+W1025 03:49:37.558538 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:38.563097 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:38.698400 1763613 super_lio.cpp:1848] [Degeneracy] cond=98.5305 axes=0 active=1 effect_pts=627
+W1025 03:49:39.568511 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:40.572896 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:40.798560 1763613 super_lio.cpp:1848] [Degeneracy] cond=96.9786 axes=0 active=1 effect_pts=650
+W1025 03:49:41.582222 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:42.582798 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:42.798643 1763612 super_lio.cpp:1848] [Degeneracy] cond=126.43 axes=2 active=1 effect_pts=626
+W1025 03:49:43.588744 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:44.592932 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:44.898656 1763612 super_lio.cpp:1848] [Degeneracy] cond=116.883 axes=2 active=1 effect_pts=616
+W1025 03:49:45.600482 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:46.603073 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:46.999058 1763612 super_lio.cpp:1848] [Degeneracy] cond=103.958 axes=1 active=1 effect_pts=636
+W1025 03:49:47.608829 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:48.612825 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:49.092428 1763614 super_lio.cpp:1848] [Degeneracy] cond=119.919 axes=2 active=1 effect_pts=627
+W1025 03:49:49.618505 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:50.618781 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:51.094208 1763612 super_lio.cpp:1848] [Degeneracy] cond=108.632 axes=1 active=1 effect_pts=620
+W1025 03:49:51.622900 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:52.623112 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:53.191736 1763614 super_lio.cpp:1848] [Degeneracy] cond=118.468 axes=2 active=1 effect_pts=632
+W1025 03:49:53.628587 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:54.628759 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:55.192703 1763613 super_lio.cpp:1848] [Degeneracy] cond=108.57 axes=2 active=1 effect_pts=621
+W1025 03:49:55.628803 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:56.628901 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:57.198805 1763613 super_lio.cpp:1848] [Degeneracy] cond=114.575 axes=2 active=1 effect_pts=625
+W1025 03:49:57.633317 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:58.638943 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:49:59.203755 1763597 super_lio.cpp:1848] [Degeneracy] cond=111.228 axes=2 active=1 effect_pts=613
+W1025 03:49:59.643383 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:00.648823 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:01.300585 1763614 super_lio.cpp:1848] [Degeneracy] cond=117.429 axes=1 active=1 effect_pts=626
+W1025 03:50:01.653218 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:02.658761 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:03.404124 1763597 super_lio.cpp:1848] [Degeneracy] cond=121.956 axes=1 active=1 effect_pts=648
+W1025 03:50:03.659039 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:04.659060 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:05.500377 1763597 super_lio.cpp:1848] [Degeneracy] cond=108.618 axes=1 active=1 effect_pts=615
+W1025 03:50:05.663584 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:06.668943 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:07.597792 1763613 super_lio.cpp:1848] [Degeneracy] cond=106.088 axes=2 active=1 effect_pts=625
+W1025 03:50:07.673298 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:08.682423 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:09.682610 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:09.697059 1763614 super_lio.cpp:1848] [Degeneracy] cond=114.426 axes=1 active=1 effect_pts=584
+W1025 03:50:10.683048 1763614 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:11.683254 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:11.702389 1763613 super_lio.cpp:1848] [Degeneracy] cond=129.634 axes=2 active=1 effect_pts=633
+W1025 03:50:12.689116 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:13.692939 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:13.792310 1763612 super_lio.cpp:1848] [Degeneracy] cond=113.032 axes=1 active=1 effect_pts=651
+W1025 03:50:14.693248 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:15.698841 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:15.888943 1763613 super_lio.cpp:1848] [Degeneracy] cond=102.297 axes=1 active=1 effect_pts=624
+W1025 03:50:16.698992 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:17.703471 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:17.892442 1763613 super_lio.cpp:1848] [Degeneracy] cond=117.636 axes=2 active=1 effect_pts=628
+W1025 03:50:18.708941 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:19.712848 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:19.989792 1763597 super_lio.cpp:1848] [Degeneracy] cond=96.823 axes=0 active=1 effect_pts=571
+W1025 03:50:20.713032 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:21.719079 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:21.989800 1763597 super_lio.cpp:1848] [Degeneracy] cond=123.052 axes=2 active=1 effect_pts=622
+W1025 03:50:22.723232 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:23.729116 1763613 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:24.087710 1763614 super_lio.cpp:1848] [Degeneracy] cond=110.21 axes=2 active=1 effect_pts=639
+W1025 03:50:24.733150 1763597 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:25.733176 1763612 ROSWrapper.cpp:835] [IMU Delay] arrival latency = 2.3028e+08 ms (msg.stamp=1.79264e+09, ros_now=1.79287e+09)
+W1025 03:50:26.088940 1763597 super_lio.cpp:1848] [Degeneracy] cond=102.938 axes=1 active=1 effect_pts=635
+I1025 03:50:27.740916 1763612 timer.h:52] >>> ===== Printing run time =====
+I1025 03:50:27.740964 1763612 timer.h:59] > [ [DeltaCorrect] ] avg: 0.0326587 ms , max: 0.191515 ms , calls: 586
+I1025 03:50:27.740983 1763612 timer.h:59] > [ [DownSample] ] avg: 0.151491 ms , max: 0.586285 ms , calls: 586
+I1025 03:50:27.740995 1763612 timer.h:59] > [ [MapInsert] ] avg: 0.192245 ms , max: 0.445315 ms , calls: 586
+I1025 03:50:27.741005 1763612 timer.h:59] > [ [MapTransform] ] avg: 0.0033796 ms , max: 0.015696 ms , calls: 586
+I1025 03:50:27.741016 1763612 timer.h:59] > [ [Observe] ] avg: 6.81635 ms , max: 18.5424 ms , calls: 586
+I1025 03:50:27.741029 1763612 timer.h:59] > [ [PublishBody] ] avg: 0.000380626 ms , max: 0.000899 ms , calls: 586
+I1025 03:50:27.741040 1763612 timer.h:59] > [ [Undistort] ] avg: 0.367013 ms , max: 0.926031 ms , calls: 586
+I1025 03:50:27.741051 1763612 timer.h:59] > [ [UpdateMap] ] avg: 0.200823 ms , max: 0.453276 ms , calls: 586
+I1025 03:50:27.741062 1763612 timer.h:52] >>> ===== Printing run time =====
+I1025 03:50:27.741117 1763612 timer.h:59] > [ [IMU->Odom] ] avg: 0.109056 ms , max: 3.31879 ms , calls: 11724
+I1025 03:50:27.741178 1763612 timer.h:59] > [ [IMU->TF] ] avg: 0.217626 ms , max: 13.1898 ms , calls: 11724
+I1025 03:50:27.741190 1763612 timer.h:59] > [ [Lidar->Odom] ] avg: 9.47766 ms , max: 23.8192 ms , calls: 586
+I1025 03:50:32.039917 1763614 ROSWrapper.cpp:1825] [32m ---> [Service] Save map service called[0m
+I1025 03:50:32.039952 1763614 ROSWrapper.cpp:1828] [33m ---> [Service] Pausing LIO processing...[0m
+I1025 03:50:32.039969 1763614 super_lio.cpp:2143] [33m ---> [SuperLIO]: Processing paused[0m
+I1025 03:50:32.140054 1763614 ROSWrapper.cpp:1833] [33m ---> [Service] Saving map...[0m
+I1025 03:50:32.140121 1763614 super_lio.cpp:1179] [33m ---> Saving map..... [0m
+I1025 03:50:32.140153 1763614 super_lio.cpp:1188] [33m ---> Save map to: /home/ywj/git/xtd2_ws/XTDrone2_ego_planner/lio/Super-LIO/exp/results/m30_dbg/map.pcd[0m
+I1025 03:50:34.847774 1763614 super_lio.cpp:1200] [32m ---> Save map success. File: /home/ywj/git/xtd2_ws/XTDrone2_ego_planner/lio/Super-LIO/exp/results/m30_dbg/map.pcd[0m
+I1025 03:50:34.847805 1763614 super_lio.cpp:1201] [32m ---> Map size: 120147[0m
+I1025 03:50:34.860045 1763614 timer.h:52] >>> ===== Printing run time =====
+I1025 03:50:34.860080 1763614 timer.h:52] >>> ===== Printing run time =====
+I1025 03:50:34.860087 1763614 ROSWrapper.cpp:1837] [33m ---> [Service] Resuming LIO processing...[0m
+I1025 03:50:34.860095 1763614 super_lio.cpp:2154] [32m ---> [SuperLIO]: Processing resumed[0m
+I1025 03:50:34.860100 1763614 ROSWrapper.cpp:1840] [33m ---> [Service] Resetting IMU pre-integration...[0m
+I1025 03:50:34.860105 1763614 super_lio.cpp:2166] [32m ---> [SuperLIO]: IMU pre-integration reset[0m
+W1025 03:50:34.860110 1763614 ROSWrapper.cpp:1171] [33m ---> [odom reset] 声明 odom 内部状态/参考系重置 #2 原因: IMU pre-integration reset[0m
+I1025 03:50:34.860134 1763614 ROSWrapper.cpp:1844] [32m ---> [Service] Map saved successfully, LIO resumed[0m
+I1025 03:50:40.046546 1763597 timer.h:52] >>> ===== Printing run time =====
+I1025 03:50:40.046586 1763597 timer.h:52] >>> ===== Printing run time =====

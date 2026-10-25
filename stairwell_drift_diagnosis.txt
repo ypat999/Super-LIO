@@ -7,6 +7,37 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
       全部 run 目录与参数、判据口径、可引用结论、被推翻的旧结论、未完成项）。接手先读这三处。
 ================================================================================
 
+================================================================================
+★ 新 bag 采集需求（2026-10-25，M.27 定）——采集前先读这里
+--------------------------------------------------------------------------------
+共 3 个，优先级 B1 > B2 > B3。全部沿用现有采集配置（MID-360 + IMU，30° 俯仰，
+~10 Hz，sqlite3，话题 /livox/lidar + /livox/imu），存
+/home/ywj/slam_data/livox_record_<name>。
+通用硬要求：起点静止 ≥5 s（loop_error.py 依赖 bag 起始静态段求 up_imu）、
+闭环回到起点（否则没有闭环真值）、全程匀速 ≤0.5 m/s、
+途中锚点段静止 5~10 s（作固定窗判据的锚点）。
+
+B1【细通道验证 bag】最高优先——验证 M.27 细通道与其门控
+   场景：一条狭窄走廊，"出去-折返-回来"闭环，路线上必须同时包含两类区段：
+     · A 段 ≥60 s：光墙、无细特征的长走廊（真退化区）——检验门控不添噪，
+       预期 [FineCh] applied=0、漂移不劣化；
+     · B 段 ≥60 s：有金属扶手/窗框/门框/消防栓/管线等细尺度特征的区段——
+       检验细通道增益，预期 applied=1、闭环改善。
+   A/B 段交界处静止 8~10 s 作锚点；总时长 4~6 min。
+   判据：分段闭环（固定窗）+ node.log [FineCh] 的 gain/applied 与区段对齐。
+
+B2【2.F 滑窗 + Schmidt 验证 bag】次优先（M.21-5 既定需求）
+   场景：重走楼梯 bag 原路线（livox_record_drone 的"两条楼梯一下一上"），
+   在路线 1/4、1/2、3/4 处各静止 10~20 s（局部锚点真值）。
+   路线、行进方向、时长尽量与原 bag 一致，便于与它直接差分对比。
+
+B3【细特征特写 bag】可选，定标用
+   场景：对一段扶手/窗框做 0.5~2 m 近距离慢速扫描 ≥60 s，起止静止。
+   用途：细通道关联距离/权重定标（fine_max_dist / fine_channel_weight），
+   以及统计 0.125 m 子体素内的点分布（BIEVR bump-image 可行性的前置数据）。
+
+================================================================================
+
 〇、TL;DR
 --------------------------------------------------------------------------------
 1. 现象是“累积型慢漂”，不是跳变：楼梯井轴向几何退化 + IMU 零偏/尺度积分。
@@ -4606,3 +4637,484 @@ M.25-D 【2026-10-24 总结论与下一步】
         odom.csv 与 *.pcd 按 .gitignore 不入库）
   复现：`loop_error.py --bag <bag> --loops --win <win> --health results/<run> ...`
         已固定为跨 run 唯一对比口径。
+
+================================================================================
+M.26 【2026-10-25 imu_na 归因收口：h20+na0.3 的真实性与场景特异性】
+
+■ 0. 背景与本轮口径
+  M.25-D 把 imu_na=0.01 收口为唯一生产候选，但留下一个未解释的矛盾：
+  deg_h20_dbg（h20 基座 + na0.3，跑在 nw 陈旧权重 bug 修复**之前**的 e98dc1f）
+  闭环只有 0.025 m，而同名义配置在干净代码上用 na=0.1 复测（m25_h20）是 1.398 m。
+  两者差两个混淆变量（bug × na），且 na 维度呈"双谷"（0.3 与 0.01 都好）。
+  本轮把 na 曲线补全、把 h20 拆件消融、并在 1f 上交叉验证。
+
+  代码：HEAD 714eedf，独立编译前缀 /tmp/sl_install3（不复用旧 install2，避免
+        二进制/源码对应关系不明）。
+  口径：楼梯 --win 12:21,392:420,440:465；1f --win 10:21,310:340,600:630；
+        均带 --health 两列（gap 次数、静止段最大位移）。
+
+  事故说明：首轮 3 lane 并发播包在 22:54 起跑，约 23:02 桌面冻死（系统未重启，
+  uptime 连续）。日志证据：node.log 满屏 `[IMU Delay] arrival latency ≈2.2e8 ns`
+  与 play.log `Message queue starved`。三个 run 均在 ~430 s 处中断，已删除重跑；
+  之后统一降为 **2 lane**，本轮 12 个 run 全部 0 starved。
+
+■ 1. 可复现性锚点（本轮最重要的方法学证据）
+  md5(m26_base/odom.csv)      = md5(m25_base/odom.csv)
+  md5(m26_h20_na03/odom.csv)  = md5(deg_h20_dbg/odom.csv)
+  ⇒ ① 重新编译（不同 build/install 前缀、HEAD 含阶段 2 全部新开关，默认全关）
+       与 b701d7b 逐字节一致 ⇒ "默认关闭 = 原行为"成立，旧对照表无需重跑。
+    ② deg_h20_dbg 是**故障代码**（nw 陈旧权重未修）跑出来的，而干净代码
+       逐字节复现了同一轨迹 ⇒ 那个 bug 在本配置下行为中性，0.025 m **不是
+       bug 产物**，此前的"bug 制造假冠军"怀疑就此排除。
+
+■ 2. 楼梯 imu_na 曲线（基座配置，hub=0.05、nw off、nbg 1e-4）
+  run            na  闭环3D  水平   竖直   hover  gaps
+  m25_na01      0.01  0.552  0.552 -0.015  0.150   0
+  m26_na0030    0.03  0.891  0.891 -0.029  0.151   0
+  m26_base      0.1   1.599  1.488 +0.586  0.036   0
+  m26_na03      0.3   2.150  1.963 +0.875  0.037   0
+  ⇒ 基座上 **na 单调**：越小越好（0.3 比基线还差 34%）。此前观察到的
+    "双谷"（0.3 与 0.01 都好）是 h20 基座上的交互现象，不是 na 维度的
+    固有形状。
+  ⇒ 悬停噪声与漂移反向：na≤0.03 时 hover≈0.15 m，na≥0.1 时 0.036 m。
+
+■ 3. 楼梯 hub/nw 矩阵与消融（关键交互）
+  run                        na    nw   nbg    hub   闭环3D  hover  备注
+  m26_base                   0.1   off  1e-4   0.05   1.599  0.036
+  m25_h20                    0.1   on   3e-3   0.20   1.398  0.051
+  m26_h20_na01               0.01  on   3e-3   0.20   1.143  0.137
+  m26_h20_na03               0.3   on   3e-3   0.20  **0.024** 0.038
+  m27_hub20                  0.1   off  1e-4   0.20   1.904  0.154
+  m27_hub20_na01             0.01  off  1e-4   0.20   0.831  0.149
+  m28_hub20_na03             0.3   off  1e-4   0.20   2.071  0.043  ← 去掉 nw
+  m28_h20_nwoff              0.3   off  3e-3   0.20   2.732  —      1 gap，污染
+  ⇒ 0.024 m 是 **nw(on,σ0.035) × hub0.20 × na0.3 的三重交互**，缺一不可：
+      去掉 nw  → 2.071（×86 变差）
+      降 na 到 0.01 → 1.143
+      na=0.3 但无 nw/hub（m26_na03）→ 2.150
+     nbg=3e-3 在本配置下无独立作用（nw off 时 2.732 与旧 run 同值）。
+  ⇒ 即 M.24-2 判"nw 有害"是陈旧权重 bug 期间的伪结论；修复后 nw 是楼梯
+    高 na 路线的**核心**组件，但它只在高 na（几乎不信任加速度计）时才成立。
+
+■ 4. 1f 交叉验证（同一套参数迁移）
+  run                na    nw   nbg    hub   闭环3D  水平   竖直   hover  gaps
+  f1_s2_base         0.1   off  1e-4   0.05   3.519  2.170 +2.770  0.111   0
+  f1_na01            0.01  off  1e-4   0.05   3.152  1.973 +2.458  0.109   0
+  f1_na03            0.3   off  1e-4   0.05   3.638  2.174 +2.917  0.110   0
+  f1_obs300          0.1   off  1e-4   0.05   2.923  1.982 +2.149  0.109   0
+  f1_hub20_r2        0.1   off  1e-4   0.20   2.803  1.519 +2.356  0.072   0
+  f1_hub20_na01_r2   0.01  off  1e-4   0.20  **2.437** 1.532 +1.896  0.083  0
+  f1_h20_base        0.1   on   3e-3   0.20   3.736  2.846 +2.421  0.104   0
+  f1_h20_na01        0.01  on   3e-3   0.20   2.781  2.307 +1.553  0.105   0
+  f1_h20_na03        0.3   on   3e-3   0.20   4.097  2.767 +3.021  0.085   0
+  （f1_hub20_na01 首跑 1 gap/3.70 s，闭环 5.727，判污染后删除重跑 → _r2）
+  ⇒ 1f 上结论**与楼梯相反**：
+    · 楼梯冠军 h20+na0.3 在 1f 是全场最差（4.097，+16%）；
+    · nw+nbg 在 1f 一律有害（同 na0.1：3.736 vs 3.519；同 na0.01：2.781 vs 3.152）；
+    · na0.3 在 1f 有害（3.638，+3%）；na0.01 有益（3.152，-10%）；
+    · hub0.20 单独（2.803，-20%）与 hub0.20+na0.01（2.437，-31%）是 1f 最优。
+  ⇒ 解释：楼梯是"全向平面丰富"的场景，宽 Huber + 平面残差加权 + 弱 IMU 先验
+    （na0.3）等价于"把位姿交给雷达"；1f 是长走廊，沿走廊方向雷达退化，
+    此时弱 IMU 先验直接放大尺度/竖直漂移（竖直 +3.02 m 最差），必须保留
+    加速度计权重（na0.01）并由窄 Huber 抑制退化轴上的错误观测。
+
+■ 5. 地图弯曲独立核验（排除"闭环好但轨迹被拉直"）
+  map_tilt.py --by-leg（下行井 / 上行井，斜率 mdeg/m，残差 °）
+  run            下行井 倾x斜率 / 残差    上行井 倾x斜率 / 残差
+  m26_base         -4.5 / 0.57             +24.7 / 0.61
+  m26_na03        -10.3 / 0.48             +74.8 / 0.82
+  m25_na01        -15.4 / 0.27              -0.2 / 0.30
+  m26_h20_na03     +1.7 / **0.13**         +14.6 / 0.46
+  ⇒ 冠军 run 的地图在两井里都是四个中最干净（下行井残差 0.05°/0.13°），
+    漂移改善是真实的几何改善，不是"闭环点巧合"。
+
+■ 6. 结论（修订 M.25-D）
+  · M.25-D 的"imu_na=0.01 是唯一生产候选"需要修订：na 维度在基座上单调，
+    不存在高 na 谷；高 na 的收益完全依附于 h20 基座且只在本楼梯场景成立。
+  · 可迁移（双场景同时改善）的新最优：**HUBER_BASE=0.20 + imu_na=0.01**
+      楼梯 0.831（-48%）、1f 2.437（-31%），两 bag 均 0 gap。
+    代价 hover 0.149（楼梯）/0.083（1f），与 na01 同级。
+  · 场景专用最优（楼梯）：NORMAL_WEIGHT_EN=true σ=0.035 + HUBER_BASE=0.20
+      + IMU_NBG=3e-3 + imu_na=0.3 → 楼梯 0.024（-98.5%，300 m 环 8e-5）
+      但 1f 4.097（+16%），属于"场景绑定"配置。
+  · 因此给出两条线，而不是单一默认值：
+      A. 楼梯任务线：h20+na0.3，先实机只观察，确认姿态环无异常再定；
+      B. 通用线：hub0.2+na0.01（若还需覆盖走廊/园区场景）。
+    不再保留"na01 单参数"作为默认：它对楼梯最优（0.552，优于 hub0.2+na0.01
+    的 0.831），但在 1f 明显更差（3.152 vs 2.437）。二者是权衡关系：
+    只看楼梯选 na01；需要兼顾走廊/园区选 hub0.2+na0.01。
+  · 方法学：na0.3 与 na0.01 都"好"的现象只能用**交互**解释，单参数扫参在
+    本问题上会给出误导性结论；后续任何参数结论必须带最小消融（w/o 各组件）。
+
+■ 7. 下一步
+  1) 实机（优先，两条线各一趟只观察）：
+     A 线看 [Guard] 频率、静止姿态抖动（na0.3 ≈ 不信任加速度计，需盯快速机动）；
+     B 线看悬停位移（hub0.2 让 hover 从 0.036 升到 0.149，需确认可接受）。
+  2) 若要"一个参数覆盖两场景"，正确的形态是**按场景调权而非开关式截断**：
+     由在线几何条件数把 na 在 0.01↔0.3 间平滑插值（楼梯→高 na，走廊→低 na）。
+     这解释了 M.25 阶段 2 的截断为何失败——它做的是"硬截断"而非"调权"。
+     需先有可靠的在线退化和非退化真值标注（本轮的 4 个 map_tilt 指标可作离线标签）。
+  3) 补最小消融：楼梯 nw(on)+hub0.20+na0.3 但 σ 改 0.05 / nbg 改 1e-4（各 1 格），
+     确认冠军不依赖 σ 细调；1f hub0.2+na0.3（1 格）确认 1f 变差是否只由 na 引起。
+  4) P2 遗留不变：UpdateMap 17.5 ms 尖峰、截断限幅版、debug.csv 通路验证。
+
+■ 8. 本轮资产
+  新增 lane：exp/lane_j_na_curve.sh（na 曲线）、exp/lane_k_h20_na.sh（h20 拆解）、
+            exp/lane_l_1f_na.sh（1f 复核）
+  结果：exp/results/ 下 12 个新 run（m26_* / m27_* / m28_* / f1_na03 /
+        f1_hub20_r2 / f1_h20_* / f1_hub20_na01_r2），均 0 starved；
+        除 m28_h20_nwoff（1 gap）外全部 0 gap，污染 run 已在正文标注。
+  复现：
+    WS_SETUP=/tmp/sl_install3/setup.bash ROS_DOMAIN_ID=51 \
+      BAG=/home/ywj/slam_data/livox_record_drone \
+      HUBER_BASE=0.20 ./exp/run_one.sh <name> 6 0.25 0.01 0.1 0.25
+    编译：colcon build --packages-select super_lio \
+            --build-base /tmp/sl_build3 --install-base /tmp/sl_install3 \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+================================================================================
+M.27 【2026-10-25 细尺度特征：诊断结论、细通道实现与交接执行清单】
+
+■ 0. 问题定位（承接提问："墙角/铁窗/扶手这类细尺度特征被平均降噪抹平？"）
+   结论：担忧方向正确，但瓶颈不在地图存储，在观测模型消费不了细特征。
+   证据（全部来自本文件历史实验，不重复做）：
+   · 地图侧开关已闭环且无效/负向：rep_mode=1 两 bag 0.97~1.01x（五-B、L1621）；
+     merge_dist 0.05 位移 0.64x 但 yaw +3.0°"位移换姿态"（L1619/1637）；
+     voxel 0.20/0.15 末段 z 反而 +0.43~0.51 m（L33、L613）⇒ 维持 0.25。
+   · 地图本身已是两级结构：0.25 m 粗体素 + 0.125 m 子体素（2×2×2、每格
+     8 点、20 点上限，OctVoxMap.hpp L91-222），细特征点在地图里并未消失。
+   · 真正丢弃细尺度点的是观测链路三个环节：
+     ① plane_fit_threshold=0.15 m 硬阈值 → 高粗糙点整点拒绝（L266）；
+     ② 角点法向不可靠，point-to-plane 结构上无法消费角点
+       （L314 原文："要利用角点必须改 point-to-line"）；
+     ③ KNN 搜索半径 ≈ 2×vox_res 且随分辨率收缩（L494-497）。
+   · 公开方案对照（2026-03 调研）：BIEVR-LIO（arXiv 2604.14421，ETH）
+     论点与本判断一致——"不是没信息，是表示/分辨率吃掉了细节凸起"；
+     GenZ-LIO（arXiv 2603.16273）bi-resolution + hybrid-metric
+     （平面 voxel 用 point-to-plane、粗糙 voxel 用 point-to-point）与
+     Super-LIO 架构最贴合；X-ICP（T-RO 2023）作者转向 BIEVR 的脉络表明
+     "加信息"优于"砍信息" ⇒ 原截断限幅待办降级关闭。
+
+■ 1. 方案：退化门控的"细通道"（不建第二份地图，建第二观测通道）
+   触发：现有退化去抖状态 degeneracy_active_（mode0 cond>100、
+         enter 3 / exit 10 帧）——"粗尺度判退化 → 细尺度救援"语义正确；
+         300 ms 进入滞后对增广残差可接受（硬切换不可接受，M.25 教训）。
+   残差：plane_fit 拒绝点（墙角/扶手/窗框邻域）取 KNN 最近地图原始点 p_map，
+         视作"过 p_map、法向 u=连线方向"的伪平面 → 与平面残差同构
+         （e = u·(p_world−p_map) = −dist），完全复用既有 J/Huber/ESKF 约定，
+         不引入新求解路径。
+   门控（成败关键）：λ_min 增益 = λ_min(H+H_f)/λ_min(H) ≥ 1.5 才并入，
+         n_used ≥ 5 才参与门控。现有 cond 由粗通道残差算出、看不到细特征
+         是否存在——此门控正是退化检测缺失的一环，区分"有扶手可救"
+         与"真空走廊"。
+   通道隔离：last_HTVH 保持纯平面 H，退化检测/去抖不含细通道贡献，
+         防"细通道改善 cond → 退出退化 → 细通道关闭"的自激振荡。
+   现有退化监测三个缺口的处理：a) cond 看不到细特征 → 门控补；
+     b) mode1/2 从不触发 → 沿用 mode0（axes/P 输出齐全，够用）；
+     c) 无提前量（退化第一帧仍是纯粗结果）→ frame_gap_guard + IMU 兜底。
+
+■ 2. 实现（已编译通过 /tmp/sl_install4；30 s 冒烟回放验证：
+   [Param] fine_channel 行、[FineCh]/[Degeneracy] 日志、debug.csv 均正常，
+   候选不足 5 点时门控正确拦截）
+   · src/super_lio/src/lio/super_lio.cpp：
+     - Observe() 首轮平面拟合失败分支：收集候选（上限 150 点、关联距离
+       ≤0.5 m，取 top_K 中最近者），关联只在首轮做、后续迭代沿用（~L1590）；
+     - last_HTVH 赋值后、截断响应前：细通道 H_f/r_f 累加 + λ_min 门控
+       （~L1746-1792）；
+     - 退化计算条件加 g_fine_channel_en（~L1814）；
+     - [FineCh] 2 s 限频日志：cands/used/gain/applied/degen/cond（~L1858）。
+   · super_lio.h：FineCand{p_body,p_map} + fine_cands_ + 统计成员。
+   · params.h/.cpp、ROSWrapper.cpp：lio.observe.fine_channel_en（默认 false）、
+     fine_channel_weight=100、fine_channel_max_points=150、
+     fine_max_dist=0.5、fine_channel_min_gain=1.5。
+   · exp/run_one.sh + config_template.yaml：FINE_CHANNEL_* 环境变量全链路打通。
+   默认全关 = 原行为（lane N 的 anchor run 用 md5 验收这一点）。
+
+■ 3. 交接执行清单（另一 agent 直接跑；判据口径不变：
+   楼梯 --win 12:21,392:420,440:465 / 1f --win 10:21,310:340,600:630，
+   全部带 --health；并发上限 2 lane——3 lane 会饿死播包，M.26 有事故记录）
+   前置编译（/tmp 重启丢失后先重建）：
+     cd ~/git/xtd2_ws && colcon build --packages-select super_lio \
+       --build-base /tmp/sl_build4 --install-base /tmp/sl_install4 \
+       --cmake-args -DCMAKE_BUILD_TYPE=Release
+   P1 参数消融 + P2.2 debug.csv 通路（lane M，两条 lane 可并行）：
+     ./exp/lane_m_stair.sh   # m29_h20_s05、m29_h20_nbg1e4、m30_dbg
+     ./exp/lane_m_1f.sh      # f1_hub20_na03、f1_dbg
+     验收：md5(results/m30_dbg/odom.csv)==md5(results/m26_base/odom.csv)、
+           md5(results/f1_dbg/odom.csv)==md5(results/f1_s2_base/odom.csv)
+           （埋点无副作用）；debug.csv 列齐全、逐帧无缺行。
+   P3.1 拒绝点诊断（零机时，lane M 跑完即可）：
+     python3 exp/fine_diag.py --run exp/results/m30_dbg --rej-corr
+     python3 exp/fine_diag.py --run exp/results/f1_dbg  --rej-corr
+     看三样：拒绝率均值/p95；退化帧(cond>100) vs 非退化帧的拒绝率对比；
+     拒绝占比与 deg_cond 的 Pearson r。r>0 或退化帧拒绝率显著更高
+     ⇒ 细特征确实集中在退化段，细通道有用武之地。
+   P3.2 细通道验证（lane N；先跑 M，M 的 md5 锚点不过必须先停下排查）：
+     ./exp/lane_n_stair.sh   # m30_fine_anchor(md5 必须等于 m26_base)、
+                             # m30_fine(对照 1.599)、m30_h20_fine(对照 0.024)
+     ./exp/lane_n_1f.sh      # f1_fine_anchor(==f1_s2_base)、f1_fine(对照 3.519)、
+                             # f1_hub20_na01_fine(可选，对照 2.437)
+     验收：anchor md5 相等；fine run 的 [FineCh] 用
+           fine_diag.py --run <dir> --fine-log 复核；闭环对照上表数字。
+   P2.1 UpdateMap 尖峰定位（零机时，任意已有 run 均可）：
+     python3 exp/timing_spike_audit.py exp/results/m26_base
+     输出 [UpdateMap] 最差 5 窗的 [MapTransform]/[MapInsert] 归因
+     → 变换主导=看点数突发（转向瞬间），插入主导=看批量/哈希扩容。
+   P0/P4/P5 不变（实机两线、cond 调 na、2.F/BIEVR——见 M.26 §7）。
+
+■ 4. 后续工作清单（合并版）
+   P0 实机两线观察（M.26 既定，最高优先）
+   P1 参数消融 3 格（lane M）→ 收口 M.26 双线参数
+   P2 工程治理：2.1 UpdateMap 尖峰（timing_spike_audit.py 先定位）；
+       2.2 debug.csv 通路（lane M 顺带验收）
+   P3 细通道：3.1 拒绝点诊断（lane M 数据）→ 3.2 lane N 验证 →
+       3.3 若 1f 有正收益：把 gain 阈值门控升级为连续权重（ramp 进/出），
+       并与 M.26 §7-2 的 cond 调 na 线合并为统一"在线调权"
+   P4 新 bag 采集（见文件顶部 ★）：B1 细通道验证 bag → B2 滑窗 bag → B3 特写
+   P5 研究级（缓）：2.F 滑窗+Schmidt（等 B2）；BIEVR bump-image（等 B3 +
+       P3 证明细特征是主要残余误差源再升级）
+   降级关闭：截断限幅版（P3.3 连续权重是其上位替代）
+
+■ 5. 细通道预期与风险（给跑 lane N 的 agent）
+   · 楼梯 bag 冒烟段 cands 仅 0~1：楼梯不是细通道主战场，m30_fine /
+     m30_h20_fine 与对照差异大概率在噪声内——这本身是"细通道不伤害
+     非退化场景"的验收项；真正的试金石是 1f 走廊（f1_fine）。
+   · [FineCh] applied=0 但 degen=1 的帧 = 门控拦截（真空段预期行为）；
+     若全程 applied=0 且 gain 恒 <1.5，先用 fine_diag.py --rej-corr 查
+     n_plane_fail 规模，再调 fine_channel_weight / fine_max_dist 重跑。
+   · 若 lane N 全线无差异且 P3.1 显示拒绝点稀少 ⇒ 当前两 bag 的退化段
+     并不富细特征，细通道结论推迟到 B1 新 bag（顶部采集需求）采集后再判。
+
+================================================================================
+M.28 【2026-10-25 执行结果：回归锚点 / P1 消融 / P3.1 诊断 / P3.2 细通道 / P2.1 尖峰定位】
+
+■ 0. 环境与可复现性
+   编译：colcon build --packages-select super_lio --build-base /tmp/sl_build4
+         --install-base /tmp/sl_install4 --cmake-args -DCMAKE_BUILD_TYPE=Release
+   二进制：/tmp/sl_install4/super_lio/lib/super_lio/super_lio_node（与当前源码一致）
+   并发：2 lane（楼梯 ROS_DOMAIN_ID=61/63，1f 62/64），无冻结/无队列饥饿
+   时间：lane M 03:25:58–03:50:41；lane N 03:52:04–04:25:20
+   健康度：全部 run odom_gap(>0.15s)=0，gap_max ≤0.14 s，静止段位移 ≤0.111 m
+
+■ 1. 代码回归锚点（先验收，再解释结果）
+   md5(m30_fine_anchor/odom.csv) = md5(m26_base/odom.csv)
+     = 53305a77dfde47ac8c490d4d01a011c7
+   md5(f1_fine_anchor/odom.csv)  = md5(f1_s2_base/odom.csv)
+     = 867468dca887a7174eb56a39f798d48a
+   md5(m30_dbg) == m26_base，md5(f1_dbg) == f1_s2_base（同值，见上两行）
+   ⇒ 细通道新增代码路径（含 map/h/params/ROSWrapper）默认关时零副作用；
+     DEBUG_LEVEL 埋点同样零副作用（逐字节一致）。M.27 的"默认关=原行为"验收通过。
+
+■ 2. P1 楼梯冠军最小消融（对照 m26_h20_na03 = 0.024 m）
+   run                 改动                     闭环3D(锚点1)  相对冠军
+   m26_h20_na03        —                        0.024         1.0x（基准）
+   m29_h20_s05         nw σ 0.035→0.05           1.277        53x
+   m29_h20_nbg1e4      nbg 3e-3→1e-4             1.199        50x
+   ⇒ 结论：h20+na0.3 的 0.024 m 是"nw σ0.035 × hub0.20 × na0.3 × nbg3e-3"
+     四参数同时到位的刀刃平衡，任一细调参数偏移即退化 50x。不是稳健配置，
+     不可作为量产默认值直接烧进配置文件。
+   ⇒ nbg 方向再次验证 M.26 的判断：3e-3 是"能自收敛"的下限，1e-4 跟不上
+     陀螺零偏漂移（本文件 L50-51 注释的原始依据）。
+
+■ 3. P1 1f 归因格：na0.3 的伤害是否独立于 nw/nbg
+   run                    锚点#2(300-345.9s)  末锚点(594.6-637.8s)
+   f1_s2_base（基线）          2.697              3.519
+   f1_hub20_r2（仅 hub0.2）    2.363              2.803
+   f1_hub20_na03（hub0.2+na0.3）2.247             3.037
+   f1_hub20_na01_r2（+na0.01） 2.435              2.436  ← 1f 最优
+   f1_na03（仅 na0.3）         2.671              3.638
+   ⇒ na0.3 在 1f 上相对"仅 hub0.2"把末锚点从 2.803 抬到 3.037（+0.23 m），
+     hub0.2 只抵消了一部分（na0.3 单独是 3.638）。即：na0.3 的收益是
+     楼梯专属，1f 侧净负。维持 M.26 §7 的双线结论：
+       A 线（楼梯专用）hub0.20 + na0.3 → 0.024 m
+       B 线（通用）    hub0.20 + na0.01 → 楼梯 0.552 / 1f 2.436
+     量产默认建议 B 线；A 线仅在确认目标场景为螺旋楼梯时启用。
+
+■ 4. P2.2 debug.csv 通路
+   楼梯 m30_dbg：4693 行 × 40 列，dt 中位 0.10 s（0.09~0.11），时间戳无跳变
+   1f   f1_dbg ：6397 行 × 40 列，dt 中位 0.10 s（0.06~0.14），时间戳无跳变
+   ⇒ 逐帧埋点可用；deg_cond 全程 >0（楼梯 p50 39.9 / p90 116.5 / max 270.7；
+     1f p50 220.2 / p90 801.5 / max 1731.8）。1f 的 cond 量级整体约为楼梯的
+     5.5 倍，说明"1f 走廊比螺旋楼梯更退化"这一判断有逐帧数据支撑。
+
+■ 5. P3.1 拒绝点 × 退化相关性（细通道前提的直接检验）
+   run         n_plane_fail mean/p95/max   拒绝占比 mean/p95/max   r(占比,cond)
+   m30_dbg          1 /  5 / 17             0.1% / 0.6% / 2.6%      -0.118
+   f1_dbg          10 / 24 / 44             1.1% / 2.6% / 4.7%      -0.423
+   退化帧(cond>100) vs 非退化帧的拒绝率：楼梯 0.0% vs 0.2%；1f 1.1% vs 0.8%
+   ⇒ 假设"退化段正是细特征丰富段"不成立，两 bag 上相关系数均为负：
+     楼梯退化帧几乎零拒绝点（墙角/扶手点根本没进拒绝池），1f 相关系数
+     -0.42 说明越是退化帧、拒绝点越少（真空走廊特征本来就少）。
+   ⇒ 这解释了 §6 的现象：细通道拿不到"可救援的点"，因为退化时刻恰恰
+     是细特征最贫乏的时刻。
+
+■ 6. P3.2 细通道验证（两 bag 全部 applied=0，零行为差异）
+   run                     闭环3D                    与对照关系
+   m30_fine_anchor 1.599/1.597   == m26_base（锚点）
+   m30_fine        1.599/1.597   == m26_base       ← 完全无差异
+   m30_h20_fine    0.024/0.022   == m26_h20_na03   ← 完全无差异
+   f1_fine_anchor  …             == f1_s2_base（锚点）
+   f1_fine         2.697/2.691/3.519 == f1_s2_base  ← 完全无差异
+   f1_hub20_na01_fine 2.435/1.290/2.436 == f1_hub20_na01_r2 ← 完全无差异
+   [FineCh] 日志统计（2 s 限频，311 条样本）：
+     · 楼梯：cands 中位 0、最大 14；f1：约 130/311 帧 cands≥5 进入 gain 计算
+     · 所有 gain ∈ [1.001, 1.006]，远低于门控 1.5 ⇒ 全部 applied=0
+     · 门控行为完全符合设计（不添噪），但也没有任何正收益
+   机制解释（比"bag 不合适"更本质）：
+     细通道残差方向 u = (最近地图点 − 当前点) 归一化。扶手/门框相对墙面
+     的偏差主要在"横向"，而走廊退化轴正是"纵向"。所以 u 几乎平行于
+     已经被墙约束得很好的横向 ⇒ 对 λ_min 的抬升按构造只有千分之一量级。
+     再把权重算进去（fine weight 100 vs obs_weight 1000），贡献被进一步
+     压低到 ≤0.1~1%。⇒ 当前"最近邻 point-to-point"公式在数学上就抬不动
+     退化轴，不是参数没调好。
+   ⇒ 裁决：细通道 = "安全但无效"，保持默认关，不进量产。若继续此方向，
+     必须先换残差公式（沿退化轴方向加权的 point-to-line / 子体素法向平面），
+     并等 B1/B3 新 bag 提供"退化轴方向上有细特征"的数据，否则无判定价值。
+
+■ 7. P2.1 UpdateMap 尖峰定位（本次最重要的新发现）
+   run         UpdateMap wmax p50/p90/max   worst窗   MapTransform   MapInsert
+   m30_dbg         0.76 / 6.77 / 9.94 ms       5        0.08          9.93
+   f1_dbg          1.40 / 62.04 / 92.08 ms    13        0.03         92.07
+   f1_dbg 次差窗：win#7 67.42 ms、win#3 13.55 ms，MapTransform 均 ≤0.05 ms
+   ⇒ 尖峰 100% 来自 MapInsert（哈希插入 / 可能含 robin_map 扩容），
+     MapTransform（世界系变换）不是原因。M.24-8 原先猜测"转向瞬间点数
+     突发"被证伪。
+   ⇒ 1f 比楼梯严重一个量级（92 vs 10 ms），说明尖峰与地图规模/遍历密度
+     正相关（1f 走廊 777.8 m 路径更长、体素更多）——指向扩容而非单帧点数。
+   ⇒ 另注：Observe 才是"稳态大头"（1f p50 21.6 / p90 30.1 / max 34.1 ms），
+     但它是持续成本、不是丢帧元凶；丢帧只由 UpdateMap 的偶发 90 ms 决定。
+   下一步（已收窄，可直接做）：MapInsert 预分配容量（g_ivox_capacity 调大/
+     启动时 reserve）+ 分批插入（每帧上限切片，余量入下一帧）+ 记录每窗
+     插入点数与 grids_ 容量，验证"尖峰是否总出现在容量翻倍窗口"。
+     验收：UpdateMap p90 wmax <5 ms，且全程 odom_gap(>0.15s)=0。
+
+■ 8. 后续工作清单（在 M.27 §4 基础上按本次结果重排）
+   P0 已完成：回归锚点（§1）、P1 消融（§2/§3）、P2.2（§4）、P3.1（§5）、
+      P3.2（§6）、P2.1 定位（§7）
+   P1 新增（高优先）：MapInsert 抖动治理（§7 末，cap reserve + 分批插入 +
+      容量日志）。这是唯一已证实会直接导致丢帧的问题。
+   P2 参数收口：量产默认取 B 线（hub0.20 + na0.01）；A 线仅楼梯启用。
+      不再追"0.024 m"作为默认目标（§2 证明其刀刃性）。
+      naive 的"在线调权"（cond→na）可复用现有 degeneracy 管道，但需先
+      解决 §2 的敏感性：必须配合 nbg 3e-3 与 nw σ0.035 同时生效。
+   P3 细通道：暂缓（§6 裁决）。重启条件：B1/B3 新 bag 到手 + 残差公式改为
+      沿退化轴加权。届时才做 P3.3 连续 ramp。
+   P4 新 bag 采集：仍是所有细特征类工作的前置（见文件顶部 ★ B1/B2/B3）。
+   P5 研究级：2.F 滑窗+Schmidt（等 B2）；BIEVR bump-image（等 B3 且 P3 重启）。
+   降级关闭：截断限幅版（维持 M.27 决定）。
+
+■ 9. 复跑命令（逐字可复制）
+   cd ~/git/xtd2_ws/XTDrone2_ego_planner/lio/Super-LIO
+   bash exp/lane_m_stair.sh      # 楼梯 P1 消融 + debug 锚点，约 25 min
+   bash exp/lane_m_1f.sh         # 1f 归因格 + debug 锚点，约 22 min
+   bash exp/lane_n_stair.sh      # 细通道 楼梯（先锚点后开关），约 25 min
+   bash exp/lane_n_1f.sh         # 细通道 1f（三条），约 33 min
+   # 指标
+   source /opt/ros/humble/setup.bash
+   python3 exp/loop_error.py --bag ~/slam_data/livox_record_drone   --loops \
+     --win 12:21,392:420,440:465 --health exp/results/m29_h20_s05 …
+   python3 exp/loop_error.py --bag ~/slam_data/livox_record_drone_1f --loops \
+     --health exp/results/f1_hub20_na03 …
+   python3 exp/fine_diag.py --run exp/results/f1_dbg --debug-csv --rej-corr
+   python3 exp/timing_spike_audit.py exp/results/m30_dbg exp/results/f1_dbg
+   注：timing_spike_audit.py 的日志实际是双层括号 "> [ [UpdateMap] ]"，
+       正则已按此修正（M.27 版本只支持单层，会报"无计时行"）。
+
+================================================================================
+M.29 【2026-10-25 MapInsert 尖峰治理 + 量产参数收口（B 线）】
+
+■ 0. 结论摘要
+   1) MapInsert 尖峰根因 = robin_map 从未 reserve，增长期整表重哈希。
+      改为构造时 reserve 桶数（只改桶数、不改键集/淘汰顺序）后：
+        1f  UpdateMap max 53.67 → 2.94 ms（-95%），p90 32.78 → 2.69 ms
+        楼梯 UpdateMap max  8.54 → 5.81 ms（-32%），p90  6.81 → 2.97 ms
+      且两个 bag 的 odom.csv 与改前 md5 逐字节一致 ⇒ 纯性能修复，零行为改动。
+   2) 量产参数收口为 B 线（hub0.20 + na0.01），已写入
+      src/super_lio/config/livox_360_drone.yaml，真实飞行验证仍待 P0。
+
+■ 1. 实现（改动最小、可回退）
+   · OctVoxMap::SetOptions 新增（默认开）：
+       g_map_hash_reserve_en / g_map_hash_reserve_size（0 = 用 hash_capacity）
+       → grids_.reserve(want)，启动打印 "OctVoxMap hash reserve: 2e6 buckets=4194304"
+   · OctVoxMap::InsertStats：本窗口 new_voxel / evict 计数，insert() 内递增
+   · SuperLIO::periodicTimeReport：每个计时窗口追加一行
+       "> [ MapStats ] size=… buckets=… new_voxel=… evict=…"
+   · 参数接线：lio.hash_map.reserve_en / lio.hash_map.reserve_size
+     exp/run_one.sh: HASH_RESERVE_EN / HASH_RESERVE_SIZE（默认 true / 0）
+   设计约束：reserve 不参与任何语义 —— 键集、LRU 顺序、淘汰条件（size>=capacity_）
+   全部未动，因此"位姿逐字节不变"是硬验收项，不是近似。
+
+■ 2. 验收（先跑两 bag 满程锚点）
+   md5(m31_reserve_anchor/odom.csv) = 53305a77dfde47ac8c490d4d01a011c7 = md5(m26_base)
+   md5(f1_reserve_anchor/odom.csv)  = 867468dca887a7174eb56a39f798d48a = md5(f1_s2_base)
+   ⇒ 通过。
+
+■ 3. 效果（基线统一取 DEBUG_LEVEL=0 的原始 run，避免埋点干扰）
+   run                  UpdateMap wmax p50 / p90 / max (ms)
+   m26_base（改前）          0.55 /  6.81 /  8.54
+   m31_reserve_anchor        0.42 /  2.97 /  5.81
+   f1_s2_base（改前）        0.69 / 32.78 / 53.67
+   f1_reserve_anchor         0.38 /  2.69 /  2.94
+   残余峰值的来源：stairs/1f 的最差窗都是 win#0（建图冷启动，一个窗口内
+   新建 1.8 万 / 4.8 万体素），属首次写表成本，不是扩容抖动。
+   更正：M.28-7 引用的 92.08 ms 来自 f1_dbg（DEBUG_LEVEL=2，埋点额外算
+   fit_res p95 与 cond_yk，会拖慢 Observe/相关路径）。诚实基线为 53.67 ms，
+   结论不变（仍是 MapInsert 独占），但幅度应以 53.67 为准。
+
+■ 4. 表规模实测（决定 reserve 取多大）
+   run                  size(最大)   buckets(恒定)   evict
+   m31_reserve_anchor     101,419      4,194,304      0
+   f1_reserve_anchor      844,966      4,194,304      0
+   ⇒ 容量 2e6 从未被触发淘汰；1f 走廊 10.6 min 用了 84.5 万体素。
+     reserve=capacity(=2e6→4.19M 桶，约 85 MB) 对当前场景是安全的默认；
+     若后续上更长航程/更大场景，先看 MapStats 的 evict 是否非零再决定。
+
+■ 5. 量产参数收口（工作清单 P2）
+   B 线定义：hub_delta_base 0.20 + imu_na 0.01 + nw 关（nbg 保持生产值 3e-3）
+   实测（固定窗闭环 3D，单位 m）：
+     bag   基线(生产现值 na0.1/hub0.05)  B 线(nbg 1e-4)  B 线(nbg 3e-3=生产值)
+     楼梯          1.599                    0.831            1.171
+     1f            3.519                    2.436            3.050
+   ⇒ 无论 nbg 取哪个，B 线都优于生产现值；nbg 1e-4 数字更好，但 M.26 已证明
+     1e-4 跟不上陀螺零偏漂移（本文件 L50-51），长航程有物理风险，故生产
+     保留 3e-3，只改 na 与 huber。已写入 livox_360_drone.yaml：
+       lio.sensor.imu_na: 0.01
+       lio.observe.huber_delta_base: 0.20
+     并已用该 yaml 起节点验证参数确实生效（[Param] observe/huber_delta_base: 0.2）。
+   未采纳：A 线（+na0.3+nw σ0.035+nbg3e-3，楼梯 0.024）——M.28-2 证明是刀刃
+     平衡（σ 或 nbg 偏移即 50x 退化），仅作为楼梯专用可选档保留在实验侧。
+
+■ 6. timing_spike_audit.py 的两处修正（否则窗口号会错位）
+   · 日志是双层括号 "> [ [UpdateMap] ]"，旧正则匹配不到 → 已兼容单/双层
+   · 每分钟其实有两个 "Printing run time" 头：time_record_（LIO 阶段）与
+     latency_timer_（端到端延迟）。旧版按全局计数导致窗口号跳号（8 个窗口
+     却出现 win#13）。新版按"阶段名集合"把块分成 LIO / LATENCY 两组分别编号，
+     并顺带打印 MapStats 与端到端延迟最新窗口。
+
+■ 7. 工作清单状态（承 M.28-8）
+   已完成：P1 消融、P2.1 尖峰定位 + 治理（M.29）、P2.2 埋点通路、
+           P3.1 拒绝点诊断、P3.2 细通道验证、P2 参数收口（配置已改）
+   待办：P0 真实飞行验证 B 线（需上机，回放无法替代）
+         P4 新 bag 采集（B1/B2/B3，见文件顶部 ★）——细特征类工作的前置
+         P5 研究级（2.F 滑窗+Schmidt 等 B2；BIEVR 等 B3）
+         可选：Observe 稳态成本（1f p50 13~22 ms）若成为新瓶颈再攻
+   已关闭：截断限幅版、细通道（默认关）、MapInsert 分批插入
+           （reserve 后残余峰值只在冷启动窗口，不值得引入语义变更）
+
+■ 8. 复跑命令
+   # 编译（须先 source 工作空间 install 以提供 basic / livox_ros_driver2）
+   cd ~/git/xtd2_ws && source /opt/ros/humble/setup.bash \
+     && source ~/git/xtd2_ws/install/setup.bash \
+     && colcon build --packages-select super_lio --build-base /tmp/sl_build4 \
+        --install-base /tmp/sl_install4 --cmake-args -DCMAKE_BUILD_TYPE=Release
+   # 锚点（默认 reserve 开）
+   cd exp
+   BAG=~/slam_data/livox_record_drone   ROS_DOMAIN_ID=71 WS_SETUP=/tmp/sl_install4/setup.bash \
+     ./run_one.sh m31_reserve_anchor 6 0.25 0.1 0.1 0.25
+   BAG=~/slam_data/livox_record_drone_1f ROS_DOMAIN_ID=72 WS_SETUP=/tmp/sl_install4/setup.bash \
+     ./run_one.sh f1_reserve_anchor 6 0.25 0.1 0.1 0.25
+   # 对照：关掉预分配复现尖峰
+   HASH_RESERVE_EN=false ./run_one.sh <name> 6 0.25 0.1 0.1 0.25
+   # 计时归因
+   python3 timing_spike_audit.py results/m31_reserve_anchor results/f1_reserve_anchor
+   注：run_one.sh 的 IMU_NBG 默认是 1e-4；要对齐生产(3e-3)须显式 IMU_NBG=0.003。
