@@ -203,6 +203,14 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.hash_map.vox_resolution", 0.5);
   node.get_parameter("lio.hash_map.vox_resolution", g_ivox_resolution);
 
+  // M.29 哈希预分配（消除扩容期整表重哈希尖峰；只改桶数，不改行为）
+  node.declare_parameter<bool>("lio.hash_map.reserve_en", true);
+  node.get_parameter("lio.hash_map.reserve_en", g_map_hash_reserve_en);
+  node.declare_parameter<int>("lio.hash_map.reserve_size", 0);
+  node.get_parameter("lio.hash_map.reserve_size", g_map_hash_reserve_size);
+  LOG(INFO) << "[Param] hash_map.reserve: en=" << g_map_hash_reserve_en
+            << " size=" << g_map_hash_reserve_size << " (0=用 hash_capacity)";
+
   // kf
   node.declare_parameter<int>("lio.kf.kf_type", 0);
   node.get_parameter("lio.kf.kf_type", g_kf_type);
@@ -292,6 +300,23 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.get_parameter("lio.observe.adaptive_plane_fit", g_adaptive_plane_fit);
   node.declare_parameter<double>("lio.observe.adaptive_huber", 0.0);
   node.get_parameter("lio.observe.adaptive_huber", g_adaptive_huber);
+
+  // 细通道（M.27，默认全关 = 原行为）
+  node.declare_parameter<bool>("lio.observe.fine_channel_en", false);
+  node.get_parameter("lio.observe.fine_channel_en", g_fine_channel_en);
+  node.declare_parameter<double>("lio.observe.fine_channel_weight", 100.0);
+  node.get_parameter("lio.observe.fine_channel_weight", g_fine_channel_weight);
+  node.declare_parameter<int>("lio.observe.fine_channel_max_points", 150);
+  node.get_parameter("lio.observe.fine_channel_max_points", g_fine_channel_max_points);
+  node.declare_parameter<double>("lio.observe.fine_max_dist", 0.5);
+  node.get_parameter("lio.observe.fine_max_dist", g_fine_max_dist);
+  node.declare_parameter<double>("lio.observe.fine_channel_min_gain", 1.5);
+  node.get_parameter("lio.observe.fine_channel_min_gain", g_fine_channel_min_gain);
+  LOG(INFO) << GREEN << " ---> [Param] observe/fine_channel: en=" << g_fine_channel_en
+            << " weight=" << g_fine_channel_weight
+            << " max_points=" << g_fine_channel_max_points
+            << " max_dist=" << g_fine_max_dist
+            << " min_gain=" << g_fine_channel_min_gain << RESET;
 
   // 坏帧护栏
   node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", true);

@@ -133,6 +133,17 @@ namespace LI2Sup{
   double g_adaptive_plane_fit = 0.0;
   double g_adaptive_huber = 0.0;
 
+  /// 细通道（M.27，默认全关 = 原行为）
+  bool   g_fine_channel_en = false;
+  double g_fine_channel_weight = 100.0;
+  int    g_fine_channel_max_points = 150;
+  double g_fine_max_dist = 0.5;
+  double g_fine_channel_min_gain = 1.5;
+
+  /// M.29 地图哈希尖峰治理（默认开：只改桶数量，不改行为）
+  bool   g_map_hash_reserve_en = true;
+  int    g_map_hash_reserve_size = 0;
+
   /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
   int    g_debug_level = 0;
   bool   g_normal_weight_en = false;

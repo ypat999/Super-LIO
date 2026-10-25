@@ -61,6 +61,15 @@ ADAPTIVE_NORMAL_WEIGHT_EN=${ADAPTIVE_NORMAL_WEIGHT_EN:-true}
 ADAPTIVE_NORMAL_SIGMA=${ADAPTIVE_NORMAL_SIGMA:-0.035}
 ADAPTIVE_PLANE_FIT=${ADAPTIVE_PLANE_FIT:-0.0}
 ADAPTIVE_HUBER=${ADAPTIVE_HUBER:-0.0}
+# 细通道（M.27，默认全关 = 原行为）：退化帧平面拟合拒绝点的 point-to-point 救援
+FINE_CHANNEL_EN=${FINE_CHANNEL_EN:-false}
+FINE_CHANNEL_WEIGHT=${FINE_CHANNEL_WEIGHT:-100.0}
+FINE_CHANNEL_MAX_POINTS=${FINE_CHANNEL_MAX_POINTS:-150}
+FINE_MAX_DIST=${FINE_MAX_DIST:-0.5}
+FINE_CHANNEL_MIN_GAIN=${FINE_CHANNEL_MIN_GAIN:-1.5}
+# M.29 哈希预分配（默认开：只改桶数，不改行为；关掉可复现尖峰）
+HASH_RESERVE_EN=${HASH_RESERVE_EN:-true}
+HASH_RESERVE_SIZE=${HASH_RESERVE_SIZE:-0}
 FRAME_GAP_GUARD_EN=${FRAME_GAP_GUARD_EN:-false}
 FRAME_GAP_MAX=${FRAME_GAP_MAX:-0.2}
 IMU_COVER_MAX=${IMU_COVER_MAX:-0.03}
@@ -119,6 +128,8 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__IMU_GYR_SCALE__|$IMU_GYR_SCALE|g" \
     -e "s|__LIDAR_TIME_OFFSET__|$LIDAR_TIME_OFFSET|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
+    -e "s|__HASH_RESERVE_EN__|$HASH_RESERVE_EN|g" \
+    -e "s|__HASH_RESERVE_SIZE__|$HASH_RESERVE_SIZE|g" \
     -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
     -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
     -e "s|__NORMAL_SIGMA__|$NORMAL_SIGMA|g" \
@@ -145,6 +156,11 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__ADAPTIVE_NORMAL_SIGMA__|$ADAPTIVE_NORMAL_SIGMA|g" \
     -e "s|__ADAPTIVE_PLANE_FIT__|$ADAPTIVE_PLANE_FIT|g" \
     -e "s|__ADAPTIVE_HUBER__|$ADAPTIVE_HUBER|g" \
+    -e "s|__FINE_CHANNEL_EN__|$FINE_CHANNEL_EN|g" \
+    -e "s|__FINE_CHANNEL_WEIGHT__|$FINE_CHANNEL_WEIGHT|g" \
+    -e "s|__FINE_CHANNEL_MAX_POINTS__|$FINE_CHANNEL_MAX_POINTS|g" \
+    -e "s|__FINE_MAX_DIST__|$FINE_MAX_DIST|g" \
+    -e "s|__FINE_CHANNEL_MIN_GAIN__|$FINE_CHANNEL_MIN_GAIN|g" \
     -e "s|__FRAME_GAP_GUARD_EN__|$FRAME_GAP_GUARD_EN|g" \
     -e "s|__FRAME_GAP_MAX__|$FRAME_GAP_MAX|g" \
     -e "s|__IMU_COVER_MAX__|$IMU_COVER_MAX|g" \
@@ -206,6 +222,13 @@ fi
   echo "adaptive_normal_sigma=$ADAPTIVE_NORMAL_SIGMA"
   echo "adaptive_plane_fit=$ADAPTIVE_PLANE_FIT"
   echo "adaptive_huber=$ADAPTIVE_HUBER"
+  echo "fine_channel_en=$FINE_CHANNEL_EN"
+  echo "fine_channel_weight=$FINE_CHANNEL_WEIGHT"
+  echo "fine_channel_max_points=$FINE_CHANNEL_MAX_POINTS"
+  echo "fine_max_dist=$FINE_MAX_DIST"
+  echo "fine_channel_min_gain=$FINE_CHANNEL_MIN_GAIN"
+  echo "hash_reserve_en=$HASH_RESERVE_EN"
+  echo "hash_reserve_size=$HASH_RESERVE_SIZE"
   echo "frame_gap_guard_en=$FRAME_GAP_GUARD_EN"
   echo "frame_gap_max=$FRAME_GAP_MAX"
   echo "imu_cover_max=$IMU_COVER_MAX"

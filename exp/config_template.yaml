@@ -57,6 +57,9 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: __VOX_RES__
+    # M.29：构造时预分配哈希桶，消除扩容期整表重哈希尖峰（只改桶数，不改行为）
+    lio.hash_map.reserve_en: __HASH_RESERVE_EN__
+    lio.hash_map.reserve_size: __HASH_RESERVE_SIZE__
 
     lio.kf.kf_type: 0
     lio.kf.kf_max_iterations: __KF_MAX_ITER__
@@ -130,6 +133,13 @@
     lio.observe.adaptive_normal_sigma: __ADAPTIVE_NORMAL_SIGMA__
     lio.observe.adaptive_plane_fit: __ADAPTIVE_PLANE_FIT__
     lio.observe.adaptive_huber: __ADAPTIVE_HUBER__
+    # 细通道（M.27，默认关）：退化帧把平面拟合拒绝点（墙角/扶手/窗框）
+    # 以 point-to-point 残差并入，λ_min 增益门控通过才生效
+    lio.observe.fine_channel_en: __FINE_CHANNEL_EN__
+    lio.observe.fine_channel_weight: __FINE_CHANNEL_WEIGHT__
+    lio.observe.fine_channel_max_points: __FINE_CHANNEL_MAX_POINTS__
+    lio.observe.fine_max_dist: __FINE_MAX_DIST__
+    lio.observe.fine_channel_min_gain: __FINE_CHANNEL_MIN_GAIN__
     # 坏帧护栏：帧间隔过大 / IMU 头部覆盖不足的帧不参与配准建图
     lio.observe.frame_gap_guard_en: __FRAME_GAP_GUARD_EN__
     lio.observe.frame_gap_max: __FRAME_GAP_MAX__

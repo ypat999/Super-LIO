@@ -219,7 +219,28 @@ public:
     inv_resolution_ = 1.0 / resolution_;
     sub_resolution_ = resolution_ / 2.0;
     sub_inv_resolution_ = 1.0 / sub_resolution_;
+
+    // M.29 尖峰治理：robin_map 不做预分配时按 2 倍序扩容，每次扩容要整表重哈希，
+    // 在 10^5~10^6 体素量级上会偶发几十 ms 的尖峰（实测 1f 达 92 ms，是丢帧元凶）。
+    // reserve 只改桶数量，不改键集/淘汰顺序 ⇒ 位姿输出应逐字节不变。
+    if (g_map_hash_reserve_en) {
+      const std::size_t want = (g_map_hash_reserve_size > 0)
+                                 ? static_cast<std::size_t>(g_map_hash_reserve_size)
+                                 : capacity_;
+      grids_.reserve(want);
+      std::cout << " ---> OctVoxMap hash reserve: " << want
+                << " buckets=" << grids_.bucket_count() << std::endl;
+    }
   }
+
+  /// M.29 插入统计（周期性打印后清零）：新体素数 / 容量淘汰数 / 表规模与桶数
+  struct InsertStats {
+    std::size_t n_new   = 0;   // 本窗口新建体素数（触发 hash insert 的点）
+    std::size_t n_evict = 0;   // 本窗口因容量上限被淘汰的体素数
+  };
+  InsertStats takeStats() { InsertStats s = stats_; stats_ = InsertStats{}; return s; }
+  std::size_t mapSize()     const { return data_.size(); }
+  std::size_t bucketCount() const { return grids_.bucket_count(); }
 
   void insert(const Points& cloud_world);
   void printInfo() const;
@@ -292,6 +313,7 @@ private:
 
   DATA_LIST data_;
   tsl::robin_map<KEY, DATA_ITER, HASH_VEC> grids_;
+  InsertStats stats_;
 
   std::vector<uint8_t*> flat_search_ptrs_;
   int group_idx_max_;
@@ -329,10 +351,12 @@ void OctVoxMap<Point, Scalar>::insert(const Points& cloud_world){
         std::forward_as_tuple(key),
         std::forward_as_tuple(pt, local_idx, origin, sub_resolution_));
       grids_.insert(std::make_pair(key, data_.begin()));
+      ++stats_.n_new;
       
       if (data_.size() >= capacity_) {
         grids_.erase(data_.back().first);
         data_.pop_back();
+        ++stats_.n_evict;
       }
     } else {
       iter->second->second.AddPoint(pt, local_idx);

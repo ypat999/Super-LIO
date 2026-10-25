@@ -166,6 +166,15 @@ protected:
   double base_normal_sigma_      = 0.05;
   double base_plane_fit_         = 0.15;
   double base_huber_             = 0.05;
+  // ===== 细通道（M.27）：平面拟合拒绝点的 point-to-point 救援观测 =====
+  // p_body：体轴系点（float，与 points_body_v3_ 同源）；p_map：世界系最近地图原始点。
+  // 仅 UpdateObserve 首轮收集，后续轮次沿用关联、用当前位姿重算残差。
+  struct FineCand { BASIC::V3 p_body; BASIC::V3d p_map; };
+  std::vector<FineCand> fine_cands_;
+  // 本帧细通道统计（最后一次 KF 迭代的结果，供 [FineCh] 日志）
+  int    fine_n_used_   = 0;    // 通过关联距离筛选并计入 H_f 的点数
+  double fine_gain_      = 0.0;  // λ_min(H+H_f)/λ_min(H)，<1.5 未并入
+  bool   fine_applied_   = false;
   // ===== 坏帧护栏 =====
   double last_lidar_end_time_  = -1.0;   // 上一帧雷达 end_time
   int    guard_consec_skip_    = 0;      // 连续跳过帧数（安全阀计数）

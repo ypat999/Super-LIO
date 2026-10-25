@@ -209,6 +209,30 @@ namespace LI2Sup{
   extern double g_adaptive_plane_fit;
   extern double g_adaptive_huber;
 
+  /// ===== 细通道（M.27）：退化帧把"平面拟合拒绝点"以 point-to-point 并入 =====
+  /// 背景：墙角/扶手/窗框等细尺度点因 plane_fit 硬阈值被整点丢弃（地图里其实有），
+  /// 退化时这些点是粗通道之外唯一的新信息。设计见 M.27：粗通道判退化（去抖状态
+  /// degeneracy_active_）→ 细通道把拒绝点沿"到最近地图原始点连线"建伪平面残差
+  /// → λ_min 增益门控通过才并入（区分"有扶手可救"与"真空走廊"）。
+  /// last_HTVH 保持纯平面 H，退化检测不包含细通道贡献，防自激振荡。
+  extern bool   g_fine_channel_en;
+  /// 细通道观测权重（独立于 obs_weight；细点噪声大，默认远小于 1000）
+  extern double g_fine_channel_weight;
+  /// 每帧候选点上限（超出不再收集）
+  extern int    g_fine_channel_max_points;
+  /// 关联距离上限（米）：到最近地图原始点超过此值不作为候选
+  extern double g_fine_max_dist;
+  /// λ_min 增益门控阈值：λ_min(H+H_f)/λ_min(H) ≥ 此值才并入（1.0=无增益即弃用）
+  extern double g_fine_channel_min_gain;
+
+  /// ===== M.29 地图哈希尖峰治理 =====
+  /// 构造时对 grids_ 做 reserve：只改桶数量、不改键集与 LRU 淘汰顺序，
+  /// 因此位姿输出应逐字节不变；作用是消除扩容期整表重哈希造成的偶发尖峰
+  /// （实测 1f UpdateMap 单窗口 max 92 ms，其中 MapInsert 独占 92.07 ms）。
+  extern bool   g_map_hash_reserve_en;
+  /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity（默认 2e6）
+  extern int    g_map_hash_reserve_size;
+
   /// ===== 实验埋点 =====
   /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
   extern int g_debug_level;

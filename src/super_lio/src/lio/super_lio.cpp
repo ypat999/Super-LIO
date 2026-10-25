@@ -1533,6 +1533,12 @@ void SuperLIO::Observe(){
   std::fill(_w_quality.begin(), _w_quality.end(), 1.0f);
   if (debug) fit_res_vec_.clear();
 
+  // 细通道：清空本帧统计与候选（候选在 UpdateObserve 首轮收集，见平面拟合失败分支）
+  fine_cands_.clear();
+  fine_n_used_  = 0;
+  fine_gain_    = 0.0;
+  fine_applied_ = false;
+
   effect_knn_num_ = ptsize;
   // Don't iota effect_knn_idxs_ yet — first iteration uses direct indexing
 
@@ -1581,7 +1587,25 @@ void SuperLIO::Observe(){
         effect_knn_mask_[idx] = true;
         double fit_res = 0.0;
         effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
-        if(!effect_mask_[idx]) { ++n_plane_fail; continue; }
+        if(!effect_mask_[idx]) {
+          ++n_plane_fail;
+          // 细通道候选：邻域非平面（墙角/扶手/窗框等粗糙区）。取 KNN 中最近的
+          // 地图原始点做 point-to-point 关联，关联只在首轮做，后续轮次沿用。
+          if (g_fine_channel_en &&
+              static_cast<int>(fine_cands_.size()) < g_fine_channel_max_points) {
+            int best = 0;
+            for (int k = 1; k < top_K.count; ++k)
+              if (top_K.dist2_[k] < top_K.dist2_[best]) best = k;
+            if (static_cast<double>(top_K.dist2_[best]) <=
+                g_fine_max_dist * g_fine_max_dist) {
+              FineCand c;
+              c.p_body = point_body;
+              c.p_map  = top_K.points_[best].cast<double>();
+              fine_cands_.push_back(c);
+            }
+          }
+          continue;
+        }
 
         if (debug) fit_res_vec_.push_back(static_cast<scalar>(fit_res));
         // 法向质量加权：拟合残差越大（平面越"脏"），该点观测权重越低
@@ -1719,6 +1743,54 @@ void SuperLIO::Observe(){
 
     last_HTVH = sum_HTVH;   // 原始 Hessian（供埋点/退化检测，未经截断）
 
+    // ===== 细通道（M.27）：退化帧把"平面拟合拒绝点"以 point-to-point 并入 =====
+    // 触发：上一帧去抖后的 degeneracy_active_（与截断同源，避免本帧 cond 抖动开关）。
+    // 残差：把最近地图原始点 p_map 视作"过该点、法向 u=连线方向"的伪平面，
+    //       与平面残差同构（e = u·(p_world−p_map) = −dist），复用既有 J/Huber 约定。
+    // 门控：λ_min 增益——细通道必须实际改善最弱约束方向，否则整帧弃用
+    //       （区分"有扶手可救"与"真空走廊"，后者细通道只添噪）。
+    // 通道隔离：last_HTVH 已在上面取"纯平面 H"，退化检测/去抖不包含细通道贡献，
+    //           防止"细通道改善 cond → 退出退化 → 细通道关闭"的自激振荡。
+    if (g_fine_channel_en && degeneracy_active_ && !fine_cands_.empty()) {
+      M6d H_f = M6d::Zero();
+      V6d r_f = V6d::Zero();
+      int n_used = 0;
+      for (const auto& c : fine_cands_) {
+        const V3d p_world = (pose * c.p_body).cast<double>();
+        const V3d d_vec = c.p_map - p_world;
+        const double dist = d_vec.norm();
+        if (dist > g_fine_max_dist || dist < 1e-3) continue;  // 迭代后走远/重合则弃
+        const V3d u = d_vec / dist;
+        const V3d nb = R_transpose * u;
+        const V3d p_body_d = c.p_body.cast<double>();
+        V6d J;
+        J.head<3>() = p_body_d.cross(nb);
+        J.tail<3>() = u;
+        const double e = -dist;                       // 与平面残差同符号约定
+        double w = g_fine_channel_weight;             // 独立权重：细点噪声大
+        const double huber_delta = g_huber_delta_base +
+                                   g_huber_delta_scale * p_body_d.norm();
+        if (dist > huber_delta) w *= huber_delta / dist;
+        H_f += J * w * J.transpose();
+        r_f -= J * w * e;
+        ++n_used;
+      }
+      if (n_used >= 5) {
+        Eigen::SelfAdjointEigenSolver<M6d> es0(sum_HTVH);
+        Eigen::SelfAdjointEigenSolver<M6d> es1(sum_HTVH + H_f);
+        if (es0.info() == Eigen::Success && es1.info() == Eigen::Success) {
+          const double lmin0 = std::max(es0.eigenvalues().minCoeff(), 1e-12);
+          fine_gain_ = es1.eigenvalues().minCoeff() / lmin0;
+          if (fine_gain_ >= g_fine_channel_min_gain) {
+            sum_HTVH += H_f;
+            sum_HTVr += r_f;
+            fine_applied_ = true;
+            fine_n_used_  = n_used;
+          }
+        }
+      }
+    }
+
     // 退化"响应"之一：截断。用**上一帧去抖后**的退化状态驱动，不用本帧原始 cond，
     // 否则帧级抖动会让约束每两帧开一次关一次（实测 116 次翻转）。
     if (g_degeneracy_truncate_en && degeneracy_active_) {
@@ -1739,7 +1811,8 @@ void SuperLIO::Observe(){
   // ===== 退化检测 + 去抖状态机（每帧一次，用最后迭代的原始 Hessian）=====
   // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
   // 滞回（进 cond>thr，出 cond<thr·hysteresis）+ 最短持续帧数，避免帧级抖动。
-  if (debug || g_degeneracy_detect_en || g_adaptive_param_en || g_degeneracy_truncate_en) {
+  if (debug || g_degeneracy_detect_en || g_adaptive_param_en || g_degeneracy_truncate_en ||
+      g_fine_channel_en) {
     DegeneracySig deg = computeDegeneracy(last_HTVH, g_degeneracy_threshold,
                                          g_degen_trans_only);
     degeneracy_cond_ = deg.ok ? deg.cond : 0.0;
@@ -1777,6 +1850,22 @@ void SuperLIO::Observe(){
                    << " active=" << (degeneracy_active_ ? 1 : 0)
                    << " effect_pts=" << n_effect;
       last_degen_log = now_degen;
+    }
+  }
+
+  // 细通道运行状态（2 s 限频）：cands=本帧候选数 used=计入 H_f 的点数
+  // gain=λ_min 增益（<min_gain 时 applied=0 即整帧弃用）
+  if (g_fine_channel_en) {
+    static auto last_fine_log = std::chrono::steady_clock::now();
+    auto now_fine = std::chrono::steady_clock::now();
+    if (std::chrono::duration<double>(now_fine - last_fine_log).count() > 2.0) {
+      LOG(WARNING) << "[FineCh] cands=" << fine_cands_.size()
+                   << " used=" << fine_n_used_
+                   << " gain=" << fine_gain_
+                   << " applied=" << (fine_applied_ ? 1 : 0)
+                   << " degen=" << (degeneracy_active_ ? 1 : 0)
+                   << " cond=" << degeneracy_cond_;
+      last_fine_log = now_fine;
     }
   }
 
@@ -2029,6 +2118,14 @@ void SuperLIO::printTimeRecord(){
 void SuperLIO::periodicTimeReport(){
   if(!g_time_eva) return;
   time_record_.PrintAndClear();
+  if (ivox_) {
+    // M.29：把插入统计与表规模打到同一个计时窗口，便于判断尖峰是否与扩容/淘汰同窗
+    auto s = ivox_->takeStats();
+    std::cout << " > [ MapStats ] size=" << ivox_->mapSize()
+              << " buckets=" << ivox_->bucketCount()
+              << " new_voxel=" << s.n_new
+              << " evict=" << s.n_evict << std::endl;
+  }
   data_wrapper_->printLatencies();
   data_wrapper_->clearLatencies();
 }
