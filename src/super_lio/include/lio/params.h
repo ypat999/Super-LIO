@@ -233,6 +233,27 @@ namespace LI2Sup{
   /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity（默认 2e6）
   extern int    g_map_hash_reserve_size;
 
+  /// ===== M.31 场景自动档（启动窗口判定一次，全程固定） =====
+  /// 依据 M.30 实测：瞬时/短窗退化指标在两场景间重叠，但"最近 W 秒内
+  /// deg_cond > thr 的帧占比"能干净分离（楼梯 cond 是 ~40 s 周期振荡、永不超
+  /// 223；1f 走廊持续高位）。实测 W=120 s/thr=150/gate=0.5 时楼梯误判 0.00%、
+  /// 1f 覆盖 94.9%。此处只用它**判定一次**，不做逐帧切换——A 线是刀刃平衡，
+  /// 反复抖动风险远大于收益。
+  extern bool   g_auto_scene_en;
+  /// 判定窗口（秒）；窗口未满时不切换
+  extern double g_auto_scene_window;
+  /// 退化阈值：deg_cond 超过此值记为"高退化帧"
+  extern double g_auto_scene_cond_thr;
+  /// 门限：窗口内高退化帧占比 > 此值 ⇒ 判为走廊
+  extern double g_auto_scene_gate;
+  /// 楼梯档（A 线；窗口未满时也用它——误用 B 线在楼梯的代价远大于反之）
+  extern double g_auto_scene_stair_na;
+  extern bool   g_auto_scene_stair_nw;
+  extern double g_auto_scene_stair_nw_sigma;
+  /// 走廊档（B 线）：na 与法向权重
+  extern double g_auto_scene_corridor_na;
+  extern bool   g_auto_scene_corridor_nw;
+
   /// ===== 实验埋点 =====
   /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
   extern int g_debug_level;

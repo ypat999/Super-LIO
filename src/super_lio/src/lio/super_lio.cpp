@@ -448,7 +448,9 @@ bool SuperLIO::kf_init(){
 
   ESKF::Options options;
   options.gyro_var_ = g_imu_ng;
-  options.acce_var_ = g_imu_na;
+  // M.31 场景自动档：窗口未满时走楼梯档（A 线），因此初值也取楼梯档 na，
+  // 保证第 1 帧起就是 A 线行为（冷启动用 B 线会在楼梯上先灌入不可恢复的漂移）。
+  options.acce_var_ = g_auto_scene_en ? g_auto_scene_stair_na : g_imu_na;
   options.bias_gyro_var_ = g_imu_nbg;
   options.bias_acce_var_ = g_imu_nba;
   options.num_iterations_ = g_kf_max_iterations;
@@ -1515,7 +1517,13 @@ void SuperLIO::Observe(){
   // 参数自适应：用上一帧退化签名切换观测参数档（退化档 ↔ 静态基线）。
   // 观测侧参数只影响配准更新、不写地图（UpdateMap 全量插入，与这些参数无关），
   // 运行时切换安全；这些全局仅在本线程的 Observe 路径被读取。
-  if (g_adaptive_param_en) {
+  // M.31 场景自动档优先于退化档：场景判定（慢时间尺度）一旦给出结果，
+  // 观测参数就固定在该档，不再被帧级退化签名来回改（避免逐帧抖动）。
+  if (g_auto_scene_en) {
+    const bool stair = (!scene_decided_) || (!scene_corridor_);
+    g_normal_weight_en = stair ? g_auto_scene_stair_nw : g_auto_scene_corridor_nw;
+    if (stair) g_normal_sigma = g_auto_scene_stair_nw_sigma;
+  } else if (g_adaptive_param_en) {
     const bool degen = degeneracy_active_;
     g_normal_weight_en    = degen ? g_adaptive_normal_weight_en : base_normal_weight_en_;
     g_normal_sigma        = degen ? g_adaptive_normal_sigma    : base_normal_sigma_;
@@ -1812,7 +1820,7 @@ void SuperLIO::Observe(){
   // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
   // 滞回（进 cond>thr，出 cond<thr·hysteresis）+ 最短持续帧数，避免帧级抖动。
   if (debug || g_degeneracy_detect_en || g_adaptive_param_en || g_degeneracy_truncate_en ||
-      g_fine_channel_en) {
+      g_fine_channel_en || g_auto_scene_en) {
     DegeneracySig deg = computeDegeneracy(last_HTVH, g_degeneracy_threshold,
                                          g_degen_trans_only);
     degeneracy_cond_ = deg.ok ? deg.cond : 0.0;
@@ -1837,6 +1845,36 @@ void SuperLIO::Observe(){
         }
       } else {
         degen_state_cnt_ = 0;
+      }
+    }
+
+    // ===== M.31 场景自动档：启动窗口内累计高退化帧占比，满窗判定一次 =====
+    // 依据 M.30 §5：楼梯的 cond 是 ~40 s 周期振荡且全程不超过 223，1f 走廊
+    // 持续高位 ⇒ "窗口内高退化帧占比"能把"偶发退化"与"常态退化"分开，
+    // 实测 W=120 s/thr=150/gate=0.5 时楼梯误判 0、1f 覆盖 94.9%。
+    // 判定只做一次并固定到全程：A 线是刀刃平衡，逐帧抖动风险远大于收益。
+    if (g_auto_scene_en && !scene_decided_) {
+      const double t = kf_->GetSysState().timestamp;
+      if (scene_t0_ < 0.0) scene_t0_ = t;
+      ++scene_n_;
+      if (degeneracy_cond_ > g_auto_scene_cond_thr) ++scene_n_hi_;
+      if (scene_n_ > 0 && (t - scene_t0_) >= g_auto_scene_window) {
+        const double hi_frac = double(scene_n_hi_) / double(scene_n_);
+        scene_corridor_ = hi_frac > g_auto_scene_gate;
+        scene_decided_  = true;
+        kf_->SetAcceVar(scene_corridor_ ? g_auto_scene_corridor_na
+                                       : g_auto_scene_stair_na);
+        std::cout << "[AutoScene] decided=" << (scene_corridor_ ? "corridor(B)" : "stair(A)")
+                  << " hi_frac=" << hi_frac
+                  << " (thr=" << g_auto_scene_cond_thr
+                  << " gate=" << g_auto_scene_gate
+                  << " win=" << g_auto_scene_window << "s"
+                  << " frames=" << scene_n_ << ")"
+                  << " -> na=" << (scene_corridor_ ? g_auto_scene_corridor_na
+                                                   : g_auto_scene_stair_na)
+                  << " nw=" << (scene_corridor_ ? g_auto_scene_corridor_nw
+                                                : g_auto_scene_stair_nw)
+                  << std::endl;
       }
     }
   }

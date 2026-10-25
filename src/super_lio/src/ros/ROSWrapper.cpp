@@ -211,6 +211,33 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << "[Param] hash_map.reserve: en=" << g_map_hash_reserve_en
             << " size=" << g_map_hash_reserve_size << " (0=用 hash_capacity)";
 
+  // M.31 场景自动档：启动窗口判定一次后全程固定（默认关，关时行为不变）
+  node.declare_parameter<bool>("lio.auto_scene.en", false);
+  node.get_parameter("lio.auto_scene.en", g_auto_scene_en);
+  node.declare_parameter<double>("lio.auto_scene.window", 120.0);
+  node.get_parameter("lio.auto_scene.window", g_auto_scene_window);
+  node.declare_parameter<double>("lio.auto_scene.cond_thr", 150.0);
+  node.get_parameter("lio.auto_scene.cond_thr", g_auto_scene_cond_thr);
+  node.declare_parameter<double>("lio.auto_scene.gate", 0.5);
+  node.get_parameter("lio.auto_scene.gate", g_auto_scene_gate);
+  node.declare_parameter<double>("lio.auto_scene.stair_na", 0.3);
+  node.get_parameter("lio.auto_scene.stair_na", g_auto_scene_stair_na);
+  node.declare_parameter<bool>("lio.auto_scene.stair_nw", true);
+  node.get_parameter("lio.auto_scene.stair_nw", g_auto_scene_stair_nw);
+  node.declare_parameter<double>("lio.auto_scene.stair_nw_sigma", 0.035);
+  node.get_parameter("lio.auto_scene.stair_nw_sigma", g_auto_scene_stair_nw_sigma);
+  node.declare_parameter<double>("lio.auto_scene.corridor_na", 0.01);
+  node.get_parameter("lio.auto_scene.corridor_na", g_auto_scene_corridor_na);
+  node.declare_parameter<bool>("lio.auto_scene.corridor_nw", false);
+  node.get_parameter("lio.auto_scene.corridor_nw", g_auto_scene_corridor_nw);
+  LOG(INFO) << "[Param] auto_scene: en=" << g_auto_scene_en
+            << " win=" << g_auto_scene_window << "s thr=" << g_auto_scene_cond_thr
+            << " gate=" << g_auto_scene_gate
+            << " stair(na=" << g_auto_scene_stair_na << ",nw=" << g_auto_scene_stair_nw
+            << ",sig=" << g_auto_scene_stair_nw_sigma << ")"
+            << " corridor(na=" << g_auto_scene_corridor_na
+            << ",nw=" << g_auto_scene_corridor_nw << ")";
+
   // kf
   node.declare_parameter<int>("lio.kf.kf_type", 0);
   node.get_parameter("lio.kf.kf_type", g_kf_type);

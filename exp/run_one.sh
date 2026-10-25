@@ -70,6 +70,11 @@ FINE_CHANNEL_MIN_GAIN=${FINE_CHANNEL_MIN_GAIN:-1.5}
 # M.29 哈希预分配（默认开：只改桶数，不改行为；关掉可复现尖峰）
 HASH_RESERVE_EN=${HASH_RESERVE_EN:-true}
 HASH_RESERVE_SIZE=${HASH_RESERVE_SIZE:-0}
+# M.31 场景自动档（默认关）：启动窗口判定一次，全程固定
+AUTO_SCENE_EN=${AUTO_SCENE_EN:-false}
+AUTO_SCENE_WIN=${AUTO_SCENE_WIN:-120.0}
+AUTO_SCENE_THR=${AUTO_SCENE_THR:-150.0}
+AUTO_SCENE_GATE=${AUTO_SCENE_GATE:-0.5}
 FRAME_GAP_GUARD_EN=${FRAME_GAP_GUARD_EN:-false}
 FRAME_GAP_MAX=${FRAME_GAP_MAX:-0.2}
 IMU_COVER_MAX=${IMU_COVER_MAX:-0.03}
@@ -130,6 +135,10 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
     -e "s|__HASH_RESERVE_EN__|$HASH_RESERVE_EN|g" \
     -e "s|__HASH_RESERVE_SIZE__|$HASH_RESERVE_SIZE|g" \
+    -e "s|__AUTO_SCENE_EN__|$AUTO_SCENE_EN|g" \
+    -e "s|__AUTO_SCENE_WIN__|$AUTO_SCENE_WIN|g" \
+    -e "s|__AUTO_SCENE_THR__|$AUTO_SCENE_THR|g" \
+    -e "s|__AUTO_SCENE_GATE__|$AUTO_SCENE_GATE|g" \
     -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
     -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
     -e "s|__NORMAL_SIGMA__|$NORMAL_SIGMA|g" \
@@ -229,6 +238,10 @@ fi
   echo "fine_channel_min_gain=$FINE_CHANNEL_MIN_GAIN"
   echo "hash_reserve_en=$HASH_RESERVE_EN"
   echo "hash_reserve_size=$HASH_RESERVE_SIZE"
+  echo "auto_scene_en=$AUTO_SCENE_EN"
+  echo "auto_scene_win=$AUTO_SCENE_WIN"
+  echo "auto_scene_thr=$AUTO_SCENE_THR"
+  echo "auto_scene_gate=$AUTO_SCENE_GATE"
   echo "frame_gap_guard_en=$FRAME_GAP_GUARD_EN"
   echo "frame_gap_max=$FRAME_GAP_MAX"
   echo "imu_cover_max=$IMU_COVER_MAX"

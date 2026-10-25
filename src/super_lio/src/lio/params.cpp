@@ -144,6 +144,18 @@ namespace LI2Sup{
   bool   g_map_hash_reserve_en = true;
   int    g_map_hash_reserve_size = 0;
 
+  /// M.31 场景自动档（默认关；关时行为完全不变）
+  bool   g_auto_scene_en = false;
+  double g_auto_scene_window = 120.0;
+  double g_auto_scene_cond_thr = 150.0;
+  double g_auto_scene_gate = 0.5;
+  // 楼梯档 = A 线冠军参数（M.28-2）；走廊档 = B 线量产参数（M.29 §5）
+  double g_auto_scene_stair_na = 0.3;
+  bool   g_auto_scene_stair_nw = true;
+  double g_auto_scene_stair_nw_sigma = 0.035;
+  double g_auto_scene_corridor_na = 0.01;
+  bool   g_auto_scene_corridor_nw = false;
+
   /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
   int    g_debug_level = 0;
   bool   g_normal_weight_en = false;

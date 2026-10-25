@@ -127,6 +127,17 @@ public:
 
   /// ===== 埋点（lio.debug.level > 0 时由 SuperLIO 读取写 CSV）=====
   void SetDebug(bool on) { debug_ = on; }
+
+  /// M.31 运行时更新连续时间加速度噪声（场景自动档用）。
+  /// 只重建过程噪声 Q_ 的对角阵，不动 P_/名义状态；调用方须保证它在
+  /// Predict 线程之外（当前只在 Observe 内调用，同线程）。
+  /// na 直接对应 Q_ 的速度分量（BuildNoise 内部 ev = acce_var_，不做平方），
+  /// 因此 na 越大 → IMU 越不可信 → 雷达权重相对越大。
+  void SetAcceVar(double acce_var) {
+    if (!(acce_var > 0.0)) return;
+    options_.acce_var_ = acce_var;
+    BuildNoise(options_);
+  }
   int GetLastIters() const {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     return last_iters_;

@@ -166,6 +166,13 @@ protected:
   double base_normal_sigma_      = 0.05;
   double base_plane_fit_         = 0.15;
   double base_huber_             = 0.05;
+  // ===== 场景自动档（M.31）：启动窗口内累计高退化帧，满窗判定一次，全程固定 =====
+  // 只在 Observe 线程访问，无需加锁。
+  bool   scene_decided_   = false;   // 是否已完成判定
+  bool   scene_corridor_  = false;   // 判定结果：true=走廊（B 线）/ false=楼梯（A 线）
+  double scene_t0_        = -1.0;    // 窗口起点（首个参与累计帧的时间戳）
+  std::size_t scene_n_    = 0;       // 窗口内参与累计的帧数
+  std::size_t scene_n_hi_ = 0;       // 其中 deg_cond > 阈值的高退化帧数
   // ===== 细通道（M.27）：平面拟合拒绝点的 point-to-point 救援观测 =====
   // p_body：体轴系点（float，与 points_body_v3_ 同源）；p_map：世界系最近地图原始点。
   // 仅 UpdateObserve 首轮收集，后续轮次沿用关联、用当前位姿重算残差。
