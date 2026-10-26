@@ -254,6 +254,36 @@ namespace LI2Sup{
   extern double g_auto_scene_corridor_na;
   extern bool   g_auto_scene_corridor_nw;
 
+  /// ===== M.32 在线时延估计（侧车，借鉴 Ultra-Fusion TimeSync + 锁定状态机）=====
+  /// 定位：自动诊断器 + 实机保险——回答"lidar↔IMU 时延到底多大"（M.10/5d 的
+  /// 扫参只覆盖 ±3 ms 且已证时延不是楼梯 bag 的漂移主因，扫参无法发现更大的
+  /// 真实时延；换固件/换雷达后台行为变化时这是最常见的隐性坑）。
+  /// 模型：body=雷达系（wrapper 已把 IMU 旋进雷达系）。残差对时延修正 δ 的
+  ///       雅可比 c = ∂r/∂δ = nb^T·(ω×p_body + v_body)，即 r(δ) ≈ r + c·δ，
+  ///       最小二乘解 δ_est = −Σc·r / Σc²（渐消加权）。
+  /// 状态机：ESTIMATING → LOCKED（滑窗极差 < tol 且信息帧够）；
+  ///        apply_en 时写入 g_lidar_time_offset_extra（单位延迟反馈到下一帧点时间戳）。
+  ///        锁定值默认只打印不应用（Ultra-Fusion apply_locked_result_to_slam
+  ///        默认 false 的同款设计：标定结果先人工确认再生效）。
+  extern bool   g_calib_td_en;
+  /// 渐消遗忘因子（0<λ<1，越小窗口越短；0.995 ≈ 有效窗口 200 帧 ≈ 20 s）
+  extern double g_calib_td_lambda;
+  /// 帧信息量门限：本帧 RMS(c) 低于 sqrt(此值) 不并入（静止/低速帧 c≈0，
+  /// 硬解只有噪声）。单位 (m/s)²，默认 0.01 ⇒ 需 RMS 速度相关项 ≥ 0.1 m/s。
+  extern double g_calib_td_cc_gate;
+  /// 外点剔除：|r| 超过此值（米）的点不并入（动态物体/错关联）
+  extern double g_calib_td_outlier;
+  /// 锁定窗口（帧）：最近 N 个信息帧 δ_est 的极差持续小于 tol 则 LOCKED
+  extern int    g_calib_td_lock_win;
+  /// 锁定极差容限（秒）
+  extern double g_calib_td_lock_tol;
+  /// 锁定后自动应用（默认 false：只打印 [TdCalib] LOCKED，人工确认后置 true）
+  extern bool   g_calib_td_apply_en;
+  /// M.32 时延侧车的运行时修正量（锁定且 apply_en 时写入；wrapper 点时间戳
+  /// 读取处追加该项。x + 0.0 逐位恒等 ⇒ 默认关闭时不改变任何计算结果，md5 不变）。
+  /// 跨线程（process 线程写 / lidar 回调线程读），故用 atomic。
+  extern std::atomic<double> g_lidar_time_offset_extra;
+
   /// ===== 实验埋点 =====
   /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
   extern int g_debug_level;

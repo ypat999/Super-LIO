@@ -238,6 +238,30 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " corridor(na=" << g_auto_scene_corridor_na
             << ",nw=" << g_auto_scene_corridor_nw << ")";
 
+  // M.32 在线时延估计（侧车；默认关）
+  node.declare_parameter<bool>("lio.calib_td.en", false);
+  node.get_parameter("lio.calib_td.en", g_calib_td_en);
+  node.declare_parameter<double>("lio.calib_td.lambda", 0.995);
+  node.get_parameter("lio.calib_td.lambda", g_calib_td_lambda);
+  node.declare_parameter<double>("lio.calib_td.cc_gate", 0.01);
+  node.get_parameter("lio.calib_td.cc_gate", g_calib_td_cc_gate);
+  node.declare_parameter<double>("lio.calib_td.outlier", 0.20);
+  node.get_parameter("lio.calib_td.outlier", g_calib_td_outlier);
+  node.declare_parameter<int>("lio.calib_td.lock_win", 300);
+  node.get_parameter("lio.calib_td.lock_win", g_calib_td_lock_win);
+  node.declare_parameter<double>("lio.calib_td.lock_tol", 1.0e-3);
+  node.get_parameter("lio.calib_td.lock_tol", g_calib_td_lock_tol);
+  node.declare_parameter<bool>("lio.calib_td.apply_en", false);
+  node.get_parameter("lio.calib_td.apply_en", g_calib_td_apply_en);
+  LOG(INFO) << "[Param] calib_td: en=" << g_calib_td_en
+            << " lambda=" << g_calib_td_lambda
+            << " cc_gate=" << g_calib_td_cc_gate
+            << " outlier=" << g_calib_td_outlier
+            << " lock_win=" << g_calib_td_lock_win
+            << " lock_tol=" << g_calib_td_lock_tol * 1e3 << "ms"
+            << " apply_en=" << g_calib_td_apply_en
+            << " base_toff=" << g_lidar_time_offset * 1e3 << "ms";
+
   // kf
   node.declare_parameter<int>("lio.kf.kf_type", 0);
   node.get_parameter("lio.kf.kf_type", g_kf_type);
@@ -964,6 +988,9 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   lidar_data.pc_full->reserve(ptsize + 1);
 
   double offset_time = 0.0;
+  // M.32 时延侧车修正量：每个点云只读一次原子量，避免逐点原子读开销。
+  // 未开启标定/未锁定时恒为 0.0 ⇒ x + 0.0 逐位恒等，不改变任何计算结果。
+  const double td_extra = g_lidar_time_offset_extra.load();
   // 一次遍历同时填充全量点(pc_full)与抽稀点(pc)，避免重复扫描 msg->points。
   // 全量点与抽稀点共用同一套 range/intensity 过滤，仅抽样比例不同。
   for(std::size_t _i = 0; _i < ptsize; ++_i){
@@ -974,7 +1001,7 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
       if(dis > g_blind2 && dis < g_maxrange2){
         if(g_intensity_filter_en && pt.reflectivity < g_intensity_min) continue;
         offset_time = pt.offset_time * 1e-9;   // 帧尾基准不变
-        const double pt_time = offset_time + g_lidar_time_offset;
+        const double pt_time = offset_time + g_lidar_time_offset + td_extra;
         lidar_data.pc_full->emplace_back(pt.x, pt.y, pt.z, pt.reflectivity, pt_time);
         // filter_rate 抽稀：与原先 for(_i=offset; _i<ptsize; _i+=rate) 等价
         if(_i >= (std::size_t)g_filter_offset &&
@@ -1093,6 +1120,8 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   }
 
   double max_offset_time = 0.0;
+  // M.32 时延侧车修正量（每帧读一次；未标定时恒 0.0，逐位恒等）
+  const double td_extra = g_lidar_time_offset_extra.load();
 
   // Helper: read offset_time for point at index k
   auto read_offset_time = [&](size_t k) -> double {
@@ -1120,7 +1149,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     float intensity = has_intensity ? read_float(k, off_intensity) : 1.0f;
     if (g_intensity_filter_en && intensity < g_intensity_min) return false;
     double ot = read_offset_time(k);
-    lidar_data.pc->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset);
+    lidar_data.pc->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset + td_extra);
     if (ot > max_offset_time) max_offset_time = ot;
     return true;
   };
@@ -1171,7 +1200,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     if (g_intensity_filter_en && intensity < g_intensity_min) continue;
     double ot = read_offset_time(i);
     if (ot > max_offset_time) max_offset_time = ot;
-    lidar_data.pc_full->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset);
+    lidar_data.pc_full->emplace_back(x, y, z, intensity, ot + g_lidar_time_offset + td_extra);
   }
 
   // 更新偏移量（对称振荡采样：交替从两端选取，覆盖更均匀）

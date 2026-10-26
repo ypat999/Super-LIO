@@ -4,6 +4,7 @@
 #define SUPER_LIO_H_
 
 #include <queue>
+#include <deque>
 #include <vector>
 #include <iostream>
 #include <cassert>
@@ -182,6 +183,23 @@ protected:
   int    fine_n_used_   = 0;    // 通过关联距离筛选并计入 H_f 的点数
   double fine_gain_      = 0.0;  // λ_min(H+H_f)/λ_min(H)，<1.5 未并入
   bool   fine_applied_   = false;
+  // ===== M.32 在线时延估计（侧车渐消最小二乘；默认关）=====
+  // 残差对 δ 的近似为 r(δ) ≈ r_obs - c·δ，故 S_cr/S_cc 的比即 δ 的 LS 解。
+  // λ 为遗忘因子，逐帧把累计量乘以 λ 实现指数加权（等价长度 ~1/(1-λ) 帧）。
+  double td_scc_        = 0.0;   // Σλ^k·Σ(w·c²)（加权，用于 LS 求解）
+  double td_scr_        = 0.0;   // Σλ^k·Σ(w·c·r)
+  double td_scc_frame_  = 0.0;   // 本帧 Σ(w·c²)
+  double td_scr_frame_  = 0.0;   // 本帧 Σ(w·c·r)
+  double td_c2_raw_     = 0.0;   // 本帧 Σc²（未加权，只用于信息量门控）
+  int    td_n_raw_      = 0;     // 本帧参与累加的点数
+  double td_est_        = 0.0;   // 当前估计（秒）
+  bool   td_locked_     = false;
+  bool   td_applied_    = false;
+  std::deque<double> td_hist_;   // 最近信息帧的 δ_est 序列，用于锁定判据
+  long   td_info_frames_ = 0;    // 累计并入的信息帧数
+  /// 每帧结束时结算：遗忘衰减 → 信息量门控 → 求 δ_est → 锁定判定 →（可选）应用
+  void finalizeTimeDelayCalib(double frame_omega_norm);
+
   // ===== 坏帧护栏 =====
   double last_lidar_end_time_  = -1.0;   // 上一帧雷达 end_time
   int    guard_consec_skip_    = 0;      // 连续跳过帧数（安全阀计数）

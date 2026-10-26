@@ -156,6 +156,16 @@ namespace LI2Sup{
   double g_auto_scene_corridor_na = 0.01;
   bool   g_auto_scene_corridor_nw = false;
 
+  /// M.32 在线时延估计（侧车；默认关，关时零计算、零行为变化）
+  bool   g_calib_td_en = false;
+  double g_calib_td_lambda = 0.995;
+  double g_calib_td_cc_gate = 0.01;   // (m/s)²：RMS(c) ≥ 0.1 m/s 才算信息帧
+  double g_calib_td_outlier = 0.20;
+  int    g_calib_td_lock_win = 300;   // 30 s @10Hz：5 s 窗口太短，会在 40 s 就假锁定
+  double g_calib_td_lock_tol = 1.0e-3; // 1 ms：实测该量长期只在 ±1 ms 内游走
+  bool   g_calib_td_apply_en = false;
+  std::atomic<double> g_lidar_time_offset_extra{0.0};
+
   /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
   int    g_debug_level = 0;
   bool   g_normal_weight_en = false;

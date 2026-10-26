@@ -75,6 +75,9 @@ AUTO_SCENE_EN=${AUTO_SCENE_EN:-false}
 AUTO_SCENE_WIN=${AUTO_SCENE_WIN:-120.0}
 AUTO_SCENE_THR=${AUTO_SCENE_THR:-150.0}
 AUTO_SCENE_GATE=${AUTO_SCENE_GATE:-0.5}
+# M.32 在线时延估计（默认关）：只估计不应用
+CALIB_TD_EN=${CALIB_TD_EN:-false}
+CALIB_TD_APPLY=${CALIB_TD_APPLY:-false}
 FRAME_GAP_GUARD_EN=${FRAME_GAP_GUARD_EN:-false}
 FRAME_GAP_MAX=${FRAME_GAP_MAX:-0.2}
 IMU_COVER_MAX=${IMU_COVER_MAX:-0.03}
@@ -139,6 +142,8 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__AUTO_SCENE_WIN__|$AUTO_SCENE_WIN|g" \
     -e "s|__AUTO_SCENE_THR__|$AUTO_SCENE_THR|g" \
     -e "s|__AUTO_SCENE_GATE__|$AUTO_SCENE_GATE|g" \
+    -e "s|__CALIB_TD_EN__|$CALIB_TD_EN|g" \
+    -e "s|__CALIB_TD_APPLY__|$CALIB_TD_APPLY|g" \
     -e "s|__DEBUG_LEVEL__|$DEBUG_LEVEL|g" \
     -e "s|__NORMAL_WEIGHT_EN__|$NORMAL_WEIGHT_EN|g" \
     -e "s|__NORMAL_SIGMA__|$NORMAL_SIGMA|g" \
@@ -242,6 +247,8 @@ fi
   echo "auto_scene_win=$AUTO_SCENE_WIN"
   echo "auto_scene_thr=$AUTO_SCENE_THR"
   echo "auto_scene_gate=$AUTO_SCENE_GATE"
+  echo "calib_td_en=$CALIB_TD_EN"
+  echo "calib_td_apply=$CALIB_TD_APPLY"
   echo "frame_gap_guard_en=$FRAME_GAP_GUARD_EN"
   echo "frame_gap_max=$FRAME_GAP_MAX"
   echo "imu_cover_max=$IMU_COVER_MAX"

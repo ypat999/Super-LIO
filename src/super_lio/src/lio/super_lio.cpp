@@ -1547,6 +1547,21 @@ void SuperLIO::Observe(){
   fine_gain_    = 0.0;
   fine_applied_ = false;
 
+  // M.32 时延侧车：本帧累加器清零。只在首轮累加（多轮迭代位姿不同，重复计入
+  // 会把同一批点算成多份独立观测，人为放大信息量）。
+  td_scc_frame_ = 0.0;
+  td_scr_frame_ = 0.0;
+  td_c2_raw_    = 0.0;
+  td_n_raw_     = 0;
+  // 时延雅可比 c = nb^T·(ω×p + v_body) 所需的运动量（体系角速度 + 体系速度）
+  V3d td_omega = V3d::Zero();
+  V3d td_v_body = V3d::Zero();
+  if (g_calib_td_en) {
+    const DynamicState ds = kf_->GetDynamicState();
+    td_omega = ds.w.cast<double>();
+    td_v_body = (ds.R.transpose() * ds.v).cast<double>();
+  }
+
   effect_knn_num_ = ptsize;
   // Don't iota effect_knn_idxs_ yet — first iteration uses direct indexing
 
@@ -1662,6 +1677,21 @@ void SuperLIO::Observe(){
             sum_HTVH.block<3, 3>(0, 0) += g_ground_weight * Jg * Jg.transpose();
             sum_HTVr.head<3>() -= g_ground_weight * Jg * eg;
           }
+        }
+
+        // M.32 时延侧车（首轮累加，用与主链路相同的权重 w）：
+        //   c = ∂r/∂δ = nb^T·(ω×p + v_body)
+        //   r(δ) ≈ r + c·δ  ⇒  δ_est = -Σc·r / Σc²
+        // 只收 |r| 在阈值内的点：动态物体/错关联的残差与时延无因果关系，
+        // 混进来会把估计拉向随机值。
+        if (g_calib_td_en && std::abs(error) <= g_calib_td_outlier) {
+          const double c_td = nb.dot(td_omega.cross(point_body_d) + td_v_body);
+          td_scc_frame_ += w * c_td * c_td;
+          td_scr_frame_ += w * c_td * static_cast<double>(error);
+          // 未加权量只用于门控：加权和里的 w 含 g_obs_weight（默认 1000），
+          // 拿它和绝对阈值比较会让门控形同虚设（任何帧都"有信息"）。
+          td_c2_raw_ += c_td * c_td;
+          ++td_n_raw_;
         }
       }
 
@@ -1815,6 +1845,10 @@ void SuperLIO::Observe(){
 
     iter_num++;
   });
+
+  // M.32 时延侧车结算：本帧观测已收敛，用首轮累加的 (Σc², Σc·r) 更新估计。
+  // 放在退化检测之前不影响任何既有逻辑（只读本帧累加量，不写滤波状态）。
+  if (g_calib_td_en) finalizeTimeDelayCalib(frame_omega_);
 
   // ===== 退化检测 + 去抖状态机（每帧一次，用最后迭代的原始 Hessian）=====
   // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
@@ -2011,6 +2045,83 @@ void SuperLIO::Observe(){
 }
 
 
+/// ===== M.32 在线时延估计（侧车）=====
+/// 观测方程：世界系点 P = R(p_body + δ·(ω×p_body + v_body)) + t，
+///           平面残差 r = n^T P + d，故 ∂r/∂δ = nb^T(ω×p + v) ≡ c。
+/// 渐消最小二乘：S_cc ← λ·S_cc + Σ(w·c²)，S_cr ← λ·S_cr + Σ(w·c·r)，
+///               δ_est = −S_cr/S_cc（w 与主链路观测同权，Huber 已压过外点）。
+/// 注意 Σ(w·c·r) 的期望：若真实时延为 δ*，则 r_obs ≈ −c·δ*，
+/// 故 Σ(w·c·r) ≈ −δ*·Σ(w·c²)，解得 δ_est ≈ δ*，符号自洽。
+/// 门控与锁定：
+///   1) 本帧 RMS(c) < sqrt(cc_gate) ⇒ 静止/低速帧，c≈0，硬解只有噪声，整帧不并入
+///      （只做遗忘衰减）。这也是"必须运动才能可观"的实现层表达。
+///      门控用未加权 Σc²/n（单位 m/s），不能用加权和：w 含 g_obs_weight=1000。
+///   2) 信息帧数不足 20 前不出估计值，避免前几帧抖出离谱数字。
+///   3) 最近 lock_win 个信息帧的估计极差 < lock_tol ⇒ LOCKED，此后冻结。
+///   4) LOCKED 后仅在 apply_en 为真时写入 g_lidar_time_offset_extra；
+///      默认只打印，人工确认后再生效（借鉴 Ultra-Fusion 的
+///      apply_locked_result_to_slam=false 设计）。
+void SuperLIO::finalizeTimeDelayCalib(double frame_omega_norm) {
+  // 1) 遗忘衰减（无论本帧是否有信息都衰减，保证估计跟随最近的运动激励）
+  td_scc_ *= g_calib_td_lambda;
+  td_scr_ *= g_calib_td_lambda;
+
+  const double c_rms2 = (td_n_raw_ > 0) ? (td_c2_raw_ / td_n_raw_) : 0.0;
+  const bool informative = (td_n_raw_ > 0) && (c_rms2 >= g_calib_td_cc_gate);
+  if (informative) {
+    td_scc_ += td_scc_frame_;
+    td_scr_ += td_scr_frame_;
+    ++td_info_frames_;
+  }
+
+  // 2) 信息帧不足时不给估计（保持上一次的值）
+  const int min_frames = 20;
+  if (td_info_frames_ < min_frames || td_scc_ <= 0.0) {
+    if (g_debug_level > 0) {
+      LOG(INFO) << "[TdCalib] warmup info_frames=" << td_info_frames_ << "/"
+                << min_frames << " c_rms=" << std::sqrt(c_rms2)
+                << " frame_omega=" << frame_omega_norm;
+    }
+    return;
+  }
+
+  const double est = -td_scr_ / td_scc_;
+  td_est_ = est;
+
+  if (!td_locked_) {
+    td_hist_.push_back(est);
+    while (static_cast<int>(td_hist_.size()) > std::max(2, g_calib_td_lock_win)) {
+      td_hist_.pop_front();
+    }
+    if (static_cast<int>(td_hist_.size()) >= std::max(2, g_calib_td_lock_win)) {
+      const auto mm = std::minmax_element(td_hist_.begin(), td_hist_.end());
+      const double range = *mm.second - *mm.first;
+      if (range < g_calib_td_lock_tol) {
+        td_locked_ = true;
+        LOG(INFO) << "[TdCalib] LOCKED td=" << est * 1e3 << " ms (range="
+                  << range * 1e3 << " ms over " << td_hist_.size()
+                  << " frames, info_frames=" << td_info_frames_ << ")";
+      }
+    }
+    if (g_debug_level > 0 && (td_info_frames_ % 50) == 0) {
+      LOG(INFO) << "[TdCalib] est=" << est * 1e3 << " ms scc=" << td_scc_
+                << " hist=" << td_hist_.size() << "/" << g_calib_td_lock_win
+                << " info_frames=" << td_info_frames_
+                << " frame_omega=" << frame_omega_norm;
+    }
+  }
+
+  // 3) 锁定后按需应用到点时间戳（单位延迟反馈：本帧估出的值下一帧才用）
+  if (td_locked_ && g_calib_td_apply_en && !td_applied_) {
+    g_lidar_time_offset_extra.store(est);
+    td_applied_ = true;
+    LOG(INFO) << "[TdCalib] APPLIED td=" << est * 1e3
+              << " ms → lidar_time_offset"
+              << " (base=" << g_lidar_time_offset * 1e3 << " ms, effective="
+              << (g_lidar_time_offset + est) * 1e3 << " ms, next frame onward)";
+  }
+}
+
 /// 更新 IVox 地图：将去畸变后的点云添加到地图中
 /// 分段计时：g_time_eva 时分别统计世界系变换 [MapTransform] 与地图插入 [MapInsert]。
 /// 实测 [UpdateMap] 峰值 ~17.8 ms，是整条链路最大的单帧尖峰，需要定位是变换还是插入。
@@ -2188,6 +2299,17 @@ void SuperLIO::printTimeRecord(){
 
 
 void SuperLIO::periodicTimeReport(){
+  // M.32 时延估计状态（开启时每分钟一行，不依赖 lio.eva.timer；关闭时无输出）
+  if (g_calib_td_en) {
+    std::cout << " > [ TdCalib ] est=" << td_est_ * 1e3 << " ms"
+              << " scc=" << td_scc_
+              << " info_frames=" << td_info_frames_
+              << " locked=" << (td_locked_ ? 1 : 0)
+              << " applied=" << (td_applied_ ? 1 : 0)
+              << " effective_toff=" << (g_lidar_time_offset +
+                                         g_lidar_time_offset_extra.load()) * 1e3
+              << " ms" << std::endl;
+  }
   if(!g_time_eva) return;
   time_record_.PrintAndClear();
   if (ivox_) {
