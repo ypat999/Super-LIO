@@ -109,6 +109,7 @@ namespace LI2Sup{
   extern bool g_visual_dense_body;
   extern int  g_pub_step;
   extern bool g_footprint_pub_en;
+  extern bool g_odom_cov_en;   // 是否填充 odom 协方差（默认关，全 0 输出）
   extern std::string g_tf_base_footprint_frame;
   extern std::string g_world_frame;
   extern std::string g_imu_frame;

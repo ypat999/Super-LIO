@@ -45,7 +45,12 @@
                               0.0, 1.0, 0.0, 
                               0.0, 0.0, 1.0]
     # lio.extrinsic.odom_robo: [0.05, 0.0, -0.1, 0.0, 0.0, 0.0]
-    lio.extrinsic.odom_robo: [0.05, 0.0, -0.1, 180.0, -30.0, 0.0]
+    # base_link 相对 IMU/livox 的外参（x, y, z, roll, pitch, yaw，单位 m/deg）。
+    # 必须与 launch 中 livox_frame -> base_link 静态 TF
+    # [-0.05, 0, 0.05, yaw=180°, pitch=210°, roll=0] 完全等价，否则
+    # /lio/robo/odom 与 TF 树的 base_link 不重合。旋转两种欧拉分解结果相同，
+    # 平移需满足 -R(odom_robo)·t = (-0.05, 0, 0.05) ⇒ t = (0.018301, 0, 0.068301)。
+    lio.extrinsic.odom_robo: [0.018301, 0.0, 0.068301, 180.0, -30.0, 0.0]
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: 0.25
@@ -64,6 +69,10 @@
     lio.output.map_body: true
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: true
+    # odom 协方差开关（默认关）：关闭后 /lio/odom 与 /lio/robo/odom 的 covariance
+    # 全为 0，不再逐 IMU 帧计算后验方差；PX4 ev_pos_control 有
+    # max(EKF2_EVP_NOISE^2, 0.01^2) 地板，0 会被抬回名义噪声。
+    lio.output.odom_cov_en: false
     lio.output.tf_base_footprint_frame: "base_footprint"
     # 世界坐标系的TF帧名
     lio.output.world_frame: "world"
