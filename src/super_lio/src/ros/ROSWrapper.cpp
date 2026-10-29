@@ -279,6 +279,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] output/footprint_pub_en: "
             << (g_footprint_pub_en ? "true" : "false") << RESET;
 
+  LOG(INFO) << GREEN << " ---> [Param] output/odom_cov_en: "
+            << (g_odom_cov_en ? "true" : "false") << RESET;
+
   LOG(INFO) << GREEN << " ---> [Param] output/tf_base_footprint_frame: "
             << g_tf_base_footprint_frame << RESET;
 
@@ -517,6 +520,7 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.output.dense_body") g_visual_dense_body = p.as_bool();
         else if (name == "lio.output.pub_step") g_pub_step = p.as_int();
         else if (name == "lio.output.footprint_pub_en") g_footprint_pub_en = p.as_bool();
+        else if (name == "lio.output.odom_cov_en") g_odom_cov_en = p.as_bool();
         else if (name == "lio.dynamic_removal.enable") g_dynamic_removal_enable = p.as_bool();
         else if (name == "lio.dynamic_removal.method") g_dynamic_removal_method = p.as_int();
         else if (name == "lio.dynamic_removal.grid_size") g_dynamic_removal_grid_size = p.as_double();
@@ -747,7 +751,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       // 入队时快照后验方差：P_ 只在 LiDAR 观测更新时变化，同一 LiDAR 周期内的
       // IMU 帧共用同一份后验是正确行为；但绝不能在发布线程现读，
       // 否则队列积压时协方差会与 timestamp 错位（制造假创新）。
-      if (eskf_) {
+      if (eskf_ && g_odom_cov_en) {
         out.cov_diag_pv   = eskf_->GetCovDiagPV();
         out.cov_diag_rot  = eskf_->GetCovDiagRot();
         out.need_converge = eskf_->NeedConverge();
@@ -1054,6 +1058,15 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
                                        const BASIC::V3& cov_diag_rot,
                                        bool need_converge)
 {
+  if (!g_odom_cov_en) {
+    // 协方差输出关闭（默认）：保持全 0，不做任何后验方差计算。
+    // 下游（通信节点）不再做 Σ_NED=RΣRᵀ 变换，PX4 ev_pos_control 用
+    // max(EKF2_EVP_NOISE², 0.01²) 抬回名义噪声，不会被当成"绝对真值"。
+    odom.pose.covariance.fill(0.0);
+    odom.twist.covariance.fill(0.0);
+    return;
+  }
+
   // ---- 地板值（不可省）----
   // 信息式更新在退化方向（长走廊、单面墙、单向特征）上会让 P 收敛到极小，
   // 把 1e-9 发给飞控等于告诉它"该方向 odom 是绝对真值"，会直接把估计器带崩。
@@ -1301,45 +1314,56 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 
 
 void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
+  // /lio/odom 与 IMU 频率的 /lio/robo/odom 输出同一坐标系（base_link 本体），
+  // 对激光修正后的 IMU 系后验施加 lio.extrinsic.odom_robo。
+  // 这样 10Hz 的激光修正结果与 200Hz 的 IMU 推算结果可直接互换，不再差一个本体偏移。
+  const V3 r_imu_to_robo = -g_odom_robo.R_ * g_odom_robo.t_;
+  const V3 robo_position = state.R.R_ * r_imu_to_robo + state.p;
+  const M3 robo_rotation = state.R.R_ * g_odom_robo.R_;
+
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = g_world_frame;
-  odom.child_frame_id = g_imu_frame;
+  odom.child_frame_id = "base_link";
 
   odom.header.stamp = toRosTime(state.timestamp);
-  odom.pose.pose.position.x = state.p[0];
-  odom.pose.pose.position.y = state.p[1];
-  odom.pose.pose.position.z = state.p[2];
+  odom.pose.pose.position.x = robo_position[0];
+  odom.pose.pose.position.y = robo_position[1];
+  odom.pose.pose.position.z = robo_position[2];
 
+  // IMU 系四元数仍用于下面 world->imu 的 TF 广播
   V4 temp_q = state.R.coeffs();
-  odom.pose.pose.orientation.x = temp_q[0];
-  odom.pose.pose.orientation.y = temp_q[1];
-  odom.pose.pose.orientation.z = temp_q[2];
-  odom.pose.pose.orientation.w = temp_q[3];
+  {
+    Quat robo_quat(robo_rotation);
+    robo_quat.normalize();
+    odom.pose.pose.orientation.x = robo_quat.x();
+    odom.pose.pose.orientation.y = robo_quat.y();
+    odom.pose.pose.orientation.z = robo_quat.z();
+    odom.pose.pose.orientation.w = robo_quat.w();
+  }
 
-  // REP 103: twist must be in child_frame (body/imu frame)
-  const V3 v_body = state.R.R_.transpose() * state.v;
+  // REP 103: twist must be in child_frame (base_link body frame)
+  const V3 v_imu_body = state.R.R_.transpose() * state.v;
+  const V3 v_body = g_odom_robo.R_.transpose() * (v_imu_body + body_omega.cross(r_imu_to_robo));
   odom.twist.twist.linear.x = v_body[0];
   odom.twist.twist.linear.y = v_body[1];
   odom.twist.twist.linear.z = v_body[2];
 
-  odom.twist.twist.angular.x = body_omega[0];
-  odom.twist.twist.angular.y = body_omega[1];
-  odom.twist.twist.angular.z = body_omega[2];
+  const V3 w_body = g_odom_robo.R_.transpose() * body_omega;
+  odom.twist.twist.angular.x = w_body[0];
+  odom.twist.twist.angular.y = w_body[1];
+  odom.twist.twist.angular.z = w_body[2];
 
   // /lio/odom 也补齐协方差：避免"一条有、一条全 0"导致下游拿错源。
   // 此处在 process 线程内即时快照，与 state.timestamp 同属最近一次观测更新后的后验。
   if (eskf_) {
-    fillOdometryCovariance(odom, state.R.R_, eskf_->GetCovDiagPV(),
+    fillOdometryCovariance(odom, robo_rotation, eskf_->GetCovDiagPV(),
                            eskf_->GetCovDiagRot(), eskf_->NeedConverge());
   }
-  pub_odom_->publish(odom);    // imu frame -> lidar frequency
-
-  V3 robo_position = state.R.R_ * ( - g_odom_robo.R_ * g_odom_robo.t_) + state.p;
+  pub_odom_->publish(odom);    // base_link frame -> lidar frequency
 
   if(g_2_robot){
     static auto pub_msg2uav_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/mavros/vision_pose/pose", 10);
-    M3 robo_rotation = state.R.R_ * g_odom_robo.R_;
     msg2uav_.header.stamp = odom.header.stamp;
     msg2uav_.pose.position.x = robo_position[0];
     msg2uav_.pose.position.y = robo_position[1];

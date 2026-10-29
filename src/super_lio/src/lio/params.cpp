@@ -80,6 +80,7 @@ namespace LI2Sup{
   bool g_visual_dense_body = false;
   int  g_pub_step;
   bool g_footprint_pub_en = true;
+  bool g_odom_cov_en = false;
   string g_tf_base_footprint_frame = "base_footprint";
   string g_world_frame = "world";
   string g_imu_frame = "imu";
