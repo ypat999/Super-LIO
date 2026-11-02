@@ -83,6 +83,11 @@ public:
   using Ptr = std::shared_ptr<ROSWrapper>;
   bool sync_measure(MeasureGroup&);
 
+  /// 看门狗用：非阻塞读取同步缓冲状态（try_lock，拿不到锁立即返回 false，
+  /// 绝不阻塞调用线程 —— 停摆现场恰恰可能是缓冲锁被占住）。
+  bool getBufferStats(size_t& lidar_n, size_t& imu_n,
+                      double& last_imu_stamp, double& last_lidar_stamp);
+
   void setESKF(ESKF::Ptr& eskf) { eskf_ = eskf;}
   
   // 设置SuperLIO实例的引用

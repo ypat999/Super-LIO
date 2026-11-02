@@ -1,5 +1,7 @@
 #include "lio/ESKF.h"
 
+#include <glog/logging.h>
+
 using namespace BASIC;
 
 namespace LI2Sup{
@@ -144,6 +146,17 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
   double dt = imu.secs - forward_time_;
 
   if(dt < 0 || dt > 0.2){
+    // 前向积分基准必须在这里重新对齐。原实现直接 return，forward_time_ 停在旧值，
+    // 之后的每一帧 dt 都会继续超限（dt 单调增大），IMU 侧的 TF/odom 会永久停摆，
+    // 且只有 /map_save 触发的 ResetIMUIntegration() 才能解开 —— 重着陆造成的
+    // 单次 IMU 断档（回调被饿死 > 200ms / 时间戳跳变）就会把整条链路锁死。
+    forward_time_ = imu.secs;
+    forward_last_imu_ = imu;
+    static int warn_cnt = 0;
+    if(++warn_cnt % 50 == 1){
+      LOG(WARNING) << "[ESKF] IMU 前向积分时间断档 " << dt * 1000.0
+                   << " ms，已重新对齐基准（累计 " << warn_cnt << " 次）";
+    }
     return false;
   }
 

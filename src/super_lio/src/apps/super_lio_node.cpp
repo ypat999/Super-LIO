@@ -40,9 +40,10 @@ int main(int argc, char** argv){
     data_wrapper->getProcessCallbackGroup()
   );
 
-  // 性能统计定时器：lio.eva.timer 开启时每分钟输出一次并清零窗口；关闭时为空操作
+  // 周期任务定时器（1Hz）：每拍执行看门狗检查（停摆检测），
+  // 性能统计仍由 periodicTimeReport() 内部按 60 拍 = 60s 窗口输出并清零。
   auto report_timer = data_wrapper->create_wall_timer(
-    std::chrono::seconds(60),
+    std::chrono::seconds(1),
     [lio]() { lio->periodicTimeReport(); },
     data_wrapper->getReportCallbackGroup()
   );

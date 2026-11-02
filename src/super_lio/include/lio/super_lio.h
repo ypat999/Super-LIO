@@ -7,6 +7,7 @@
 #include <vector>
 #include <iostream>
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <thread>
 #include <mutex>
@@ -49,6 +50,10 @@ public:
   void resumeProcessing();
   bool isPaused() const;
   void resetIMUIntegration();
+
+  /// 看门狗：由独立回调组的定时器 1Hz 调用，检测整条实时链路是否停摆。
+  /// 与 process 线程解耦，因此即使 process 卡在持锁区里也能照常输出现场状态。
+  void watchdogCheck();
 
 protected:
   struct OutputData {
@@ -145,6 +150,14 @@ protected:
   int    guard_consec_skip_    = 0;      // 连续跳过帧数（安全阀计数）
   long   guard_skip_total_     = 0;      // 累计跳过帧数
   long   guard_last_log_frame_ = -10000; // 限频日志用
+
+  // ===== 看门狗 =====
+  // 心跳只在「一帧完整走完配准+建图+输出」后刷新；任何静默 return 都不会刷新，
+  // 因此停摆会被如实检出。日志 5s 限频，避免刷屏。
+  std::chrono::steady_clock::time_point last_ok_frame_wall_{};
+  std::chrono::steady_clock::time_point last_watchdog_log_wall_{};
+  bool watchdog_armed_ = false;
+  int  report_tick_count_ = 0;           // 1Hz 定时器 → 60s 打印窗口
 
   Timer time_record_;
 

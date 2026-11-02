@@ -1313,6 +1313,19 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 }
 
 
+/// 看门狗专用：try_lock 拿不到就立刻返回 false，避免看门狗自己被卡住。
+bool ROSWrapper::getBufferStats(size_t& lidar_n, size_t& imu_n,
+                                double& last_imu_stamp, double& last_lidar_stamp){
+  std::unique_lock<std::mutex> lock(buffers_mutex_, std::try_to_lock);
+  if(!lock.owns_lock()){ return false; }
+  lidar_n = lidar_buffer_.size();
+  imu_n = imu_buffer_.size();
+  last_imu_stamp = last_timestamp_imu_;
+  last_lidar_stamp = last_timestamp_lidar_;
+  return true;
+}
+
+
 void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   // /lio/odom 与 IMU 频率的 /lio/robo/odom 输出同一坐标系（base_link 本体），
   // 对激光修正后的 IMU 系后验施加 lio.extrinsic.odom_robo。
@@ -1710,6 +1723,22 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
   LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
   
   if (super_lio_) {
+    // 作用域守卫：无论 saveMap() 是正常返回、提前 return（g_save_map=false 等）
+    // 还是抛异常，都必须恢复 LIO 处理。否则 paused_ 会永久置位，表现为
+    // 「无日志 / 无 PCD / 服务无响应」的整条链路静默停摆。
+    struct ResumeGuard {
+      SuperLIO* lio = nullptr;
+      bool active = true;
+      ~ResumeGuard() {
+        if (active && lio) {
+          LOG(WARNING) << YELLOW << " ---> [Service] 未走到正常恢复分支，强制恢复 LIO 处理" << RESET;
+          lio->resumeProcessing();
+        }
+      }
+    };
+    ResumeGuard resume_guard;
+    resume_guard.lio = super_lio_.get();
+
     LOG(INFO) << YELLOW << " ---> [Service] Pausing LIO processing..." << RESET;
     super_lio_->pauseProcessing();
     
@@ -1721,6 +1750,7 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
     
     LOG(INFO) << YELLOW << " ---> [Service] Resuming LIO processing..." << RESET;
     super_lio_->resumeProcessing();
+    resume_guard.active = false;
     
     LOG(INFO) << YELLOW << " ---> [Service] Resetting IMU pre-integration..." << RESET;
     super_lio_->resetIMUIntegration();

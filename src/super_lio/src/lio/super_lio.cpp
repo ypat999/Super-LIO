@@ -388,6 +388,7 @@ void SuperLIO::stateProcess(){
     PublishBodyCloud();   // immediate body publish (low latency)
     Output();              // world cloud via queue
     caceSCPGOData();
+    last_ok_frame_wall_ = std::chrono::steady_clock::now();   // 看门狗心跳
     return;
   }
 
@@ -452,6 +453,7 @@ void SuperLIO::stateProcess(){
     }
     Output();                // world cloud via queue (high precision)
     enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+    last_ok_frame_wall_ = std::chrono::steady_clock::now();   // 看门狗心跳
   }
   caceSCPGOData();
 }
@@ -926,15 +928,22 @@ void SuperLIO::saveMap(){
     }
     
     {
+      // 有界等待：SaveThread 若卡在磁盘/IO 上，这里绝不能无限等 —— 调用方
+      // (/map_save) 持有 paused_=true，无限等会直接锁死整条实时链路。
       std::unique_lock<std::mutex> lock(save_mutex_);
-      save_cv_.wait(lock, [this]{
+      const bool drained = save_cv_.wait_for(lock, std::chrono::seconds(60), [this]{
         return save_queue_.empty();
       });
+      if(!drained){
+        LOG(WARNING) << YELLOW << " ---> [map_save] 等待 PCD 落盘超时 60s，剩余 "
+                     << save_queue_.size() << " 个片段（继续后续流程）" << RESET;
+      }
     }
     
     LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
 
     // Step 1: Run dynamic point removal on scans_*.pcd -> filtered_scans_*.pcd
+    bool dyn_ok = true;
     if(g_dynamic_removal_enable){
       LOG(INFO) << YELLOW << " ---> Running dynamic point removal (per-frame mode) ... " << RESET;
       std::string save_map_dir = g_save_map_dir;
@@ -944,7 +953,10 @@ void SuperLIO::saveMap(){
       std::string pcd_folder = save_map_dir + "/PCD";
       
       std::stringstream cmd;
-      cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
+      // timeout 兜底：dynamic_remove_node 是独立进程，异常时可能永不退出；
+      // 而它是在 /map_save 回调里同步执行的（此时 paused_=true），卡住就等于
+      // 整条实时链路被永久冻结，因此必须给进程级超时。
+      cmd << "timeout 600 taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
           << " --input_dir " << pcd_folder
           << " --output_dir " << pcd_folder
           << " --grid_size " << g_dynamic_removal_grid_size
@@ -974,12 +986,14 @@ void SuperLIO::saveMap(){
       if(ret == 0) {
         LOG(INFO) << GREEN << " ---> Dynamic point removal success. Filtered PCDs saved to: " << pcd_folder << RESET;
       } else {
-        LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret << RESET;
+        dyn_ok = false;
+        LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret
+                     << "（超时 600s 被杀时退出码为 124），回退为直接合并原始扫描" << RESET;
       }
     }
 
     // Step 2: Merge scans into final map
-    if(g_dynamic_removal_enable){
+    if(g_dynamic_removal_enable && dyn_ok){
       // Dynamic removal enabled: merge filtered_scans_*.pcd -> test.pcd
       LOG(INFO) << YELLOW << " ---> Merging filtered scans into " << g_map_name << " ... " << RESET;
       ProcessCaceMap(g_map_name, true);
@@ -992,7 +1006,7 @@ void SuperLIO::saveMap(){
       LOG(INFO) << YELLOW << " ---> Saving original unfiltered scans as " << ori_name << " ..." << RESET;
       ProcessCaceMap(ori_name, false);
     } else {
-      // Dynamic removal disabled: directly merge original scans_*.pcd -> test.pcd
+      // 动态剔除关闭或失败：直接合并原始 scans_*.pcd -> test.pcd
       LOG(INFO) << YELLOW << " ---> Merging original scans into " << g_map_name << " ... " << RESET;
       ProcessCaceMap(g_map_name, false);
     }
@@ -1244,6 +1258,23 @@ void SuperLIO::PublishBodyCloud() {
 void SuperLIO::DownSample(){
   voxel_grid_fliter_.setInputCloud(scan_undistort_full_);
   voxel_grid_fliter_.filter(ds_undistort_);
+
+  // 越界防护：Observe() 用点序号直接索引 effect_mask_[20000] / effect_knn_mask_[20000]，
+  // 并且以同一序号访问 abcd_vec_ / effect_knn_idxs_（均按 20000 预分配）。
+  // 点数一旦超限就是堆越界写，行为不可预测（静默错乱或卡死），因此在降采样出口
+  // 统一封顶，让 Observe / UpdateMap 看到一致的点数。
+  constexpr std::size_t kMaxObservePoints = 20000;
+  if(ds_undistort_->size() > kMaxObservePoints){
+    static long warn_cnt = 0;
+    if(++warn_cnt % 50 == 1){
+      LOG(WARNING) << "[DownSample] 单帧点数 " << ds_undistort_->size()
+                   << " 超过配准上限 " << kMaxObservePoints << "，已截断（累计 "
+                   << warn_cnt << " 帧）";
+    }
+    ds_undistort_->resize(kMaxObservePoints);
+    ds_undistort_->width = static_cast<uint32_t>(kMaxObservePoints);
+    ds_undistort_->height = 1;
+  }
 }
 
 
@@ -1587,11 +1618,65 @@ void SuperLIO::printTimeRecord(){
 }
 
 
+/// 周期任务：由 1Hz 定时器驱动。看门狗每拍都检查；性能统计仍按 60s 窗口打印。
 void SuperLIO::periodicTimeReport(){
+  watchdogCheck();
+
   if(!g_time_eva) return;
+  if(++report_tick_count_ < 60) return;
+  report_tick_count_ = 0;
+
   time_record_.PrintAndClear();
   data_wrapper_->printLatencies();
   data_wrapper_->clearLatencies();
+}
+
+
+/// 实时链路看门狗：心跳只在一帧完整走完（配准+建图+输出）后刷新，
+/// 因此任何静默 return / 持锁卡死都会如实体现在 idle 时间上。
+/// 本函数运行在独立回调组的定时器线程上，即使 process 线程卡在 ESKF 的持锁区里，
+/// 也仍能照常执行 —— 这正是原实现缺失的可观测性。
+void SuperLIO::watchdogCheck(){
+  const auto now = std::chrono::steady_clock::now();
+  if(!watchdog_armed_){
+    watchdog_armed_ = true;
+    last_ok_frame_wall_ = now;
+    last_watchdog_log_wall_ = now;
+    return;
+  }
+
+  const double idle_s = std::chrono::duration<double>(now - last_ok_frame_wall_).count();
+  if(idle_s < 3.0){ return; }
+  if(std::chrono::duration<double>(now - last_watchdog_log_wall_).count() < 10.0){ return; }
+  last_watchdog_log_wall_ = now;
+
+  // 逐段探测：try_lock 拿不到即说明有线程正卡在该段的持锁区里
+  size_t dense_n = 0, save_n = 0;
+  bool dense_locked = true, save_locked = true, dense_busy = false;
+  {
+    std::unique_lock<std::mutex> lk(dense_mutex_, std::try_to_lock);
+    if(lk.owns_lock()){ dense_locked = false; dense_n = dense_queue_.size(); dense_busy = dense_busy_; }
+  }
+  {
+    std::unique_lock<std::mutex> lk(save_mutex_, std::try_to_lock);
+    if(lk.owns_lock()){ save_locked = false; save_n = save_queue_.size(); }
+  }
+
+  size_t lidar_n = 0, imu_n = 0;
+  double last_imu = -1.0, last_lidar = -1.0;
+  const bool got_buf = (data_wrapper_ != nullptr) &&
+      data_wrapper_->getBufferStats(lidar_n, imu_n, last_imu, last_lidar);
+
+  LOG(WARNING) << "[Watchdog] 已 " << idle_s << " s 未产出有效帧"
+               << " | paused=" << (paused_.load() ? 1 : 0)
+               << " frame_num=" << frame_num_
+               << " | lidar_buf=" << (got_buf ? std::to_string(lidar_n) : std::string("lock"))
+               << " imu_buf="   << (got_buf ? std::to_string(imu_n) : std::string("lock"))
+               << " last_imu=" << (got_buf ? std::to_string(last_imu) : std::string("lock"))
+               << " last_lidar=" << (got_buf ? std::to_string(last_lidar) : std::string("lock"))
+               << " | dense_q=" << (dense_locked ? std::string("lock") : std::to_string(dense_n))
+               << " dense_busy=" << (dense_busy ? 1 : 0)
+               << " save_q=" << (save_locked ? std::string("lock") : std::to_string(save_n));
 }
 
 
