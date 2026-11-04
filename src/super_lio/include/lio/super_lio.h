@@ -151,6 +151,19 @@ protected:
   long   guard_skip_total_     = 0;      // 累计跳过帧数
   long   guard_last_log_frame_ = -10000; // 限频日志用
 
+  // ===== 位姿信任域 / LOST =====
+  /// 在 Observe() 之后调用：比较本次激光修正与最近可信位姿，
+  /// 跳变超阈值则回滚到 IMU 先验并进入 LOST（输出不中断、暂停建图）。
+  void checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pred);
+  double cur_lidar_gap_ = 0.0;                     // 本帧与上一帧雷达 end_time 间隔 (s)
+  BASIC::SE3 stable_pose_;                         // 最近一次可信位姿
+  bool   stable_pose_valid_ = false;
+  bool   lost_ = false;                            // LOST：不信任激光修正，只做影子配准
+  int    lost_recover_streak_ = 0;
+  long   trust_reject_total_ = 0;                  // 累计否决次数
+  std::chrono::steady_clock::time_point last_trust_log_wall_{};
+  std::chrono::steady_clock::time_point last_gap_log_wall_{};
+
   // ===== 看门狗 =====
   // 心跳只在「一帧完整走完配准+建图+输出」后刷新；任何静默 return 都不会刷新，
   // 因此停摆会被如实检出。日志 5s 限频，避免刷屏。

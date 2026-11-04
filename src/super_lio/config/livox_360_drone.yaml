@@ -66,10 +66,11 @@
     lio.output.map_body: true
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: true
-    # odom 协方差开关（默认关）：关闭后 /lio/odom 与 /lio/robo/odom 的 covariance
-    # 全为 0，不再逐 IMU 帧计算后验方差；PX4 ev_pos_control 有
-    # max(EKF2_EVP_NOISE^2, 0.01^2) 地板，0 会被抬回名义噪声。
-    lio.output.odom_cov_en: false
+    # odom 协方差策略（已固定，无开关）：
+    #   /lio/odom(10Hz)      —— 始终带 ESKF 后验协方差，供 safety 健康监看；
+    #   /lio/robo/odom(200Hz)—— 协方差恒为 0（发往 PX4 的路）。实测 200Hz
+    #     高频协方差输出对 PX4 计算负担过大并带来不可预计行为；PX4
+    #     ev_pos_control 有 max(EKF2_EVP_NOISE^2, 0.01^2) 地板，0 会被抬回名义噪声。
     lio.output.tf_base_footprint_frame: "base_footprint"
     # 世界坐标系的TF帧名
     lio.output.world_frame: "world"
@@ -113,3 +114,27 @@
     lio.observe.imu_cover_max: 0.03
     # 安全阀：连续跳过该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
     lio.observe.guard_max_consecutive: 9
+
+    # ======================== 断档冻结 ========================
+    # 链路瞬时中断（重着陆接触不良等）接回时，第一条 IMU 的 dt 等于整段断档时长。
+    # 超过该值的 dt 只对齐时间基准、不积分，避免用冲击加速度把断档时段积分成米级跳变。
+    lio.observe.max_imu_dt: 0.05
+
+    # ======================== 位姿信任域 / LOST ========================
+    # 单帧修正跳变超阈值 → 撤销该次激光修正（保留 IMU 推算）、暂停建图，
+    # 但 odom/TF/点云仍按当前位姿全量输出（空中掉线以飞行连续性优先）。
+    lio.observe.trust_guard_en: true
+    # 单帧允许的位置/姿态跳变（10Hz、2m/s 正常帧间位移约 0.2m，留 5 倍余量）
+    lio.observe.trust_jump_max: 1.0
+    lio.observe.trust_jump_rot_max: 15.0
+    # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
+    lio.observe.trust_corr_max: 0.5
+    lio.observe.trust_corr_rot_max: 10.0
+    lio.observe.lost_recover_frames: 5
+    # LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉 0.1m / 1deg。
+    # 断档后先验与真实位姿可能差米级，直接接受配准会一次跳变、完全否决又会永久停死，
+    # 因此逐帧小步靠近。0.1m/帧@10Hz ≈ 1m/s 的位姿收敛速度，约 1~3s 可拉回。
+    lio.observe.lost_slew_p: 0.10
+    lio.observe.lost_slew_r: 1.0
+    # LOST 期间是否继续向 IVox 建图（关，防止污染配准地图；PCD 片段仍照常落盘）
+    lio.observe.lost_map_en: false

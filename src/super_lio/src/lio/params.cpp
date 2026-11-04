@@ -80,7 +80,6 @@ namespace LI2Sup{
   bool g_visual_dense_body = false;
   int  g_pub_step;
   bool g_footprint_pub_en = true;
-  bool g_odom_cov_en = false;
   string g_tf_base_footprint_frame = "base_footprint";
   string g_world_frame = "world";
   string g_imu_frame = "imu";
@@ -113,6 +112,20 @@ namespace LI2Sup{
   double g_frame_gap_max = 0.2;
   double g_imu_cover_max = 0.03;
   int    g_guard_max_consecutive = 9;
+
+  /// 断档冻结
+  double g_max_imu_dt = 0.05;
+
+  /// 位姿信任域 / LOST
+  bool   g_trust_guard_en = true;
+  double g_trust_jump_max = 1.0;
+  double g_trust_jump_rot_max = 15.0;
+  double g_trust_corr_max = 0.5;
+  double g_trust_corr_rot_max = 10.0;
+  int    g_lost_recover_frames = 5;
+  double g_lost_slew_p = 0.10;
+  double g_lost_slew_r = 1.0;
+  bool   g_lost_map_en = false;
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;

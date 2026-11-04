@@ -55,7 +55,9 @@ public:
   void SetInitialConditions(Options options, const BASIC::V3& init_bg, const BASIC::V3& init_ba, const float imu_scale = 1.0,
                             const BASIC::V3& gravity = BASIC::V3(0, 0, -9.8));
 
-  bool Predict(const IMUData& imu);
+  /// max_dt > 0 时启用断档冻结：dt 超过 max_dt 说明中间丢数据，
+  /// 只对齐时间基准、不做积分（用断档期的平均加速度外推会产生米级跳变）。
+  bool Predict(const IMUData& imu, double max_dt = -1.0);
 
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
@@ -144,6 +146,10 @@ public:
   /// 仅更新主状态 (R/p/v/bg/ba)，不触碰 fw_R_/fw_p_/fw_v_，
   /// 避免 IMU-rate fast_tf 前向预测链被打断
   void SetMainState(const SysState& x);
+
+  /// 信任域回滚：撤销本次观测更新，恢复先验状态、先验协方差与高频前向链
+  /// （fw_R_/fw_p_/fw_v_），但不动任何时间戳 —— 时间戳由 IMU 原始序列推进。
+  void RollbackToState(const SysState& x, const COV& cov);
 
   void SetCov(const COV& cov) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
