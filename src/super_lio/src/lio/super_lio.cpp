@@ -43,28 +43,20 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
 
 namespace LI2Sup{
 
-/// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
-inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
+/// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd 与残差方差 resid_var。
+/// resid_var 对应官方 FAST-LIO2 的平面参数不确定度 σ_l：拟合残差越大，
+/// 该观测的有效噪声越大（R_eff = R_dist + resid_var），实现软降权而非二值门限。
+inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd, double& resid_var)
 {
   Eigen::Vector3d normvec;
-  if (N == 5) {
-    Eigen::Matrix<double, 5, 3> A;
-    Eigen::Matrix<double, 5, 1> b;
-    for (int j = 0; j < 5; j++) {
-      A.row(j) = points[j].cast<double>();
-      b(j) = -1.0;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
-  }
-  else {
-    Eigen::Matrix<double, 4, 3> A;
-    Eigen::Matrix<double, 4, 1> b;
-
+  {
+    Eigen::Matrix<double, 8, 3> A;
+    Eigen::Matrix<double, 8, 1> b;
     for (int j = 0; j < N; j++) {
       A.row(j) = points[j].cast<double>();
       b(j) = -1.0;
     }
-    normvec = A.colPivHouseholderQr().solve(b);
+    normvec = A.topLeftCorner(N, 3).colPivHouseholderQr().solve(b.topRows(N));
   }
 
   double n = normvec.norm();
@@ -76,11 +68,14 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
   abcd[1] = normvec[1];
   abcd[2] = normvec[2];
   
+  double sum2 = 0.0;
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
     if (std::abs(dist) > g_plane_fit_threshold) return false;
+    sum2 += dist * dist;
   }
+  resid_var = sum2 / N;
   return true;
 }
 
@@ -92,6 +87,9 @@ inline bool compute_error(
   error = abcd[0] * point[0] + abcd[1] * point[1] + abcd[2] * point[2] + abcd[3];
   return length > 81 * error * error;
 }
+
+/// 距离自适应测量方差的标定距离（米）：σ²(r) 在 r=kBeamRefDist 处等于 1/g_obs_weight。
+constexpr double kBeamRefDist = 5.0;
 
 
 /// 初始化：创建 IVox 地图、ESKF 滤波器、加载参数
@@ -109,6 +107,7 @@ void SuperLIO::init(){
   
   points_world_v3_.reserve(21000);
   abcd_vec_.resize(20000);
+  resid_var_vec_.resize(20000);
   effect_knn_idxs_.resize(20000);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
@@ -1480,7 +1479,7 @@ void SuperLIO::Observe(){
           continue;
         }
         effect_knn_mask_[idx] = true;
-        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], resid_var_vec_[idx]);
         if(!effect_mask_[idx]) continue;
 
         auto& abcd = abcd_vec_[idx];
@@ -1498,8 +1497,21 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        float w = (abs_error <= huber_delta) ? g_obs_weight
+                                             : g_obs_weight * huber_delta / abs_error;
+        // 距离自适应测量方差（对齐官方 FAST-LIO2 的 dept_err/beam_err）：
+        // σ²(r)=dept²+(beam·r)²，以 r=5m 标定到 g_obs_weight。
+        // 常数权重会让 30~150m 的远处点与近处点同权（官方在 30m 处权重仅我们的 ~1/30），
+        // 过度信任远处平面拟合误差 → 逐帧位置抖动（NTU 实测 std≈9cm vs 官方 1.7cm）。
+        // g_beam_err=0 时保持原行为。
+        // 平面拟合残差方差并入有效噪声（对齐官方 plane_var_/σ_l 传播）。
+        if (g_beam_err > 0.0) {
+          const double r = static_cast<double>(_lengths[idx]);
+          const double s2 = g_dept_err * g_dept_err + g_beam_err * g_beam_err * r * r;
+          const double s2_ref = g_dept_err * g_dept_err +
+                                g_beam_err * g_beam_err * kBeamRefDist * kBeamRefDist;
+          w *= static_cast<float>(s2_ref / (s2 + resid_var_vec_[idx]));
+        }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }
@@ -1528,7 +1540,7 @@ void SuperLIO::Observe(){
             continue;
           }
           effect_knn_mask_[idx] = true;
-          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], resid_var_vec_[idx]);
         }
 
         if(!effect_mask_[idx]) continue;
@@ -1548,8 +1560,15 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        float w = (abs_error <= huber_delta) ? g_obs_weight
+                                             : g_obs_weight * huber_delta / abs_error;
+        if (g_beam_err > 0.0) {
+          const double r = static_cast<double>(_lengths[idx]);
+          const double s2 = g_dept_err * g_dept_err + g_beam_err * g_beam_err * r * r;
+          const double s2_ref = g_dept_err * g_dept_err +
+                                g_beam_err * g_beam_err * kBeamRefDist * kBeamRefDist;
+          w *= static_cast<float>(s2_ref / (s2 + resid_var_vec_[idx]));
+        }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }

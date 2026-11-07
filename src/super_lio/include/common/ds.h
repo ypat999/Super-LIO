@@ -22,10 +22,11 @@ enum LID_TYPE
   LS16 = 6,
   OUSTER = 7,
   GAZEBO = 8,
-  ROBOSENSE_AIRY = 9
+  ROBOSENSE_AIRY = 9,
+  LIVOX_PC2 = 10
 };
 
-static const std::array<std::string, 10> LID_TYPE_NAMES = {
+static const std::array<std::string, 11> LID_TYPE_NAMES = {
   "INVALID",
   "LIVOX",
   "HESAI16",
@@ -35,7 +36,8 @@ static const std::array<std::string, 10> LID_TYPE_NAMES = {
   "LS16",
   "OUSTER",
   "GAZEBO",
-  "ROBOSENSE_AIRY"
+  "ROBOSENSE_AIRY",
+  "LIVOX_PC2"
 };
 
 

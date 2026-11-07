@@ -136,7 +136,9 @@ public:
   using Ptr = std::shared_ptr<OctVoxMap>;
   using KEY = Eigen::Vector3i;
   using Points = std::vector<Point, Eigen::aligned_allocator<Point>>;
-  using KNNHeapType = KNNHeap<5, Point>;
+  // 平面拟合邻域点数（实验）：原 5 点拟合噪声大，官方 FAST-LIO2 用最多 50 点。
+  // 早停条件同步改为 8，搜索范围仍在 60 邻域体素表内，仅略增耗时。
+  using KNNHeapType = KNNHeap<8, Point>;
   using OctVoxType = OctVox<Point>;
 
   struct Options {
@@ -372,7 +374,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
       else group_it+=data_size;
     }
 
-    if (top_K.count == 5)
+    if (top_K.count == 8)
       if (top_K.max_dist2_ < orders_min_dis2[group_idx]){
         break;
       }
