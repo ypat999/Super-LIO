@@ -953,7 +953,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
           if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
           else return static_cast<double>(t) - time_begin; }
-        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); return t * 1e-6 - time_begin; }
+        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t));
+          // Ouster 的逐点时间是 uint32 **纳秒**（实测 0..1e8，即 0..100 ms），不是微秒。
+          // 原实现按微秒换算（t*1e-6），而 time_begin 存的是原始 uint32（上面第 936 行），
+          // 两者单位不一致，end_time 会被放大 1000 倍（≈100 s），sync 永远等不到 IMU。
+          // 统一为：先在原单位（纳秒）内减去 time_begin，再换算到秒。
+          return (static_cast<double>(t) - time_begin) * 1e-9; }
         case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); return t * 1e-9 - time_begin; }
         default: return 0.0;
       }
