@@ -108,6 +108,10 @@ namespace LI2Sup{
   double g_plane_fit_threshold = 0.15;
 
   double g_obs_weight = 1000.0;
+  // 实验：距离自适应测量方差（对齐官方 FAST-LIO2）：σ²(r)=dept_err²+(beam_err·r)²。
+  // beam_err=0 表示关闭（常数权重，原行为）。
+  double g_beam_err = 0.0;
+  double g_dept_err = 0.02;
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
   double g_ground_weight = 0.0;

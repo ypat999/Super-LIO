@@ -41,35 +41,28 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
   dst.is_dense = src.is_dense;
 }
 
+/// 实验：观测噪声模型 σ²(r)=dept²+(beam·r)² 的标定距离（m）。
+/// 在该距离上有效噪声等于 g_obs_weight 对应的基准噪声，即权重在此处不放大不衰减。
+constexpr double kBeamRefDist = 5.0;
+
 } // anonymous namespace
 
 namespace LI2Sup{
 
 /// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
 /// 若给出 max_abs_dist，则输出参与拟合点中的最大 |dist|（作为平面质量指标）
-inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd,
-                             double* max_abs_dist = nullptr)
+/// 若给出 resid_var，则输出平面残差方差 Σd²/N（m²），供观测权重做软降权
+inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd,
+                             double* max_abs_dist = nullptr, double* resid_var = nullptr)
 {
-  Eigen::Vector3d normvec;
-  if (N == 5) {
-    Eigen::Matrix<double, 5, 3> A;
-    Eigen::Matrix<double, 5, 1> b;
-    for (int j = 0; j < 5; j++) {
-      A.row(j) = points[j].cast<double>();
-      b(j) = -1.0;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
+  // 固定 8×3 缓冲 + topLeftCorner(N)，避免按 N 分两套矩阵（K=5→8 后 N 取值 4..8）。
+  Eigen::Matrix<double, 8, 3> A = Eigen::Matrix<double, 8, 3>::Zero();
+  Eigen::Matrix<double, 8, 1> b = Eigen::Matrix<double, 8, 1>::Zero();
+  for (int j = 0; j < N; j++) {
+    A.row(j) = points[j].cast<double>();
+    b(j) = -1.0;
   }
-  else {
-    Eigen::Matrix<double, 4, 3> A;
-    Eigen::Matrix<double, 4, 1> b;
-
-    for (int j = 0; j < N; j++) {
-      A.row(j) = points[j].cast<double>();
-      b(j) = -1.0;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
-  }
+  Eigen::Vector3d normvec = A.topLeftCorner(N, 3).colPivHouseholderQr().solve(b.head(N));
 
   double n = normvec.norm();
   if (n < 1e-6f) return false;
@@ -79,13 +72,16 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::
   abcd[0] = normvec[0];
   abcd[1] = normvec[1];
   abcd[2] = normvec[2];
-  
+
+  double sum2 = 0.0;
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
     if (max_abs_dist) *max_abs_dist = std::max(*max_abs_dist, std::abs(dist));
+    sum2 += static_cast<double>(dist) * static_cast<double>(dist);
     if (std::abs(dist) > g_plane_fit_threshold) return false;
   }
+  if (resid_var) *resid_var = (N > 0) ? sum2 / static_cast<double>(N) : 0.0;
   return true;
 }
 
@@ -220,6 +216,7 @@ void SuperLIO::init(){
   
   points_world_v3_.reserve(21000);
   abcd_vec_.resize(kMaxEffectPoints);
+  resid_var_vec_.resize(kMaxEffectPoints);
   effect_knn_idxs_.resize(kMaxEffectPoints);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
@@ -1764,7 +1761,8 @@ void SuperLIO::Observe(){
         }
         effect_knn_mask_[idx] = true;
         double fit_res = 0.0;
-        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
+        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res,
+                                             &resid_var_vec_[idx]);
         if(!effect_mask_[idx]) {
           ++n_plane_fail;
           // 细通道候选：邻域非平面（墙角/扶手/窗框等粗糙区）。取 KNN 中最近的
@@ -1819,6 +1817,18 @@ void SuperLIO::Observe(){
         if (g_obs_dist_k > 0.0) {
           const double kr = g_obs_dist_k * _lengths[idx];
           w *= static_cast<float>(1.0 / (1.0 + kr * kr));
+        }
+        // 实验（对齐官方 dept_err/beam_err + plane_var_ 传播）：
+        // σ²(r) = dept² + (beam·r)²，以 r = kBeamRefDist 标定到 g_obs_weight；
+        // 再把拟合残差方差并入有效噪声 → 脏平面软降权，而不是二值丢弃。
+        // 与上面 2.B 的 g_obs_dist_k 是同一族噪声模型，两者不应同时开。
+        // g_beam_err 默认 0，此时整段跳过，行为与 2.B 实现完全一致。
+        if (g_beam_err > 0.0) {
+          const double r = static_cast<double>(_lengths[idx]);
+          const double s2 = g_dept_err * g_dept_err + g_beam_err * g_beam_err * r * r;
+          const double s2_ref = g_dept_err * g_dept_err +
+                                g_beam_err * g_beam_err * kBeamRefDist * kBeamRefDist;
+          w *= static_cast<float>(s2_ref / (s2 + resid_var_vec_[idx]));
         }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
@@ -1875,7 +1885,8 @@ void SuperLIO::Observe(){
           }
           effect_knn_mask_[idx] = true;
           double fit_res = 0.0;  // 后续轮次不更新质量权重，只用首轮结果
-          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
+          effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res,
+                                                &resid_var_vec_[idx]);
         }
 
         if(!effect_mask_[idx]) continue;
@@ -1906,6 +1917,18 @@ void SuperLIO::Observe(){
         if (g_obs_dist_k > 0.0) {
           const double kr = g_obs_dist_k * _lengths[idx];
           w *= static_cast<float>(1.0 / (1.0 + kr * kr));
+        }
+        // 实验（对齐官方 dept_err/beam_err + plane_var_ 传播）：
+        // σ²(r) = dept² + (beam·r)²，以 r = kBeamRefDist 标定到 g_obs_weight；
+        // 再把拟合残差方差并入有效噪声 → 脏平面软降权，而不是二值丢弃。
+        // 与上面 2.B 的 g_obs_dist_k 是同一族噪声模型，两者不应同时开。
+        // g_beam_err 默认 0，此时整段跳过，行为与 2.B 实现完全一致。
+        if (g_beam_err > 0.0) {
+          const double r = static_cast<double>(_lengths[idx]);
+          const double s2 = g_dept_err * g_dept_err + g_beam_err * g_beam_err * r * r;
+          const double s2_ref = g_dept_err * g_dept_err +
+                                g_beam_err * g_beam_err * kBeamRefDist * kBeamRefDist;
+          w *= static_cast<float>(s2_ref / (s2 + resid_var_vec_[idx]));
         }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;

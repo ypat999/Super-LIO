@@ -297,9 +297,18 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.huber_delta_scale", 0.003);
   node.get_parameter("lio.observe.huber_delta_scale", g_huber_delta_scale);
 
+  // 实验：距离自适应测量方差 σ²(r)=dept_err²+(beam_err·r)²（beam_err=0 关闭）
+  node.declare_parameter<double>("lio.observe.beam_err", 0.0);
+  node.get_parameter("lio.observe.beam_err", g_beam_err);
+
+  node.declare_parameter<double>("lio.observe.dept_err", 0.02);
+  node.get_parameter("lio.observe.dept_err", g_dept_err);
+
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/beam_err: " << g_beam_err << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/dept_err: " << g_dept_err << RESET;
 
   // ================= 阶段 2 机制开关（默认全关） =================
   node.declare_parameter<double>("lio.observe.ground_weight", 0.0);
@@ -754,6 +763,8 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
         else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
         else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
+        else if (name == "lio.observe.beam_err") g_beam_err = p.as_double();
+        else if (name == "lio.observe.dept_err") g_dept_err = p.as_double();
         else if (name == "lio.debug.level") g_debug_level = p.as_int();
         else if (name == "lio.observe.normal_weight_en") g_normal_weight_en = p.as_bool();
         else if (name == "lio.observe.normal_sigma") g_normal_sigma = p.as_double();

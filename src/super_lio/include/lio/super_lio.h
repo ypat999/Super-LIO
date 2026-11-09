@@ -119,7 +119,7 @@ protected:
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
-  using KNNHeapType = KNNHeap<5, BASIC::V3>;
+  using KNNHeapType = KNNHeap<8, BASIC::V3>;
   StateFn state_fn_;
   ESKF::Ptr kf_;
   OctVoxMapType::Ptr ivox_;
@@ -150,6 +150,9 @@ protected:
   std::vector<int> effect_knn_idxs_;
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
+  /// 实验：平面拟合残差方差 Σd²/N（m²），与 abcd_vec_ 同长度、同步写入。
+  /// 用于观测权重 w *= s2_ref/(s2 + resid_var)，抑制"脏平面"逐帧参考面漂移。
+  std::vector<double> resid_var_vec_;
   int pcd_index_ = -1;
 
   // ===== 实验埋点（lio.debug.level > 0 时生效，不参与滤波）=====

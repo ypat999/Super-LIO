@@ -148,6 +148,13 @@ namespace LI2Sup{
   /// 低精度雷达(如 Airy):    200  (σ≈0.071m, 5m处法向偏差±0.1m)
   extern double g_obs_weight;
 
+  /// 实验：距离自适应测量方差（对齐官方 FAST-LIO2 的 beam_err/dept_err）：
+  /// σ²(r)=dept_err²+(beam_err·r)²，以 r=5m 处标定为 g_obs_weight。
+  /// 远处点平面拟合误差随距离增大，常数权重会过度信任 30~150m 点导致逐帧抖动。
+  /// g_beam_err=0 时完全退回原常数权重行为；与 2.B 的 g_obs_dist_k 属同一族，勿同开。
+  extern double g_beam_err;
+  extern double g_dept_err;
+
   /// Huber 核基础阈值(米)：点到面残差小于此值时使用满权重，超过时线性降权
   /// 应设为 1.5~2 倍的近处(5m)残差标准差
   /// 高精度雷达: 0.05, 低精度雷达: 0.10

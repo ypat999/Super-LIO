@@ -171,7 +171,10 @@ public:
   using Ptr = std::shared_ptr<OctVoxMap>;
   using KEY = Eigen::Vector3i;
   using Points = std::vector<Point, Eigen::aligned_allocator<Point>>;
-  using KNNHeapType = KNNHeap<5, Point>;
+  // 实验：平面拟合邻域 K=5 → 8（与官方 FAST-LIO2 的 5 邻域对齐后再放大，
+  // 用更多点抑制均值压缩带来的参考面抖动）。KNNHeapType 与下方 getTopK
+  // 的提前退出判断必须同步改，否则堆会静默只填 5 个点。
+  using KNNHeapType = KNNHeap<8, Point>;
   using OctVoxType = OctVox<Point>;
 
   struct Options {
@@ -435,7 +438,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
       else group_it+=data_size;
     }
 
-    if (top_K.count == 5)
+    if (top_K.count == 8)
       if (top_K.max_dist2_ < orders_min_dis2[group_idx] * g_hknn_order_scale){
         break;
       }
