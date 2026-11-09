@@ -115,7 +115,7 @@ protected:
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
-  using KNNHeapType = KNNHeap<8, BASIC::V3>;
+  using KNNHeapType = KNNHeap<5, BASIC::V3>;
   StateFn state_fn_;
   ESKF::Ptr kf_;
   OctVoxMapType::Ptr ivox_;
@@ -143,8 +143,6 @@ protected:
   std::vector<int> effect_knn_idxs_;
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
-  // 平面拟合残差方差（对标官方 plane_var_/σ_l 的廉价近似），随 abcd_vec_ 逐点存储
-  std::vector<double> resid_var_vec_;
   int pcd_index_ = -1;
 
   // ===== 坏帧护栏 =====

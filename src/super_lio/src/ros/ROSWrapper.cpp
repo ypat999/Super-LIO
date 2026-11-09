@@ -208,12 +208,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.huber_delta_scale", 0.003);
   node.get_parameter("lio.observe.huber_delta_scale", g_huber_delta_scale);
 
-  node.declare_parameter<double>("lio.observe.beam_err", 0.0);
-  node.get_parameter("lio.observe.beam_err", g_beam_err);
-
-  node.declare_parameter<double>("lio.observe.dept_err", 0.02);
-  node.get_parameter("lio.observe.dept_err", g_dept_err);
-
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
@@ -571,8 +565,6 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
         else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
         else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
-        else if (name == "lio.observe.beam_err") g_beam_err = p.as_double();
-        else if (name == "lio.observe.dept_err") g_dept_err = p.as_double();
         else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
         else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
       }
@@ -957,23 +949,11 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   auto read_offset_time = [&](size_t k) -> double {
     if (has_time) {
       switch (time_type) {
-        case 2: {
-          double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double));
-          // Livox→PointCloud2 转换器把逐点时间写成 **double 存储的绝对纳秒**（≈1.79e18）。
-          // 用帧头 start_time（永远有效）作基准最稳健：即使某帧前 10 点全部无效导致
-          // time_begin 未置（=0），也不会把整块绝对时间当成 offset（那会让 end_time 爆掉、
-          // sync 永远等不到 IMU 而卡死）。判据用 t 本身量级而非 time_begin。
-          if (t > 1e12) return t * 1e-9 - lidar_data.start_time;  // 绝对 ns → 相对秒
-          return t - time_begin;                                   // 相对秒制约定
-        }
+        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); return t - time_begin; }
         case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
           if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
           else return static_cast<double>(t) - time_begin; }
-        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t));
-          // Ouster 的 t 是 uint32 **纳秒**（实测 0..1e8，即 0..100 ms），Velodyne 是微秒。
-          // 按微秒换算会让 end_time 比真实值大 1000 倍（≈100 s），sync 永远等不到 IMU。
-          if (g_lidar_type == LID_TYPE::OUSTER) return (static_cast<double>(t) - time_begin) * 1e-9;
-          return t * 1e-6 - time_begin; }
+        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); return t * 1e-6 - time_begin; }
         case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); return t * 1e-9 - time_begin; }
         default: return 0.0;
       }

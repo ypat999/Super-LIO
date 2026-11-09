@@ -106,10 +106,6 @@ namespace LI2Sup{
   double g_obs_weight = 1000.0;
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
-  // 距离自适应测量方差（对齐官方 FAST-LIO2）：σ²(r)=dept_err²+(beam_err·r)²。
-  // 0 表示关闭（常数权重，原行为）。
-  double g_beam_err = 0.0;
-  double g_dept_err = 0.02;
 
   /// 坏帧护栏（默认开启 skip 模式）
   bool   g_frame_gap_guard_en = true;
