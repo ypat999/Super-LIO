@@ -411,6 +411,38 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " gap_max: " << g_frame_gap_max << " imu_cover_max: " << g_imu_cover_max
             << " max_consecutive: " << g_guard_max_consecutive << RESET;
 
+  // 断档冻结：IMU 积分 dt 上限
+  node.declare_parameter<double>("lio.observe.max_imu_dt", 0.05);
+  node.get_parameter("lio.observe.max_imu_dt", g_max_imu_dt);
+
+  // 位姿信任域 / LOST
+  node.declare_parameter<bool>("lio.observe.trust_guard_en", true);
+  node.get_parameter("lio.observe.trust_guard_en", g_trust_guard_en);
+  node.declare_parameter<double>("lio.observe.trust_jump_max", 1.0);
+  node.get_parameter("lio.observe.trust_jump_max", g_trust_jump_max);
+  node.declare_parameter<double>("lio.observe.trust_jump_rot_max", 15.0);
+  node.get_parameter("lio.observe.trust_jump_rot_max", g_trust_jump_rot_max);
+  node.declare_parameter<double>("lio.observe.trust_corr_max", 0.5);
+  node.get_parameter("lio.observe.trust_corr_max", g_trust_corr_max);
+  node.declare_parameter<double>("lio.observe.trust_corr_rot_max", 10.0);
+  node.get_parameter("lio.observe.trust_corr_rot_max", g_trust_corr_rot_max);
+  node.declare_parameter<int>("lio.observe.lost_recover_frames", 5);
+  node.get_parameter("lio.observe.lost_recover_frames", g_lost_recover_frames);
+  node.declare_parameter<double>("lio.observe.lost_slew_p", 0.10);
+  node.get_parameter("lio.observe.lost_slew_p", g_lost_slew_p);
+  node.declare_parameter<double>("lio.observe.lost_slew_r", 1.0);
+  node.get_parameter("lio.observe.lost_slew_r", g_lost_slew_r);
+  node.declare_parameter<bool>("lio.observe.lost_map_en", false);
+  node.get_parameter("lio.observe.lost_map_en", g_lost_map_en);
+
+  LOG(INFO) << GREEN << " ---> [Param] observe/max_imu_dt: " << g_max_imu_dt << " s" << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/trust_guard_en: " << g_trust_guard_en
+            << " jump_max: " << g_trust_jump_max << " jump_rot_max: " << g_trust_jump_rot_max
+            << " corr_max: " << g_trust_corr_max << " corr_rot_max: " << g_trust_corr_rot_max
+            << " recover_frames: " << g_lost_recover_frames
+            << " slew_p: " << g_lost_slew_p << " m slew_r: " << g_lost_slew_r << " deg"
+            << " lost_map_en: " << g_lost_map_en << RESET;
+
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);
   node.get_parameter("lio.submap.submap_resolution", g_submap_resolution);
@@ -945,18 +977,11 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
       out.timestamp = data.secs;
       out.receive_time = std::chrono::duration<double>(
           std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-      // 入队时快照后验方差：P_ 只在 LiDAR 观测更新时变化，同一 LiDAR 周期内的
-      // IMU 帧共用同一份后验是正确行为；但绝不能在发布线程现读，
-      // 否则队列积压时协方差会与 timestamp 错位（制造假创新）。
-      if (eskf_ && g_odom_cov_en) {
-        out.cov_diag_pv   = eskf_->GetCovDiagPV();
-        out.cov_diag_rot  = eskf_->GetCovDiagRot();
-        out.need_converge = eskf_->NeedConverge();
-      } else {
-        out.cov_diag_pv.setZero();
-        out.cov_diag_rot.setZero();
-        out.need_converge = true;
-      }
+      // 高频路不带协方差（实测 200Hz 协方差对 PX4 负担过大）：快照位恒置 0。
+      // 带协方差的 10Hz /lio/odom 在 pub_odom 内直接取 eskf_ 后验。
+      out.cov_diag_pv.setZero();
+      out.cov_diag_rot.setZero();
+      out.need_converge = true;
       std::lock_guard<std::mutex> lock(imu_output_mutex_);
       if(imu_output_queue_.size() > 10) {
         // 原先这里静默丢最旧帧：会掩盖 LiDAR/IMU 处理堆积，而堆积正是飞控侧
@@ -1135,7 +1160,12 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
         case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
           if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
           else return static_cast<double>(t) - time_begin; }
-        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t)); return t * 1e-6 - time_begin; }
+        case 3: { uint32_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint32_t));
+          // Ouster 的逐点时间是 uint32 **纳秒**（实测 0..1e8，即 0..100 ms），不是微秒。
+          // 原实现按微秒换算（t*1e-6），而 time_begin 存的是原始 uint32（上面第 936 行），
+          // 两者单位不一致，end_time 会被放大 1000 倍（≈100 s），sync 永远等不到 IMU。
+          // 统一为：先在原单位（纳秒）内减去 time_begin，再换算到秒。
+          return (static_cast<double>(t) - time_begin) * 1e-9; }
         case 4: { uint64_t t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(uint64_t)); return t * 1e-9 - time_begin; }
         default: return 0.0;
       }
@@ -1246,12 +1276,14 @@ void ROSWrapper::notifyOdomReset(const std::string& reason)
 }
 
 
-void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
-                                       const BASIC::M3& R_world_body,
-                                       const ImuOutputData& data)
+void ROSWrapper::zeroOdometryCovariance(nav_msgs::msg::Odometry& odom)
 {
-  fillOdometryCovariance(odom, R_world_body, data.cov_diag_pv, data.cov_diag_rot,
-                         data.need_converge);
+  // 高频路（/lio/imu/odom、/lio/robo/odom）不带协方差：实测 200Hz 协方差输出
+  // 对 PX4 造成巨大计算负担并带来不可预计行为。下游（通信节点）发给 PX4 的
+  // 是这一路，全 0 协方差由 PX4 EKF2 用 max(EKF2_EVP_NOISE², 0.01²) 抬回
+  // 名义噪声，不会被当成"绝对真值"。带协方差的 10Hz /lio/odom 供 safety 监看。
+  odom.pose.covariance.fill(0.0);
+  odom.twist.covariance.fill(0.0);
 }
 
 
@@ -1368,7 +1400,7 @@ void ROSWrapper::imuOutputThread() {
     odom_imu.twist.twist.angular.x = data.imu_state.w(0);
     odom_imu.twist.twist.angular.y = data.imu_state.w(1);
     odom_imu.twist.twist.angular.z = data.imu_state.w(2);
-    fillOdometryCovariance(odom_imu, data.imu_state.R, data);
+    zeroOdometryCovariance(odom_imu);   // 高频路不带协方差（见函数注释）
     pub_imu_odom_->publish(odom_imu);
 
     // robot body-frame odom
@@ -1398,8 +1430,9 @@ void ROSWrapper::imuOutputThread() {
       odom_robo.twist.twist.angular.x = w_robo_body[0];
       odom_robo.twist.twist.angular.y = w_robo_body[1];
       odom_robo.twist.twist.angular.z = w_robo_body[2];
-      // 通信节点发给 PX4 的就是这一路 (/lio/robo/odom)，协方差必须完整
-      fillOdometryCovariance(odom_robo, data.robo_state.R, data);
+      // 通信节点发给 PX4 的就是这一路 (/lio/robo/odom)：协方差恒为 0，
+      // 由 PX4 EKF2 抬回名义噪声；带协方差的 10Hz /lio/odom 供 safety 监看。
+      zeroOdometryCovariance(odom_robo);
       pub_robo_odom_->publish(odom_robo);
       if(data.receive_time > 0.0){
         auto now_s = std::chrono::duration<double>(
@@ -1516,6 +1549,19 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 }
 
 
+/// 看门狗专用：try_lock 拿不到就立刻返回 false，避免看门狗自己被卡住。
+bool ROSWrapper::getBufferStats(size_t& lidar_n, size_t& imu_n,
+                                double& last_imu_stamp, double& last_lidar_stamp){
+  std::unique_lock<std::mutex> lock(buffers_mutex_, std::try_to_lock);
+  if(!lock.owns_lock()){ return false; }
+  lidar_n = lidar_buffer_.size();
+  imu_n = imu_buffer_.size();
+  last_imu_stamp = last_timestamp_imu_;
+  last_lidar_stamp = last_timestamp_lidar_;
+  return true;
+}
+
+
 void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   // /lio/odom 与 IMU 频率的 /lio/robo/odom 输出同一坐标系（base_link 本体），
   // 对激光修正后的 IMU 系后验施加 lio.extrinsic.odom_robo。
@@ -1556,8 +1602,9 @@ void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   odom.twist.twist.angular.y = w_body[1];
   odom.twist.twist.angular.z = w_body[2];
 
-  // /lio/odom 也补齐协方差：避免"一条有、一条全 0"导致下游拿错源。
-  // 此处在 process 线程内即时快照，与 state.timestamp 同属最近一次观测更新后的后验。
+  // /lio/odom(10Hz) 是全系统唯一带协方差的 odom 路，供 safety 做 LIO 健康监看
+  // （POSITION/VELOCITY/EV_OUTPUT 能力位判据）。此处在 process 线程内即时快照，
+  // 与 state.timestamp 同属最近一次观测更新后的后验。高频路协方差恒为 0。
   if (eskf_) {
     fillOdometryCovariance(odom, robo_rotation, eskf_->GetCovDiagPV(),
                            eskf_->GetCovDiagRot(), eskf_->NeedConverge());
@@ -1913,6 +1960,22 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
   LOG(INFO) << GREEN << " ---> [Service] Save map service called" << RESET;
   
   if (super_lio_) {
+    // 作用域守卫：无论 saveMap() 是正常返回、提前 return（g_save_map=false 等）
+    // 还是抛异常，都必须恢复 LIO 处理。否则 paused_ 会永久置位，表现为
+    // 「无日志 / 无 PCD / 服务无响应」的整条链路静默停摆。
+    struct ResumeGuard {
+      SuperLIO* lio = nullptr;
+      bool active = true;
+      ~ResumeGuard() {
+        if (active && lio) {
+          LOG(WARNING) << YELLOW << " ---> [Service] 未走到正常恢复分支，强制恢复 LIO 处理" << RESET;
+          lio->resumeProcessing();
+        }
+      }
+    };
+    ResumeGuard resume_guard;
+    resume_guard.lio = super_lio_.get();
+
     LOG(INFO) << YELLOW << " ---> [Service] Pausing LIO processing..." << RESET;
     super_lio_->pauseProcessing();
     
@@ -1924,6 +1987,7 @@ void ROSWrapper::saveMapServiceCallback(const std_srvs::srv::Trigger::Request::S
     
     LOG(INFO) << YELLOW << " ---> [Service] Resuming LIO processing..." << RESET;
     super_lio_->resumeProcessing();
+    resume_guard.active = false;
     
     LOG(INFO) << YELLOW << " ---> [Service] Resetting IMU pre-integration..." << RESET;
     super_lio_->resetIMUIntegration();

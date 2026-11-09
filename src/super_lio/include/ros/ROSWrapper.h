@@ -83,6 +83,11 @@ public:
   using Ptr = std::shared_ptr<ROSWrapper>;
   bool sync_measure(MeasureGroup&);
 
+  /// 看门狗用：非阻塞读取同步缓冲状态（try_lock，拿不到锁立即返回 false，
+  /// 绝不阻塞调用线程 —— 停摆现场恰恰可能是缓冲锁被占住）。
+  bool getBufferStats(size_t& lidar_n, size_t& imu_n,
+                      double& last_imu_stamp, double& last_lidar_stamp);
+
   void setESKF(ESKF::Ptr& eskf) { eskf_ = eskf;}
   
   // 设置SuperLIO实例的引用
@@ -126,16 +131,17 @@ public:
   /// 把 ESKF 后验方差填入 nav_msgs/Odometry 的 pose/twist covariance。
   /// 位置块是世界系可直接放对角；速度块是世界系，必须合同变换到 child_frame(body)。
   /// 所有分量都过地板值保护，绝不向下游发 0（0 = 无穷可信）。
+  /// 仅用于 10Hz 的 /lio/odom；高频路协方差恒为 0（见 zeroOdometryCovariance）。
   static void fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
                                      const BASIC::M3& R_world_body,
                                      const BASIC::V6& cov_diag_pv,
                                      const BASIC::V3& cov_diag_rot,
                                      bool need_converge);
 
-  /// 便捷重载：直接取 ImuOutputData 中的快照
-  static void fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
-                                     const BASIC::M3& R_world_body,
-                                     const ImuOutputData& data);
+  /// 高频 odom（/lio/imu/odom、/lio/robo/odom）协方差恒置 0：
+  /// 实测 200Hz 协方差输出对 PX4 造成巨大计算负担并带来不可预计行为，
+  /// 协方差只保留在 10Hz 的 /lio/odom 上（与高频路同源同 TF）。
+  static void zeroOdometryCovariance(nav_msgs::msg::Odometry& odom);
 
   void recordLatency(const std::string& name, double latency_ms);
   void printLatencies();

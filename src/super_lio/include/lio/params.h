@@ -315,6 +315,30 @@ namespace LI2Sup{
   /// 安全阀：连续跳过达到该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
   extern int    g_guard_max_consecutive;
 
+  /// ===== 断档冻结（IMU 积分 dt 上限）=====
+  /// 雷达/IMU 链路瞬时中断（重着陆导致接触不良等）后，接回时第一条 IMU 的 dt
+  /// 等于整段断档时长；无上限实现会用「断档前的冲击加速度尖峰」把这段时长积分掉，
+  /// 产生米级位置跳变与数 m/s 速度跳变。超过该值的 dt 只对齐时间基准、不积分。
+  extern double g_max_imu_dt;
+
+  /// ===== 位姿信任域 / LOST =====
+  /// 开启后：单帧修正跳变超过阈值时撤销该次激光修正（保留 IMU 推算），暂停建图，
+  /// 但里程计/TF/点云仍按当前位姿全量输出 —— 空中掉线时以飞行连续性优先。
+  extern bool   g_trust_guard_en;
+  /// 单帧允许的位置/姿态跳变
+  extern double g_trust_jump_max;
+  extern double g_trust_jump_rot_max;
+  /// LOST 期间重新接受观测所需的单帧修正量上限（影子配准）
+  extern double g_trust_corr_max;
+  extern double g_trust_corr_rot_max;
+  /// LOST 退出所需的连续合格帧数
+  extern int    g_lost_recover_frames;
+  /// LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉多少
+  extern double g_lost_slew_p;
+  extern double g_lost_slew_r;
+  /// LOST 期间是否继续向 IVox 建图（默认关，防止污染用于配准的地图）
+  extern bool   g_lost_map_en;
+
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
   extern int  g_dynamic_removal_method;     // 0: Temporal, 1: Raycast

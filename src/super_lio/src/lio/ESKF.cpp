@@ -3,6 +3,8 @@
 
 #include <Eigen/Eigenvalues>
 
+#include <glog/logging.h>
+
 using namespace BASIC;
 
 namespace LI2Sup{
@@ -92,6 +94,22 @@ void ESKF::SetMainState(const SysState& x) {
   ba_ = x.ba;
 }
 
+/// 信任域回滚：撤销本次观测更新。状态与协方差都回到先验（否则协方差会被
+/// 一次被否决的观测错误地收紧，导致后续过于自信），并同步高频前向链。
+void ESKF::RollbackToState(const SysState& x, const COV& cov) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  R_ = x.R;
+  p_ = x.p;
+  v_ = x.v;
+  bg_ = x.bg;
+  ba_ = x.ba;
+  P_ = 0.5 * (cov + cov.transpose());
+  fw_R_ = R_;
+  fw_p_ = p_;
+  fw_v_ = v_;
+  forward_time_ = current_obs_time_;
+}
+
 
 void ESKF::BuildNoise(const Options& options) {
   double et = options.gyro_var_;
@@ -151,6 +169,17 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
   double dt = imu.secs - forward_time_;
 
   if(dt < 0 || dt > 0.2){
+    // 前向积分基准必须在这里重新对齐。原实现直接 return，forward_time_ 停在旧值，
+    // 之后的每一帧 dt 都会继续超限（dt 单调增大），IMU 侧的 TF/odom 会永久停摆，
+    // 且只有 /map_save 触发的 ResetIMUIntegration() 才能解开 —— 重着陆造成的
+    // 单次 IMU 断档（回调被饿死 > 200ms / 时间戳跳变）就会把整条链路锁死。
+    forward_time_ = imu.secs;
+    forward_last_imu_ = imu;
+    static int warn_cnt = 0;
+    if(++warn_cnt % 50 == 1){
+      LOG(WARNING) << "[ESKF] IMU 前向积分时间断档 " << dt * 1000.0
+                   << " ms，已重新对齐基准（累计 " << warn_cnt << " 次）";
+    }
     return false;
   }
 
@@ -187,7 +216,7 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 }
 
 
-bool ESKF::Predict(const IMUData& imu) {
+bool ESKF::Predict(const IMUData& imu, double max_dt) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   if(last_imu_time_ < 0){
@@ -212,6 +241,21 @@ bool ESKF::Predict(const IMUData& imu) {
     current_time_ = current_obs_time_;
   }else{
     dt = imu.secs - last_imu_time_;
+  }
+
+  if(max_dt > 0.0 && dt > max_dt){
+    // 断档冻结：中间丢了数据，若照常用「断档前的冲击加速度」把这整段时长积分掉，
+    // 位置会跳几米、速度会跳几 m/s，之后再也拉不回来。这里只对齐时间基准，
+    // 状态/协方差保持不动（断档期无观测，不做外推是唯一不引入虚假运动的选择）。
+    current_time_ = imu.secs;
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    static int gap_log_cnt = 0;
+    if(++gap_log_cnt % 20 == 1){
+      LOG(WARNING) << "[ESKF] IMU dt=" << dt * 1000.0 << " ms 超过上限 "
+                   << max_dt * 1000.0 << " ms，本段不积分（累计 " << gap_log_cnt << " 次）";
+    }
+    return true;
   }
 
   V3 acc = 0.5 * (imu.acc + last_imu_.acc);

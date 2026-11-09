@@ -556,8 +556,14 @@ void SuperLIO::stateProcess(){
     PublishBodyCloud();   // immediate body publish (low latency)
     Output();              // world cloud via queue
     caceSCPGOData();
+    last_ok_frame_wall_ = std::chrono::steady_clock::now();   // 看门狗心跳
     return;
   }
+
+  // 本帧与上一帧的雷达 end_time 间隔：护栏、断档告警、信任域共用。
+  // 必须在 Propagation_Undistort 之前算（它依赖上一帧的 end_time）。
+  cur_lidar_gap_ = (last_lidar_end_time_ < 0.0)
+      ? 0.0 : (measures_.lidar.end_time - last_lidar_end_time_);
 
   // Normal & lio_only_undistort: both run deskew + ESKF observation,
   // so delta correction applies to both.
@@ -579,8 +585,7 @@ void SuperLIO::stateProcess(){
   // 阈值时永久跳过、退化成纯 IMU 积分。
   bool frame_trusted = true;
   if(g_frame_gap_guard_en){
-    const double gap = (last_lidar_end_time_ < 0.0)
-        ? 0.0 : (measures_.lidar.end_time - last_lidar_end_time_);
+    const double gap = cur_lidar_gap_;
     const double imu_head_gap = measures_.imu.empty()
         ? 1e9 : (measures_.imu.front().secs - measures_.lidar.start_time);
     if(gap > g_frame_gap_max || imu_head_gap > g_imu_cover_max){
@@ -608,18 +613,43 @@ void SuperLIO::stateProcess(){
   }
   last_lidar_end_time_ = measures_.lidar.end_time;
 
+  // 真实链路中断的指纹（正常丢一帧不会超过阈值），限频 5s 一条
+  if(cur_lidar_gap_ > g_frame_gap_max){
+    const auto now = std::chrono::steady_clock::now();
+    if(std::chrono::duration<double>(now - last_gap_log_wall_).count() > 5.0){
+      last_gap_log_wall_ = now;
+      LOG(WARNING) << "[Gap] 雷达帧间隔 " << cur_lidar_gap_ * 1000.0 << " ms（> "
+                   << g_frame_gap_max * 1000.0 << " ms），链路疑似中断，断档段不做积分";
+    }
+  }
+
   if(frame_trusted){
+    // 保存 IMU 先验：信任域否决时据此回滚，撤销本次激光修正
+    const SysState      sys_pred = kf_->GetSysState();
+    const ESKF::COV     cov_pred = kf_->GetCov();
+
     if(g_time_eva){
       time_record_.Evaluate([this]() { Observe(); },             "[Observe]");
-      time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
-      time_record_.Evaluate([this]() { UpdateMap(); },           "[UpdateMap]");
     }else{
       Observe();
+    }
+
+    checkPoseTrust(sys_pred, cov_pred);
+
+    if(g_time_eva){
+      time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
+      if(!lost_ || g_lost_map_en){
+        time_record_.Evaluate([this]() { UpdateMap(); },         "[UpdateMap]");
+      }
+    }else{
       ApplyDeltaCorrection();
-      UpdateMap();
+      if(!lost_ || g_lost_map_en){
+        UpdateMap();
+      }
     }
     Output();                // world cloud via queue (high precision)
     enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
+    last_ok_frame_wall_ = std::chrono::steady_clock::now();   // 看门狗心跳
   }
   caceSCPGOData();
 }
@@ -1096,15 +1126,22 @@ void SuperLIO::saveMap(){
     }
     
     {
+      // 有界等待：SaveThread 若卡在磁盘/IO 上，这里绝不能无限等 —— 调用方
+      // (/map_save) 持有 paused_=true，无限等会直接锁死整条实时链路。
       std::unique_lock<std::mutex> lock(save_mutex_);
-      save_cv_.wait(lock, [this]{
+      const bool drained = save_cv_.wait_for(lock, std::chrono::seconds(60), [this]{
         return save_queue_.empty();
       });
+      if(!drained){
+        LOG(WARNING) << YELLOW << " ---> [map_save] 等待 PCD 落盘超时 60s，剩余 "
+                     << save_queue_.size() << " 个片段（继续后续流程）" << RESET;
+      }
     }
     
     LOG(INFO) << GREEN << " ---> Save last cace success. " << RESET;
 
     // Step 1: Run dynamic point removal on scans_*.pcd -> filtered_scans_*.pcd
+    bool dyn_ok = true;
     if(g_dynamic_removal_enable){
       LOG(INFO) << YELLOW << " ---> Running dynamic point removal (per-frame mode) ... " << RESET;
       std::string save_map_dir = g_save_map_dir;
@@ -1114,7 +1151,10 @@ void SuperLIO::saveMap(){
       std::string pcd_folder = save_map_dir + "/PCD";
       
       std::stringstream cmd;
-      cmd << "taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
+      // timeout 兜底：dynamic_remove_node 是独立进程，异常时可能永不退出；
+      // 而它是在 /map_save 回调里同步执行的（此时 paused_=true），卡住就等于
+      // 整条实时链路被永久冻结，因此必须给进程级超时。
+      cmd << "timeout 600 taskset -c 0,1,2,3,4,5,6 ros2 run super_lio dynamic_remove_node"
           << " --input_dir " << pcd_folder
           << " --output_dir " << pcd_folder
           << " --grid_size " << g_dynamic_removal_grid_size
@@ -1144,12 +1184,14 @@ void SuperLIO::saveMap(){
       if(ret == 0) {
         LOG(INFO) << GREEN << " ---> Dynamic point removal success. Filtered PCDs saved to: " << pcd_folder << RESET;
       } else {
-        LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret << RESET;
+        dyn_ok = false;
+        LOG(WARNING) << RED << " ---> Dynamic point removal failed with code: " << ret
+                     << "（超时 600s 被杀时退出码为 124），回退为直接合并原始扫描" << RESET;
       }
     }
 
     // Step 2: Merge scans into final map
-    if(g_dynamic_removal_enable){
+    if(g_dynamic_removal_enable && dyn_ok){
       // Dynamic removal enabled: merge filtered_scans_*.pcd -> test.pcd
       LOG(INFO) << YELLOW << " ---> Merging filtered scans into " << g_map_name << " ... " << RESET;
       ProcessCaceMap(g_map_name, true);
@@ -1162,7 +1204,7 @@ void SuperLIO::saveMap(){
       LOG(INFO) << YELLOW << " ---> Saving original unfiltered scans as " << ori_name << " ..." << RESET;
       ProcessCaceMap(ori_name, false);
     } else {
-      // Dynamic removal disabled: directly merge original scans_*.pcd -> test.pcd
+      // 动态剔除关闭或失败：直接合并原始 scans_*.pcd -> test.pcd
       LOG(INFO) << YELLOW << " ---> Merging original scans into " << g_map_name << " ... " << RESET;
       ProcessCaceMap(g_map_name, false);
     }
@@ -1227,7 +1269,8 @@ void SuperLIO::Propagation_Undistort(){
   propagate_states_.emplace_back(kf_->GetDynamicState());
   kf_->SetObsTime(measures_.lidar.end_time);
   for (auto &imu : measures_.imu) {
-    kf_->Predict(imu);
+    // 断档冻结：dt 超过上限只对齐时间基准、不积分，避免把断档期的冲击加速度外推成真实运动
+    kf_->Predict(imu, g_max_imu_dt);
     propagate_states_.emplace_back(kf_->GetDynamicState());
   }
 
@@ -1372,6 +1415,101 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
 }
 
 
+/// 位姿信任域：Observe() 之后的裁决。
+/// 判据是「相对最近可信位姿的单帧跳变」——正常帧只有帧间运动（10Hz、2m/s 约 0.2m），
+/// 一旦跳变超阈值，说明本次配准要么被断档后的坏先验带偏，要么撞上了错误极小值。
+/// 处置分两种：
+///  - 正常态跳变超阈值：撤销本次激光修正（回滚到 IMU 先验），进入 LOST；
+///  - LOST：继续影子配准，每帧把位姿往配准结果限速拉一小步（slew），
+///    直到修正量连续 N 帧都很小才重新接受观测。
+/// LOST 期间只暂停 IVox 建图，odom/TF/点云仍按当前位姿全量输出（空中以飞行为先）。
+void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pred){
+  if(!g_trust_guard_en){ return; }
+
+  constexpr double kRad2Deg = 57.29577951308232;
+  const BASIC::SE3 T_post = kf_->GetSE3();
+  const BASIC::SE3& T_pred = T_predicted_end_;   // 本帧 IMU 先验
+
+  const double corr_p = (T_post.t_ - T_pred.t_).norm();
+  const double corr_r = BASIC::SO3(T_post.R_.transpose() * T_pred.R_).log_vee().norm() * kRad2Deg;
+
+  if(!lost_){
+    if(!stable_pose_valid_){
+      stable_pose_ = T_post;
+      stable_pose_valid_ = true;
+      return;
+    }
+    const double jump_p = (T_post.t_ - stable_pose_.t_).norm();
+    const double jump_r = BASIC::SO3(T_post.R_.transpose() * stable_pose_.R_).log_vee().norm() * kRad2Deg;
+
+    if(jump_p > g_trust_jump_max || jump_r > g_trust_jump_rot_max){
+      kf_->RollbackToState(sys_pred, cov_pred);
+      lost_ = true;
+      lost_recover_streak_ = 0;
+      ++trust_reject_total_;
+      last_trust_log_wall_ = std::chrono::steady_clock::now();
+      LOG(WARNING) << "[Trust] 单帧跳变 " << jump_p << " m / " << jump_r
+                   << " deg 超阈值(" << g_trust_jump_max << " m / "
+                   << g_trust_jump_rot_max << " deg)，撤销本次激光修正、进入 LOST："
+                   << "暂停建图，位姿/TF/点云继续全量输出（累计否决 "
+                   << trust_reject_total_ << " 次）";
+      return;
+    }
+    stable_pose_ = T_post;   // 正常帧：刷新可信位姿锁存
+    return;
+  }
+
+  // ===== LOST：影子配准 + 限速再锚定 =====
+  // 断档（如雷达掉线 2s 后接回）后，IMU 先验与真实位姿可能差出米级：
+  //   - 一次性接受配准结果 → 位姿瞬间跳变，下游（PX4/ego planner）直接甩飞；
+  //   - 完全否决配准结果 → 位姿永久停在断档前的位置，永远回不到真实位姿。
+  // 折中策略：把「先验 → 配准结果」的修正量按每帧最大平移/旋转切成小步，
+  // 逐帧把状态拉回配准结果（配准结果与冻结前的局部地图是一致的，因此是可信锚点）。
+  const bool converged = (corr_p <= g_trust_corr_max && corr_r <= g_trust_corr_rot_max);
+  lost_recover_streak_ = converged ? (lost_recover_streak_ + 1) : 0;
+
+  if(converged && lost_recover_streak_ >= g_lost_recover_frames){
+    lost_ = false;
+    lost_recover_streak_ = 0;
+    stable_pose_ = T_post;
+    stable_pose_valid_ = true;
+    LOG(WARNING) << "[Trust] 连续 " << g_lost_recover_frames
+                 << " 帧修正量收敛(" << corr_p << " m / " << corr_r
+                 << " deg)，退出 LOST，恢复建图";
+    return;
+  }
+
+  // 限速接近：p / R 各走一步，剩余残差留到下一帧继续收敛
+  SysState sys_fix = sys_pred;
+  {
+    V3 dp = T_post.t_ - sys_pred.p;
+    const double dp_n = dp.norm();
+    if(dp_n > g_lost_slew_p && dp_n > 1e-9){
+      dp *= (g_lost_slew_p / dp_n);
+    }
+    sys_fix.p = sys_pred.p + dp;
+
+    V3 dr = BASIC::SO3(sys_pred.R.R().transpose() * T_post.R_).log_vee();
+    const double dr_d = dr.norm() * kRad2Deg;
+    if(dr_d > g_lost_slew_r && dr_d > 1e-9){
+      dr *= (g_lost_slew_r / dr_d);
+    }
+    sys_fix.R = sys_pred.R * BASIC::SO3::Exp(dr);
+  }
+  kf_->RollbackToState(sys_fix, cov_pred);
+  ++trust_reject_total_;
+
+  const auto now = std::chrono::steady_clock::now();
+  if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+    last_trust_log_wall_ = now;
+    LOG(WARNING) << "[Trust] LOST 保持: corr=" << corr_p << " m / " << corr_r
+                 << " deg, streak=" << lost_recover_streak_ << "/"
+                 << g_lost_recover_frames << "，本帧限速修正 "
+                 << g_lost_slew_p << " m / " << g_lost_slew_r
+                 << " deg，建图暂停，位姿输出不中断";
+  }
+}
+
 /// Apply ESKF correction delta to deskewed clouds.
 /// After Observe() corrects the pose, the deskewed cloud (which used
 /// IMU-predicted trajectory) is slightly misaligned with the corrected body frame.
@@ -1461,6 +1599,23 @@ void SuperLIO::DownSample(){
       scan_offsets_ds_[i] = (si >= 0 && si < static_cast<int>(scan_offsets_full_.size()))
           ? scan_offsets_full_[si] : 0.0f;
     }
+  }
+
+  // 越界防护：Observe() 用点序号直接索引 effect_mask_[20000] / effect_knn_mask_[20000]，
+  // 并且以同一序号访问 abcd_vec_ / effect_knn_idxs_（均按 20000 预分配）。
+  // 点数一旦超限就是堆越界写，行为不可预测（静默错乱或卡死），因此在降采样出口
+  // 统一封顶，让 Observe / UpdateMap 看到一致的点数。
+  constexpr std::size_t kMaxObservePoints = 20000;
+  if(ds_undistort_->size() > kMaxObservePoints){
+    static long warn_cnt = 0;
+    if(++warn_cnt % 50 == 1){
+      LOG(WARNING) << "[DownSample] 单帧点数 " << ds_undistort_->size()
+                   << " 超过配准上限 " << kMaxObservePoints << "，已截断（累计 "
+                   << warn_cnt << " 帧）";
+    }
+    ds_undistort_->resize(kMaxObservePoints);
+    ds_undistort_->width = static_cast<uint32_t>(kMaxObservePoints);
+    ds_undistort_->height = 1;
   }
 }
 
@@ -2298,7 +2453,10 @@ void SuperLIO::printTimeRecord(){
 }
 
 
+/// 周期任务：由 1Hz 定时器驱动。看门狗每拍都检查；性能统计仍按 60s 窗口打印。
 void SuperLIO::periodicTimeReport(){
+  watchdogCheck();
+
   // M.32 时延估计状态（开启时每分钟一行，不依赖 lio.eva.timer；关闭时无输出）
   if (g_calib_td_en) {
     std::cout << " > [ TdCalib ] est=" << td_est_ * 1e3 << " ms"
@@ -2311,6 +2469,9 @@ void SuperLIO::periodicTimeReport(){
               << " ms" << std::endl;
   }
   if(!g_time_eva) return;
+  if(++report_tick_count_ < 60) return;
+  report_tick_count_ = 0;
+
   time_record_.PrintAndClear();
   if (ivox_) {
     // M.29：把插入统计与表规模打到同一个计时窗口，便于判断尖峰是否与扩容/淘汰同窗
@@ -2322,6 +2483,54 @@ void SuperLIO::periodicTimeReport(){
   }
   data_wrapper_->printLatencies();
   data_wrapper_->clearLatencies();
+}
+
+
+/// 实时链路看门狗：心跳只在一帧完整走完（配准+建图+输出）后刷新，
+/// 因此任何静默 return / 持锁卡死都会如实体现在 idle 时间上。
+/// 本函数运行在独立回调组的定时器线程上，即使 process 线程卡在 ESKF 的持锁区里，
+/// 也仍能照常执行 —— 这正是原实现缺失的可观测性。
+void SuperLIO::watchdogCheck(){
+  const auto now = std::chrono::steady_clock::now();
+  if(!watchdog_armed_){
+    watchdog_armed_ = true;
+    last_ok_frame_wall_ = now;
+    last_watchdog_log_wall_ = now;
+    return;
+  }
+
+  const double idle_s = std::chrono::duration<double>(now - last_ok_frame_wall_).count();
+  if(idle_s < 3.0){ return; }
+  if(std::chrono::duration<double>(now - last_watchdog_log_wall_).count() < 10.0){ return; }
+  last_watchdog_log_wall_ = now;
+
+  // 逐段探测：try_lock 拿不到即说明有线程正卡在该段的持锁区里
+  size_t dense_n = 0, save_n = 0;
+  bool dense_locked = true, save_locked = true, dense_busy = false;
+  {
+    std::unique_lock<std::mutex> lk(dense_mutex_, std::try_to_lock);
+    if(lk.owns_lock()){ dense_locked = false; dense_n = dense_queue_.size(); dense_busy = dense_busy_; }
+  }
+  {
+    std::unique_lock<std::mutex> lk(save_mutex_, std::try_to_lock);
+    if(lk.owns_lock()){ save_locked = false; save_n = save_queue_.size(); }
+  }
+
+  size_t lidar_n = 0, imu_n = 0;
+  double last_imu = -1.0, last_lidar = -1.0;
+  const bool got_buf = (data_wrapper_ != nullptr) &&
+      data_wrapper_->getBufferStats(lidar_n, imu_n, last_imu, last_lidar);
+
+  LOG(WARNING) << "[Watchdog] 已 " << idle_s << " s 未产出有效帧"
+               << " | paused=" << (paused_.load() ? 1 : 0)
+               << " frame_num=" << frame_num_
+               << " | lidar_buf=" << (got_buf ? std::to_string(lidar_n) : std::string("lock"))
+               << " imu_buf="   << (got_buf ? std::to_string(imu_n) : std::string("lock"))
+               << " last_imu=" << (got_buf ? std::to_string(last_imu) : std::string("lock"))
+               << " last_lidar=" << (got_buf ? std::to_string(last_lidar) : std::string("lock"))
+               << " | dense_q=" << (dense_locked ? std::string("lock") : std::to_string(dense_n))
+               << " dense_busy=" << (dense_busy ? 1 : 0)
+               << " save_q=" << (save_locked ? std::string("lock") : std::to_string(save_n));
 }
 
 
