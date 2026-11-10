@@ -12,6 +12,12 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
   与各项的动作细化）——采集前先读这里
 --------------------------------------------------------------------------------
 共 6 个，优先级 **B4 > B1 > B2 > B6 > B5 > B3**。
+※ 2026-11-10 更新：外部数据集 RTK-SLAM Dataset 已接入（见 M.37），
+  其 construction_seq2 带 16 个全站仪检查点（<1 cm，UTM 32N/ETRS89）
+  + 每点 SLAM 时间戳 + outdoor/indoor/transition 标注，且是室外↔室内切换、
+  室内 400 s 以上 GNSS 完全退化的长航时场景 ⇒ **可部分替代 B5 与 B6**，
+  这两项采集前先看 M.37 §4，能省则省。B4（旋转激励）不可被替代，
+  手持匀速数据给不了外参可观性，仍是最高优先。
 排序依据：B4 是外参/时延类工作的唯一前置（M.32 §5）；B1 决定细通道能否重启
 （M.28 §6）；B2/B6 都是"把累积误差切到段"的局部真值，但 B6 服务的是当前最大的
 遗留误差（1f 水平 1.5~2.4 m，M.21），故紧随 2.F；B5 只补场景档位的一个缺口；
@@ -5962,3 +5968,136 @@ M.36 【2026-11-10 楼梯 A 线在新代码上重定标：轴序不变、地板�
    cd /tmp/sl_bt/exp && WS_SETUP=/tmp/sl_bt_install/setup.bash \
      HUBER_BASE=0.20 IMU_NBG=0.003 NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.035 \
      ./run_one.sh bt75105_k5 6 0.25 0.3 0.1 0.25
+
+
+================================================================================
+M.37 【2026-11-10 外部数据集接入：RTK-SLAM Dataset / construction_seq2（带绝对地理真值）】
+
+■ 0. 为什么值得接（三条，都是我们现在缺的东西）
+   1) **我们全部结论都建立在相对判据上**（loop_error.py 的静止锚点闭环、
+      逐圈 revisit、占路径%），从没有一个带绝对地理坐标的真值。
+      本数据集给 16 个**全站仪（Leica TS16）实测**检查点，精度 <1 cm，
+      且每个点带 SLAM 时间戳 ⇒ 第一次可以做"不做任何对齐"的绝对误差。
+      官方在本序列上的结果：FAST-LIO-SAM online 0.439 m、offline 0.373 m，
+      而 SE(3) 对齐后只有 0.089 m ⇒ **Gap 76%**（对齐把误差藏掉 4 倍以上）。
+      这个数字对我们是方法论层面的提醒：我们习惯的闭环/相对指标，
+      上限同样可能掩盖数倍的全局误差。
+   2) 场景正好补两个采集缺口：室外↔室内切换 + **400 s 以上、约 150 m 的
+      GNSS 完全退化室内长航时**（0.39 km，RTK fix 仅 23%）。
+      这覆盖 M.31 §5 里"开阔/半开阔无定义"的第三类场景（原 B5），
+      也覆盖原 B6（把累积误差切到段）的一部分。
+   3) 传感器与平台就是我们自己：Livox MID-360 + 内置 IMU（10 Hz / 200 Hz），
+      与 GNSS 时间 1 PPS 硬件同步；calib.yaml 里 T_lidar_imu 的
+      **旋转为单位阵**、平移 (-0.011, -0.023, 0.044) —— 与我们
+      livox_360 配置里的外参逐字一致 ⇒ ESKF「body=雷达系」的既有建模
+      在这份数据上直接成立，不需要改模型或重标定。
+
+■ 1. 来源、镜像用法与落盘（实测数字）
+   数据集页  https://huggingface.co/datasets/Willyzw/rtk-slam-dataset
+   说明页    https://rtk-slam-dataset.github.io/   （ISPRS Congress 2026）
+   评测代码  https://github.com/Willyzw/rtk-slam-eval
+   许可      CC-BY-4.0（HF README.md front-matter: license: cc-by-4.0）
+   下载走镜像 hf-mirror.com（官方域名 huggingface.co 在本机**连接超时**，实测）：
+     wget -c --timeout=90 --tries=0 -O construction_seq2.db3 \
+       "https://hf-mirror.com/datasets/Willyzw/rtk-slam-dataset/resolve/main/ros2/construction_seq2/construction_seq2.db3"
+   限速实测（2026-11-10）：单连接 1.60 MB/s；**4 路并行 1.53 MB/s（无增益）**
+   ⇒ 镜像按 IP 总带宽限流，多线程无意义；9.92 GB 约需 100 min，只能挂后台等。
+   落盘：
+     /mnt/dataset/slam_data/rtk_slam/construction_seq2/construction_seq2.db3
+        （10,656,112,640 B，LFS）
+     /mnt/dataset/slam_data/rtk_slam/construction_seq2/metadata.yaml（1,930 B）
+     /mnt/dataset/slam_data/rtk_slam/rtk-slam-eval/   （git clone --depth 1）
+        ground_truth/construction_seq2.csv  ← 真值（16 点 + 表头）
+        data/construction_seq2/rtk.txt      ← 5,995 条 RTK（10 Hz，status=4）
+        calib/calib.yaml                    ← 相机内参/畸变 + 三组杆臂
+        eval/{coords,metrics,readers,eval,plot,transform_imu_to_base}.py
+   ※ HF 数据集仓库里**只有 bag**（euroc/ros1/ros2 + README + .gitattributes），
+     真值与标定在 GitHub 评测仓库内，两处都要拿才算完整。
+   ※ /home/ywj/slam_data 是 /mnt/dataset/slam_data 的软链，磁盘余量 653 GB。
+
+■ 2. bag 内容（metadata.yaml 实测）与一个必须绕开的坑
+   时长 599.509 s；消息总数 149,558；starting_time = 1764590367.894611597
+   storage_identifier sqlite3，version 8，ros_distro rosbags
+     /livox/lidar                     5,878   livox_ros_driver/msg/CustomMsg
+     /livox/points                    5,878   sensor_msgs/msg/PointCloud2
+     /livox/imu                     119,819   sensor_msgs/msg/Imu        (200 Hz)
+     /camera/image_raw/compressed    11,990   sensor_msgs/msg/CompressedImage (20 Hz)
+     /gnss/fix                        5,993   sensor_msgs/msg/NavSatFix  (10 Hz)
+   **坑**：lidar 用的是 ROS1 时代的包名 `livox_ros_driver/msg/CustomMsg`，
+   而 Super-LIO 订阅 `livox_ros_driver2/msg/CustomMsg`；两者**字段布局不同**
+   （driver2 多 lidar_type/rsv/package_common_length/package_length，
+    driver1 的 packages 是定长数组），不是改名字就能通的，类型哈希也不兼容。
+   三条路（按成本排序）：
+     A) 用 /livox/points 走 Super-LIO 的 stdMsgHandler（PointCloud2 分支已实现
+        逐点时间解析，case 1/2/3/4 按 time_type 分支）。**前提是该 PointCloud2
+        的 fields 里带逐点相对时间**——待 bag 下完后第一时间验证；
+        若不带时间，去畸变就退化成整帧刚体，楼梯/1f 那套结论不可比，慎用。
+     B) 写 db3 blob → livox_ros_driver2::CustomMsg 的离线转换器
+        （直接 sqlite3 读 messages 表，按 Livox CustomMsg 二进制布局解出
+         逐点 x/y/z/intensity/offset_time，重打包成 driver2 的 db3）。
+        保留逐点时间，工作量中等，是正解。
+     C) 改用官方 ros1/*.bag + ROS1 工具链 —— 我们不跑 ROS1，排除。
+
+■ 3. 真值判据：能算什么、不能直接算什么
+   ground_truth/construction_seq2.csv 列：
+     point_id, easting, northing, height, env, timestamp
+   · 坐标系 **UTM Zone 32N / ETRS89**（central_meridian = 9.0°，GRS80），
+     easting 523934.656~524015.727，northing 5412273.436~5412321.175，
+     height 293.878~294.748（椭球高经 geoid 改正后的 UTM 高）
+   · env ∈ {outdoor, indoor, transition}：2 个 GPS（outdoor）+ 12 个 MS（indoor）
+     + 2 个 CP（transition）+ 2 个 GPS ⇒ 天然标注了 GNSS 条件，
+     可以按 indoor/outdoor 分段统计误差（这是我们现在完全没有的能力）
+   · timestamp 与 bag 同一时间基（首点 1764590411.602 = 起始 +43.7 s）
+     ⇒ 时间匹配不需要额外对齐，直接拿 SLAM 轨迹插值即可
+   · 官方高程约定（eval/coords.py）：SLAM 路 enu[2] -= 48.22，GNSS 路 -= 48.5
+     ⇒ 两套 geoid 改正不同，我们若自己实现必须照抄，否则竖直方向多出 0.28 m
+   **不能直接照抄的部分（重要）**：官方 metrics.absolute_errors 做的是
+   "完全不对齐的 3D 距离 RMSE"，而每个方法只需提供 enu_origin.json=[lat,lon,alt]；
+   coords.py 的 enu_to_latlon 是小角度平面近似（east=x, north=y），
+   隐含假设**SLAM 输出的 x 轴就是真北**。这对 RTK-SLAM 成立（GNSS 定北），
+   对纯 LIO 的 Super-LIO **不成立**：我们的 odom 原点是首帧机体位姿，
+   x 轴 = 起始航向，与真北差一个未知角 θ。本序列水平尺度 ~100 m，
+   θ=1° 就带来 ~1.7 m 的系统误差 ⇒ 直接算"绝对 ATE"得到的将是航向误差，
+   而不是我们想测的漂移。
+   因此分两步接入：
+     第 1 步（免原点、免航向，可直接做）：**相邻检查点弦长判据**
+        对每对相邻检查点 (i,j)，比较 |Δ真值| 与 |ΔSLAM(在 t_i,t_j 的位姿)|，
+        得 15 段独立"尺度/累积漂移"指标，并按 env 分组（indoor 段是长航时
+        无 GNSS 的纯 LIO 累积，正是我们要的量）。
+        等价于把 loop_error.py 的"闭环"从 1 个推广到 15 个，且不依赖任何对齐。
+     第 2 步（要解航向）：用 ≥2 对 outdoor/transition 检查点反解起始 θ
+        （最小二乘 SE(2)：只允许 yaw + 平移，**不允许尺度**），
+        之后再报官方口径的 absolute ATE，并同时报 θ 的估计值与残差；
+        θ 本身也是有用的量（它就是航向漂移，我们目前无法直接观测）。
+        注意：这一步必须把 θ 的求解约束在"与待测误差不同的时间段"，
+        否则等于自己给自己对齐，就退化成了官方批评的 SE(3) 对齐。
+
+■ 4. 对既有结论与采集计划的影响
+   · 原 B5（开阔/半开阔）与 B6（切段真值）**可被本数据集部分替代**，
+     省一次外场采集；但 B4（激励标定）不可替代——它要的是旋转激励，
+     本数据是手持匀速，且我们仍需自有平台下的外参/时延样本。
+   · 我们第一次能验证"1f 那 2~3 m 竖直漂移在绝对意义下是真误差还是坐标系选择"
+     ——本数据 height 是真高程，竖直方向可直接比对（照抄 geoid 改正即可）。
+   · 官方给的漂移率可作横向基线：FAST-LIO-SAM 9.2 cm/min（0.25% 路径）、
+     OKVIS2-X(lvig) 8.0 cm/min（0.22%）。我们的 1f 是 774 m / 637 s，
+     若按同样口径换算即可直接对比（注意这是相对弦长类指标，不是对齐后的 ATE）。
+
+■ 5. 待验证清单（按顺序，第 1 项决定后面走哪条路）
+   [ ] /livox/points 的 fields 是否含逐点相对时间 ⇒ 决定走方案 A 还是 B
+   [ ] IMU 实际 200 Hz 与时间戳单调性（119,819/599.51 = 199.86 Hz，需看抖动）
+   [ ] db3 完整性（下完比 LFS oid 9e808703...，或按 149,558 条计数校验）
+   [ ] Super-LIO 能否在该 bag 上跑通（手持平台 30° 俯仰未知，先按 MID360 默认跑）
+   [ ] 弦长判据实现（新脚本 exp/checkpoint_error.py，输入 odom.csv + GT csv）
+   [ ] 与官方数字对表：同一 bag 官方 FAST-LIO-SAM online 0.439 m，
+       我们若差异大，先怀疑第 3 节的航向问题而不是算法
+
+■ 6. 引用
+   @article{zhang2026rtkslam,
+     title={An RTK-SLAM Dataset for Absolute Accuracy Evaluation in
+            GNSS-Degraded Environments},
+     author={Zhang, Wei and Ress, Vincent and Skuddis, David and
+             Soergel, Uwe and Haala, Norbert},
+     journal={The International Archives of the Photogrammetry, Remote Sensing
+              and Spatial Information Sciences}, year={2026}}
+   许可 CC-BY-4.0；评测脚本 rtk-slam-eval 同仓库另计（GitHub 默认许可，
+   入库前需自查其 LICENSE 是否存在 —— 本次 clone 的仓库根未见 LICENSE 文件）。
