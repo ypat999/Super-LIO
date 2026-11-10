@@ -45,7 +45,10 @@ public:
   std::array<Point, K> points_;
 
   inline void try_insert(float dist2, const Point& pt) {
-    const bool not_full = (count < K);
+    // M.35：邻域大小 K 提到运行时（模板参数仍决定数组容量，故这里夹到容量内，
+    // 传错值最多退化到"按容量运行"，不会越界）。下限由参数装载处保证 ≥4。
+    const uint8_t kmax = static_cast<uint8_t>(eff_k());
+    const bool not_full = (count < kmax);
     const bool should_insert = not_full || (dist2 < max_dist2_);
     
     if (should_insert) {
@@ -67,24 +70,32 @@ public:
   }
 
 private:
+  /// 求堆内最坏（距离最大）项的下标与距离。
+  /// 历史缺陷（M.35 修复）：本函数原先手写 unrolled 只扫 dist2_[0..4]，
+  /// 而 67c0acd 把容量从 5 提到 8 时没有同步——满堆后 worst_/max_dist2_
+  /// 永远只在前 5 个位置里取最大，于是：
+  ///   1) 索引 5..7 里的远点永远不会被替换掉，堆不再维护"最近 K 个"；
+  ///   2) max_dist2_ 被系统性低估，try_insert 的 dist2<max_dist2_ 判据变严，
+  ///      getTopK 的提前退出判据也跟着错；
+  ///   3) 最终 top_K.count 可达 8，把上面这些不该用的点送进平面拟合。
+  /// 这里改成扫描全部 K 个位置：K 是模板常量，编译器会完全展开，
+  /// 与被屏蔽的尾部位置 dist2_==0 不影响结果（平方距离非负）。
+  /// K=5 时与修复前的 unrolled 版逐位等价（有效点全在前 5 个位置）。
   inline void update_worst_unrolled() {
-    float d0 = dist2_[0], d1 = dist2_[1], d2 = dist2_[2], d3 = dist2_[3], d4 = dist2_[4];
-    
-    uint8_t idx01 = d0 > d1 ? 0 : 1;
-    float max01 = d0 > d1 ? d0 : d1;
-    
-    uint8_t idx23 = d2 > d3 ? 2 : 3;
-    float max23 = d2 > d3 ? d2 : d3;
-    
-    uint8_t idx0123 = max01 > max23 ? idx01 : idx23;
-    float max0123 = max01 > max23 ? max01 : max23;
-    
-    worst_ = max0123 > d4 ? idx0123 : 4;
-    max_dist2_ = max0123 > d4 ? max0123 : d4;
+    float mx = dist2_[0];
+    uint8_t wi = 0;
+    for (int i = 1; i < K; ++i) {
+      if (dist2_[i] > mx) { mx = dist2_[i]; wi = static_cast<uint8_t>(i); }
+    }
+    worst_ = wi;
+    max_dist2_ = mx;
   }
 
 public:
   inline float max_dist2() const { return max_dist2_; }
+  static constexpr int capacity() { return K; }
+  /// 运行时生效的邻域大小（受参数 g_plane_knn_k 与模板容量 K 共同决定）
+  inline int eff_k() const { return std::min(g_plane_knn_k, K); }
 };
 
 
@@ -438,7 +449,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
       else group_it+=data_size;
     }
 
-    if (top_K.count == 8)
+    if (top_K.count == static_cast<uint8_t>(top_K.eff_k()))
       if (top_K.max_dist2_ < orders_min_dis2[group_idx] * g_hknn_order_scale){
         break;
       }

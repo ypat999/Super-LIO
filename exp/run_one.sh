@@ -90,6 +90,8 @@ MAP_MAX_POINTS=${MAP_MAX_POINTS:-20}
 MAP_MERGE_DIST=${MAP_MERGE_DIST:-0.1}
 HKNN_MAX_GROUP=${HKNN_MAX_GROUP:--1}
 HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
+# M.35 平面拟合邻域 K（默认 8 = 当前代码行为；跑 K 矩阵时显式传 5）
+PLANE_KNN_K=${PLANE_KNN_K:-8}
 # SC-PGO 兼容输出（只导出关键帧扫描+位姿，不改变 LIO 行为）
 SC_PGO_EN=${SC_PGO_EN:-false}
 SC_KF_GAP=${SC_KF_GAP:-0.5}
@@ -186,6 +188,7 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__MAP_MERGE_DIST__|$MAP_MERGE_DIST|g" \
     -e "s|__HKNN_MAX_GROUP__|$HKNN_MAX_GROUP|g" \
     -e "s|__HKNN_ORDER_SCALE__|$HKNN_ORDER_SCALE|g" \
+    -e "s|__PLANE_KNN_K__|$PLANE_KNN_K|g" \
     -e "s|__SC_PGO_EN__|$SC_PGO_EN|g" \
     -e "s|__SC_KF_GAP__|$SC_KF_GAP|g" \
     -e "s|__SC_KF_DEG__|$SC_KF_DEG|g" \
@@ -260,6 +263,7 @@ fi
   echo "map_merge_dist=$MAP_MERGE_DIST"
   echo "hknn_max_group=$HKNN_MAX_GROUP"
   echo "hknn_order_scale=$HKNN_ORDER_SCALE"
+  echo "plane_knn_k=$PLANE_KNN_K"
   echo "sc_pgo_en=$SC_PGO_EN"
   echo "sc_kf_gap=$SC_KF_GAP"
   echo "sc_kf_deg=$SC_KF_DEG"

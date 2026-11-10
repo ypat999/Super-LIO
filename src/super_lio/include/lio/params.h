@@ -310,6 +310,13 @@ namespace LI2Sup{
   extern int    g_hknn_max_group;    // -1=全部 6 组；1..6=只搜前 N 组（有效半径递减）
   extern double g_hknn_order_scale;  // orders_min_dis2 乘子（随 vox_res 缩放用）
 
+  /// 平面拟合邻域大小 K（M.35；4..8，默认 8 = 67c0acd 的现行为）。
+  /// 历史上 K 写死在 KNNHeap<K,...> 模板参数里，改一次要重编译一次，
+  /// 无法在同一二进制上对照 K=5/K=8 ⇒ 提到运行时。
+  /// 堆的**容量**仍是模板参数 8（数组尺寸），这里只控制"填到几个算满"
+  /// 以及 getTopK 的提前退出判据，因此 K<8 时数组尾部保持 0 不参与。
+  extern int g_plane_knn_k;
+
   /// 实验 C：固定地图 / 冻结地图更新
   /// freeze=true 时 UpdateMap() 不写 ivox，地图只保留 load_path 载入的先验，
   /// 用于隔离"地图反馈是否放大方向相关误差"（只作机制定位，不作性能评价）

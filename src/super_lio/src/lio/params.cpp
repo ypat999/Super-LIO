@@ -182,6 +182,9 @@ namespace LI2Sup{
   int    g_hknn_max_group = -1;
   double g_hknn_order_scale = 1.0;
 
+  /// 平面拟合邻域 K（M.35）。默认 8 = 67c0acd 迁入的现行为，保持默认即不改行为。
+  int    g_plane_knn_k = 8;
+
   /// 实验 C：固定地图 / 冻结地图更新
   bool   g_map_freeze = false;
   string g_map_load_path;
