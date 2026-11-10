@@ -404,6 +404,14 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.hash_map.hknn_order_scale", 1.0);
   node.get_parameter("lio.hash_map.hknn_order_scale", g_hknn_order_scale);
 
+  // M.35：平面拟合邻域大小（此前写死在 KNNHeap<K,...> 模板参数里）
+  node.declare_parameter<int>("lio.hash_map.plane_knn_k", 8);
+  node.get_parameter("lio.hash_map.plane_knn_k", g_plane_knn_k);
+  // 下限 4：少于 4 点拟合不出平面（calc_plane_coeff 之前有 count<4 的丢弃）
+  // 上限 8：等于 KNNHeap 的模板容量，超了会写越界（try_insert 内另有兜底夹取）
+  if (g_plane_knn_k < 4) g_plane_knn_k = 4;
+  if (g_plane_knn_k > 8) g_plane_knn_k = 8;
+
   LOG(INFO) << GREEN << " ---> [Param] debug/level: " << g_debug_level << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/normal_weight_en: " << g_normal_weight_en
             << " sigma: " << g_normal_sigma << RESET;
@@ -413,6 +421,7 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " merge_dist: " << g_map_merge_dist << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/hknn_max_group: " << g_hknn_max_group
             << " order_scale: " << g_hknn_order_scale << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] hash_map/plane_knn_k: " << g_plane_knn_k << RESET;
   node.declare_parameter<int>("lio.observe.guard_max_consecutive", 9);
   node.get_parameter("lio.observe.guard_max_consecutive", g_guard_max_consecutive);
 
@@ -774,6 +783,9 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.hash_map.merge_dist") g_map_merge_dist = p.as_double();
         else if (name == "lio.hash_map.hknn_max_group") g_hknn_max_group = p.as_int();
         else if (name == "lio.hash_map.hknn_order_scale") g_hknn_order_scale = p.as_double();
+        else if (name == "lio.hash_map.plane_knn_k") {
+          g_plane_knn_k = std::min<int>(8, std::max<int>(4, static_cast<int>(p.as_int())));
+        }
         else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
         else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
         else if (name == "lio.kf.freeze_gravity") g_kf_freeze_gravity = p.as_bool();
