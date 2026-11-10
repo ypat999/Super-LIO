@@ -104,6 +104,8 @@ MAP_INIT_POSE=${MAP_INIT_POSE:-[]}
 MAP_DS_SIZE=${MAP_DS_SIZE:-0.25}
 
 BAG=${BAG:-/home/ywj/slam_data/livox_record_A_building}
+# M.37 外部数据集用 /livox/points（PointCloud2 + offset_time）；默认保持原话题
+LIDAR_TOPIC=${LIDAR_TOPIC:-/livox/lidar}
 EXP_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 RESULT_ROOT=${RESULT_ROOT:-$EXP_ROOT/results}
 OUT=$RESULT_ROOT/$EXP_NAME
@@ -138,6 +140,7 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__IMU_NBG__|$IMU_NBG|g" \
     -e "s|__IMU_GYR_SCALE__|$IMU_GYR_SCALE|g" \
     -e "s|__LIDAR_TIME_OFFSET__|$LIDAR_TIME_OFFSET|g" \
+    -e "s|__LIDAR_TOPIC__|$LIDAR_TOPIC|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
     -e "s|__HASH_RESERVE_EN__|$HASH_RESERVE_EN|g" \
     -e "s|__HASH_RESERVE_SIZE__|$HASH_RESERVE_SIZE|g" \
@@ -214,6 +217,7 @@ fi
   echo "imu_nbg=$IMU_NBG"
   echo "imu_gyr_scale=$IMU_GYR_SCALE"
   echo "lidar_time_offset=$LIDAR_TIME_OFFSET"
+  echo "lidar_topic=$LIDAR_TOPIC"
   echo "vox_resolution=$VOX_RES"
   echo "debug_level=$DEBUG_LEVEL"
   echo "normal_weight_en=$NORMAL_WEIGHT_EN"

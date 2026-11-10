@@ -6038,6 +6038,30 @@ M.37 【2026-11-10 外部数据集接入：RTK-SLAM Dataset / construction_seq2�
         保留逐点时间，工作量中等，是正解。
      C) 改用官方 ros1/*.bag + ROS1 工具链 —— 我们不跑 ROS1，排除。
 
+   2.1 接入实测（60 s smoke，m37_smoke_constr2，19:38）——三件事必须记下来
+     a) **ros2 bag play 会静默忽略 /livox/lidar**：
+          [WARN] Ignoring a topic '/livox/lidar', reason: package
+          'livox_ros_driver' not found
+        本机只有 livox_ros_driver2 ⇒ 想走 CustomMsg 路线，连"播出来"都做不到，
+        除非先编一个 livox_ros_driver 的 ROS2 包（会与我们现有 driver2 消息重名
+        风险高）。⇒ 这条路比预想的更贵，方案 B（离线转成 driver2 db3）才是正解。
+     b) **改话题名不够**：ROSWrapper.cpp:863 的分支是
+          if (g_lidar_type == LID_TYPE::LIVOX) 订 CustomMsg else 订 PointCloud2
+        而这份数据的 lidar_type 必须是 Livox（offset_time 单位是微秒；
+        若改成 OUSTER=7，case 3 会按**纳秒**解释 ⇒ 逐点时间错 1000 倍，
+        正是 67c0acd 那条修复针对的坑）。⇒ 需要把"消息种类"与"雷达型号"解耦
+        （新增 lio.ros.lidar_msg: custom|pointcloud2，默认 custom 不改行为）。
+     c) **stdMsgHandler 不认 offset_time 这个字段名**：它只匹配
+        "timestamp"/"time"/"t"（ROSWrapper.cpp:1113），而本数据的逐点时间
+        字段叫 offset_time（uint32，point_step=28，offset=24，另有 tag/line）
+        ⇒ 直接喂进去 has_time=false，去畸变退化成整帧刚体，结论不可比。
+        必须把 offset_time 加进字段匹配，且按微秒（time_type=3）解释。
+     ⇒ 另有一条正向经验：这类"类型不匹配"失败在 rclcpp 层是**完全静默**的
+        （没有任何 ERROR），本次是靠 merge 带入的看门狗日志才 10 秒内定位：
+          [Watchdog] 已 10.9998 s 未产出有效帧 | frame_num=0
+            lidar_buf=0 imu_buf=680 last_imu=1764590371.349622 last_lidar=-1
+        lidar_buf=0 而 imu_buf 在涨 ⇒ 一眼判定"点云没进来"，而不是去查算法。
+
 ■ 3. 真值判据：能算什么、不能直接算什么
    ground_truth/construction_seq2.csv 列：
      point_id, easting, northing, height, env, timestamp
@@ -6098,7 +6122,10 @@ M.37 【2026-11-10 外部数据集接入：RTK-SLAM Dataset / construction_seq2�
      若按同样口径换算即可直接对比（注意这是相对弦长类指标，不是对齐后的 ATE）。
 
 ■ 5. 待验证清单（按顺序，第 1 项决定后面走哪条路）
-   [ ] /livox/points 的 fields 是否含逐点相对时间 ⇒ 决定走方案 A 还是 B
+   [x] /livox/points 的 fields **含**逐点相对时间：offset_time（uint32,
+       offset=24），另有 tag/line；width=20256、point_step=28、is_dense=1、
+       frame_id='livox_lidar'，header.stamp 与 bag 时间戳一致（差 0 s）
+       ⇒ 数据侧没问题，卡点全在我们代码侧（见 §2.1 的 b/c 两条）
    [ ] IMU 实际 200 Hz 与时间戳单调性（119,819/599.51 = 199.86 Hz，需看抖动）
    [ ] db3 完整性（下完比 LFS oid 9e808703...，或按 149,558 条计数校验）
    [ ] Super-LIO 能否在该 bag 上跑通（手持平台 30° 俯仰未知，先按 MID360 默认跑）
