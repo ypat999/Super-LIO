@@ -5814,3 +5814,101 @@ M.35 【2026-11-10 把 K 提到运行时：一次"编辑没落盘"事故，与�
      ./run_one.sh m35_smk$K 6 0.25 0.3 0.1 0.25 40; done
    grep -o "plane_knn_k.*" results/m35_smk5/node.log   # 应打印装载值
    md5sum results/m35_smk5/odom.csv results/m35_smk8/odom.csv
+
+
+================================================================================
+M.36 【2026-11-10 楼梯 A 线在新代码上重定标：轴序不变、地板抬高，护栏反而有益】
+
+■ 0. 结论摘要
+   1) A 线的每一条轴，**最优点位置一个都没挪**，但谷底值抬高了 27 倍：
+      na 谷底 = 0.3、huber 谷底 = 0.20、nw 谷底 = σ0.035（与 M.26/M.28 相同），
+      而谷底闭环从 0.021 m 变成 0.562 m（K=8 + 护栏开）。
+      ⇒ M.26/M.28 的"轴排序"结论仍然可用；它们给出的**绝对精度数字全部作废**。
+   2) 当前楼梯最优格 = 现 A 线 + **K=8**（0.562 m），优于 K=5（1.031 m）。
+   3) 信任域护栏（merge 带进来的新机制）在楼梯上是**有益项**，不是干扰源：
+      关掉它 K=8 从 0.562 恶化到 0.786（+40%），K=5 从 1.031 恶化到 1.704（+65%）。
+      ⇒ 保持 trust_guard_en 默认 true。
+   4) 0.021 → 1.031 这 45x 的**根因仍未定位**（§4 给出已排除的 7 项与 1 处
+      自我纠正）。它决定了"A 线能不能继续当楼梯生产参数"，是 M.37 的唯一任务。
+
+■ 1. 单轴敏感度（K=8、MAP_REP_MODE=0、其余同 A 线；基准 0.562 m）
+   轴      取值        闭环#2     判读
+   na      0.01     发散          path=525,977 m，完全不可用
+   na      0.1        1.239       （首轮 9.851 带 1.49 s gap 污染，取 r2 干净值）
+   na      0.3        0.562       ← 谷底
+   na      0.5        1.559
+   na      1.0        1.770       （6.61 s gap 污染，量级仍可信）
+   huber   0.05       1.014
+   huber   0.20       0.562       ← 谷底
+   huber   0.50       0.995       （12 次 gap 污染，只作方向参考）
+   nw      off        2.392
+   nw      σ0.035     0.562       ← 谷底
+   nw      σ0.05      1.999
+   nbg     0.0001     0.646       与 0.003 差 15%，此轴不敏感（与 M.26 一致）
+   ⇒ na 与 nw 两侧都陡（0.3 的左右一档就 ×2~×4），确认 A 线仍是"刀刃平衡"；
+   ⇒ 我原本推测"新代码会把 na 最优点推到 0.3 之上"，被 na=0.5/1.0 两格**证伪**。
+
+■ 2. 护栏反证（同一二进制，只差 trust_guard_en）
+   代码/配置                  护栏开     护栏关      触发次数（开）
+   当前 K=5 A 线              1.031      1.704       2
+   当前 K=8 A 线              0.562      0.786       2
+   ⇒ 两次撤销激光修正换来的是更好的结果，护栏在这里是净收益；
+     阈值组实测为 jump_max=1.0 m / jump_rot=15° / corr_max=0.5 m /
+     corr_rot=10° / recover=5 帧 / slew 0.1 m·1°。
+   ⇒ 顺带修正我中途的一个误判：merge 顶点 bt75105_k5 的闭环也是 1.704，
+     我一度据此推断"护栏在 7b25105 上没触发"——实际它同样触发 2 次，
+     且 odom md5 与"当前关护栏"那格并不同（122225dd vs 0e7b7881），
+     1.704 相同只是巧合。
+
+■ 3. 时代链（全部 na0.3 ng0.1 nbg0.003 huber0.20 nw on σ0.035）
+   64c217d（KNNHeap<5>，无护栏）................ 0.021
+   7b25105（merge 顶点，K=5 + 护栏）............ 1.704   ← 退化发生在 merge 这一步
+   当前 HEAD（K=5 + 护栏）...................... 1.031
+   当前 HEAD（K=8 + 护栏）...................... 0.562   ← 本轮最优
+   1f 侧同配置：3.052（64c217d）→ 2.241（当前 K=5）= -27%，方向是好的。
+
+■ 4. 根因排查：已排除 7 项（都有硬证据，不是推测）
+   1) calc_plane_coeff 的矩阵写法（8×3+topLeftCorner vs 5×3）
+      ⇒ N==5 走原写法后 m36_ulp_k5 = 1.030/1.031，与 8×3 版逐位一致 ⇒ 非 ulp；
+      K=8 那格与改动前 md5 相同（06a9497e），证明该临时改动零副作用。
+      ※ 但这**只覆盖了 N==5**；邻域不足时的 N==4 路径（旧代码走 Matrix<4,3>、
+        新代码走 8×3 子块）没有单独验证过，仍是未排除的 ulp 入口。
+   2) K（K=5/K=8 是方向差异，不是 45x 的来源）
+   3) ESKF 断档自愈（dt>0.2）：5 个 run 的告警计数全为 0 ⇒ 从未触发
+   4) IMU 断档冻结（g_max_imu_dt=0.05）：直接统计 bag，IMU dt 中位 4.61 ms、
+      max 36.81 ms，dt>0.05 s 次数 0 ⇒ 从未触发
+   5) DownSample 点数封顶 20000：楼梯每帧约 970 点 ⇒ 不触发
+   6) params.cpp 默认值被 merge 覆盖：diff 显示只新增信任域/冻结相关 11 个量，
+      没有改动任何既有默认值
+   7) 扫描尾部点剔除（b528aec）：`git log 64c217d..67c0acd --grep=尾部点` 为空
+      ⇒ 早已在 exp 里，不属于本次区间
+   剩余嫌疑（M.37）：merge 带入的 ROSWrapper.cpp +112 行 / super_lio.cpp +231 行 /
+   super_lio.h +26 行 / ESKF.h +8 行 / super_lio_node.cpp +5 行里的语义改动。
+   手段只能是逐提交 bisect 实测（每格 ≈ 12 min：worktree 独立编译 + 一次楼梯跑），
+   13 个提交含 merge，二分约 4~5 步。
+
+■ 5. 状态
+   已完成：14 格（敏感度 6 + 上界 2 + 复测 1 + ulp 定位 2 + 护栏反证 2 + merge 顶点 1）
+   可用结论：A 线轴序不变；当前最优 = 现 A 线 + K=8（0.562 m）；护栏保留默认开
+   作废结论：M.26/M.28 的绝对精度数字（0.021~0.024）在当前代码上不可复现
+   未决：45x 根因（§4 剩余嫌疑），以及它是否也影响 B 线（B 线方向是正的，暂不阻塞）
+   接线补充：lio.observe.trust_guard_en 已进 config_template/run_one.sh
+             （env TRUST_GUARD_EN，默认 true = 不改行为）
+
+■ 6. 复跑命令
+   ./lane_v_asens_a.sh    # na 0.1/0.01、huber 0.05
+   ./lane_v_asens_b.sh    # nw off、nw σ0.05、nbg 0.0001
+   ./lane_v_acens_c.sh    # na 0.5 / 1.0（上界）
+   ./lane_v_acens_d.sh    # na0.1 复测、huber 0.5（上界）
+   # 护栏反证（两格）：
+   cd exp && for K in 5 8; do ROS_DOMAIN_ID=$((92+K)) \
+     BAG=~/slam_data/livox_record_drone TRUST_GUARD_EN=false PLANE_KNN_K=$K \
+     HUBER_BASE=0.20 IMU_NBG=0.003 NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.035 \
+     ./run_one.sh m36_noguard_k$K 6 0.25 0.3 0.1 0.25; done
+   # merge 顶点对照（worktree，用完 git worktree remove）：
+   git worktree add --detach /tmp/sl_bt 7b25105
+   colcon build --paths /tmp/sl_bt/src/super_lio --build-base /tmp/sl_bt_build \
+     --install-base /tmp/sl_bt_install --cmake-args -DCMAKE_BUILD_TYPE=Release
+   cd /tmp/sl_bt/exp && WS_SETUP=/tmp/sl_bt_install/setup.bash \
+     HUBER_BASE=0.20 IMU_NBG=0.003 NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.035 \
+     ./run_one.sh bt75105_k5 6 0.25 0.3 0.1 0.25
