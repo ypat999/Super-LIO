@@ -6127,9 +6127,10 @@ M.37 【2026-11-10 外部数据集接入：RTK-SLAM Dataset / construction_seq2�
        frame_id='livox_lidar'，header.stamp 与 bag 时间戳一致（差 0 s）
        ⇒ 数据侧没问题，卡点全在我们代码侧（见 §2.1 的 b/c 两条）
    [ ] IMU 实际 200 Hz 与时间戳单调性（119,819/599.51 = 199.86 Hz，需看抖动）
-   [ ] db3 完整性（下完比 LFS oid 9e808703...，或按 149,558 条计数校验）
-   [ ] Super-LIO 能否在该 bag 上跑通（手持平台 30° 俯仰未知，先按 MID360 默认跑）
-   [ ] 弦长判据实现（新脚本 exp/checkpoint_error.py，输入 odom.csv + GT csv）
+   [x] db3 完整性：10,656,112,640 B 全量到位，**sha256 与 LFS oid 完整一致**
+   [x] Super-LIO 在该 bag 上跑通 —— 走方案 B（离线转换），见 §7
+   [x] 弦长判据实现：exp/checkpoint_error.py（插值匹配 + 0.5 s 容差，主判据为
+       相邻检查点 3D 弦长，θ 只作副产品）
    [ ] 与官方数字对表：同一 bag 官方 FAST-LIO-SAM online 0.439 m，
        我们若差异大，先怀疑第 3 节的航向问题而不是算法
 
@@ -6143,3 +6144,65 @@ M.37 【2026-11-10 外部数据集接入：RTK-SLAM Dataset / construction_seq2�
               and Spatial Information Sciences}, year={2026}}
    许可 CC-BY-4.0；评测脚本 rtk-slam-eval 同仓库另计（GitHub 默认许可，
    入库前需自查其 LICENSE 是否存在 —— 本次 clone 的仓库根未见 LICENSE 文件）。
+■ 7. 首轮实测（2026-11-10，m37_c2_bline：B 线参数 na0.01/ng0.1/nbg0.003/huber0.20/nw off）
+   接入方式＝方案 B 离线转换（exp/convert_livox_driver.py → construction_seq2_d2）：
+     只做两件事——复制 db3、把 topics/message_definitions 的类型名
+     livox_ros_driver → livox_ros_driver2 并把 type_description_hash 置空
+     （自采 bag 是 schema v3、压根没有 hash 列也能正常播 ⇒ 置空合法，
+      伪造一个错的 RIHS 哈希才是风险）。blob 一个字节不动，
+     依据是两边 .msg 字段与顺序逐字相同 ⇒ CDR 布局相同。
+     脚本自带 --dry-run 与"长度自洽断言"，布局实测为：
+       header 之后 timebase@28（**Livox SDK 把 64 位只按 4 字节对齐，不是 8**）、
+       point_num@36=20256、lidar_id+rsvd[3]@40..43、seq_len@44、points@48、
+       每点 20 B、末点省略 1 B 尾部填充 ⇒ 48+20256*20-1 = 405167 B 与实测精确相符
+   smoke（60 s）：546 帧、地图 85,320 点、无 Watchdog 停摆 ⇒ 点云确已进主链路
+     （对比 §2.1：转换前是 lidar_buf=0 / last_lidar=-1，一条都进不来）
+   完整 run：5,835 帧 / 595 s / 地图 419,267 点；**16 个检查点全部匹配，0 个丢弃**
+     （容差 0.5 s，比官方 2.0 s 严，见 §3.1）
+
+   主判据（相邻检查点 3D 弦长；旋转不变量，不需要航向与原点）：
+     累计真值弦长 278.2 m，SLAM 278.2 m，**整体尺度比 100.00%（差 -0.01 m）**
+     15 段逐段相对误差全在 ±0.5% 以内；
+     indoor/indoor 10 段共 146.8 m，比 99.98%
+     ⇒ 400 s 无 GNSS 的室内长航时里，纯 LIO 的相对累积漂移约 **0.02% 路径**，
+       优于我们两个自采 bag 的任何一格 —— 本场景几何充分、不构成退化，
+       这正好再次印证 M.14/M.16 的判断：参数与机制的敏感性是几何退化程度的函数。
+
+   次判据（解航向后）：
+     首段方位差 +33.97°、最小二乘解 +33.45°（两者一致 ⇒ 全程无明显航向漂移）
+     仅 yaw+平移对齐（不含尺度、不含 roll/pitch）后逐点误差 RMSE 0.25 m、最大 0.27 m
+     官方本序列：零对齐 online 0.439 m、SE(3) 全对齐 0.089 m、Gap 76%
+     ⇒ 三个数字**对齐自由度不同，不可直接比优劣**；我们的 0.25 m 介于两者之间，
+       且用的对齐自由度比官方 SE(3) 更少。
+
+   必须记录的口径问题（否则会误读成"漂移 0.25 m"）：
+     误差在 16 个点上几乎是恒定的 0.22~0.27 m（除被当作对齐原点的 0.00），
+     这是**常值偏置**而不是累积漂移。头号嫌疑是杆臂口径不一致：
+       本数据集真值对应 base_center = IMU 系下 (-0.073, -0.023, -0.172)
+       我们 /lio/odom 的 base_link 由 odom_robo 平移 (0.018301, 0, 0.068301) 定义
+     两者不是同一个物理点（差 ~0.2 m 量级，正好是该偏置的量级）。
+     官方为此专门给了 eval/transform_imu_to_base.py。
+     ⇒ 下一步必须先做杆臂换算再报 RMSE，否则这个 0.25 m 不能当误差结论用。
+
+   待办：
+     [ ] 按 calib.yaml 的 base_center 做杆臂换算后重报 RMSE（预期显著小于 0.25）
+     [ ] checkpoint_error.py 的 --yaw 目前只解水平方位，未处理 roll/pitch，
+         也未做 geoid 改正（官方 SLAM 路 -48.22 / GNSS 路 -48.5，两者差 0.28 m）
+     [ ] 补 stadtgarten_seq1（1.04 km、36 点、含 30 m GNSS-denied 隧道）作第二场景，
+         它的尺度与退化组合更接近"能不能当生产判据"的问题
+     [ ] 若要做"我们 vs 官方"的严格对比，必须在同一对齐自由度下各报一套数
+
+■ 8. 复跑命令（M.37 全链）
+   # 1) 下载（镜像；官方域名本机超时；并行无增益）
+   wget -c --timeout=90 --tries=0 -O construction_seq2.db3 \
+     "https://hf-mirror.com/datasets/Willyzw/rtk-slam-dataset/resolve/main/ros2/construction_seq2/construction_seq2.db3"
+   sha256sum construction_seq2.db3    # 应为 9e808703a57d...ab82af5
+   # 2) 转换（先看布局自洽，再生成 _d2）
+   python3 exp/convert_livox_driver.py <src> <dst> --dry-run
+   python3 exp/convert_livox_driver.py <src> <dst>
+   # 3) 跑 B 线
+   cd exp && BAG=/mnt/dataset/slam_data/rtk_slam/construction_seq2_d2 \
+     HUBER_BASE=0.20 IMU_NBG=0.003 NORMAL_WEIGHT_EN=false ./run_one.sh m37_c2_bline 6 0.25 0.01 0.1 0.25
+   # 4) 判据
+   python3 exp/checkpoint_error.py --gt <rtk-slam-eval>/ground_truth/construction_seq2.csv \
+     --run results/m37_c2_bline --yaw ls
