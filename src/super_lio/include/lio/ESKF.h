@@ -62,6 +62,11 @@ public:
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
 
+  /// B3：完整 18 维观测通道。回调直接产出 Hᵀ R⁻¹ H (M18) 与 Hᵀ R⁻¹ r (V18)，
+  /// 因此可以约束状态 6..17（bg 在 9..11）；ObsFunc 只是它的左上 6×6 特例。
+  using ObsFuncFull = std::function<void(const KFState& kf_state, BASIC::M18& HT_Vinv_H, BASIC::V18& HT_Vinv_r)>;
+  bool UpdateObserveFull(ObsFuncFull obs);
+
   double GetTime() const {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     return current_time_;
@@ -201,7 +206,10 @@ public:
 private:
   void BuildNoise(const Options& options);
   void Update();
-  
+
+  /// UpdateObserve / UpdateObserveFull 共用的迭代核心（B3 抽出，逻辑与原来逐行一致）
+  bool UpdateObserveImpl(const ObsFuncFull& obs);
+
   bool  need_converge_  = true;
   float imu_scale_ = 1.0;
 

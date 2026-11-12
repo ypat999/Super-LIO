@@ -28,6 +28,9 @@
 #include "ESKF.h"
 #include "OctVoxMap/OctVoxMap.hpp"
 #include "OctVoxMap/VoxelGridFilter.h"
+
+#include <opencv2/core.hpp>
+#include "visual/visual_rotation.hpp"
 #include "ros/ROSWrapper.h"
 
 namespace LI2Sup{
@@ -52,9 +55,24 @@ public:
   bool isPaused() const;
   void resetIMUIntegration();
 
+  /// 退化签名（供视觉侧做"按方向分配权限"，只读最近一帧结果）
+  double degeneracyCond() const { return degeneracy_cond_; }
+  int degeneracyAxes() const { return degeneracy_axes_; }
+  bool degeneracyActive() const { return degeneracy_active_; }
+  /// 平移块（世界系）最弱方向的条件数 / 最小特征值
+  double degeneracyCondTrans() const { return degeneracy_cond_t_; }
+  double degeneracyEvtMin() const { return degeneracy_evt_min_; }
+  /// 平移块最弱方向（世界系单位向量）。H_tt 的平移行本就是世界系法向，
+  /// 故该向量可直接与该帧的世界系运动方向比较，无需任何坐标变换。
+  const BASIC::V3d& degeneracyDirWorld() const { return degeneracy_dir_w_; }
+
   /// 看门狗：由独立回调组的定时器 1Hz 调用，检测整条实时链路是否停摆。
   /// 与 process 线程解耦，因此即使 process 卡在持锁区里也能照常输出现场状态。
   void watchdogCheck();
+
+  /// B2：图像输入。由 ROS 图像回调线程调用（独立回调组），内部持锁，
+  /// KLT + 两帧几何在前端线程完成，不给 LIO 主线程增加耗时。
+  void onVisualImage(const cv::Mat& image, double stamp);
 
 protected:
   struct OutputData {
@@ -108,6 +126,12 @@ protected:
   void DownSample();
   void DownSampleOnly();
   void Observe();
+  /// B2：按参数构建视觉相对旋转前端（enable=false 时不创建对象，零开销）
+  void buildVisualRotation();
+  /// B2：把跨越本 lidar 帧窗口的相机相对旋转作为一路独立观测注入 ESKF
+  void VisualObserve();
+  /// B2：从后验位姿历史里取 t 时刻的机体姿态（线性插值/最近端点），供固定参考节点用
+  bool anchorRotation(double t, double tol, BASIC::M3& R_out, double& t_used) const;
   virtual void UpdateMap();
   virtual void Output();
   void OutputThread();
@@ -122,6 +146,7 @@ protected:
   using KNNHeapType = KNNHeap<8, BASIC::V3>;
   StateFn state_fn_;
   ESKF::Ptr kf_;
+
   OctVoxMapType::Ptr ivox_;
   VoxelGridClosest<BASIC::PointType> voxel_grid_fliter_;
   ROSWrapper::Ptr data_wrapper_;
@@ -170,6 +195,10 @@ protected:
   int    degeneracy_axes_   = 0;
   bool   degeneracy_active_ = false;   // 去抖后的退化状态（响应机制都用它）
   int    degen_state_cnt_   = 0;       // 状态机连续帧计数
+  // 平移块（世界系）签名：最弱方向 u_min 及条件数，供视觉侧按方向分配权限
+  double degeneracy_cond_t_  = 0.0;
+  double degeneracy_evt_min_ = 0.0;
+  BASIC::V3d degeneracy_dir_w_ = BASIC::V3d::Zero();
   // 观测静态基线（init 时从配置缓存），供"退化档 ↔ 正常档"切换时恢复
   bool   base_normal_weight_en_ = false;
   double base_normal_sigma_      = 0.05;
@@ -265,6 +294,68 @@ protected:
   float sc_pgo_rot_accum_ = 0.0f;
   bool sc_pgo_first_ = true;
   std::ofstream sc_pgo_odom_file_;
+
+  // ===== B2：视觉相对旋转 =====
+  // 仅在 g_visual_enable=true 时创建；关闭时指针为空，链路上零开销。
+  std::unique_ptr<vis::VisualRotation> visual_;
+  BASIC::M3 vis_R_cl_ = BASIC::M3::Identity();  ///< T_cam_lidar 的旋转部分
+  struct VisPoseNode { double t = 0.0; BASIC::M3 R = BASIC::M3::Identity(); };
+  std::deque<VisPoseNode> vis_pose_hist_;       ///< 每 lidar 帧后验姿态，作固定参考节点池
+  uint64_t vis_applied_ = 0;                    ///< 实际注入次数
+  uint64_t vis_frames_ = 0;                     ///< 拿到测量但因故未注入的帧数
+  double   vis_dx_r_sum_ = 0.0;
+  double   vis_dx_r_max_ = 0.0;
+  // 残差偏置探针：e 定义在 prev 机体系（Log(R_meas_relᵀ·R_pred_rel)），
+  // e_w = R_p·e 映到世界系。世界系均值非零 <=> 存在可学的系统性 yaw 偏置；
+  // 机体系均值非零 <=> 偏置跟着机体走（陀螺标度/外参类）。
+  Eigen::Vector3d vis_e_sum_w_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d vis_e_sum_b_ = Eigen::Vector3d::Zero();
+  uint64_t        vis_e_cnt_ = 0;
+  // ---- B2 χ² 门控 + 安全性统计（阈值与 B3 的 b3.chi2_thresh 完全独立）----
+  // 门控只看，不改变 B3 的任何计数；<=0 表示门控关闭（复现无门控的旧行为）。
+  uint64_t vis_rejected_ = 0;      ///< B2 被门控丢弃的候选注入数
+  double   vis_chi2_sum_ = 0.0;    ///< 所有被评估候选的 chi2 之和
+  double   vis_chi2_max_ = 0.0;    ///< chi2 最大值（含被拒者）
+  double   vis_dp_max_ = 0.0;      ///< 单次注入造成的最大位置跳变 (m)
+  double   vis_dp_sum_ = 0.0;
+  uint64_t vis_dp_over_ = 0;       ///< 单次注入 |Δp| > 0.05 m 的次数
+  double   vis_dyaw_max_ = 0.0;    ///< 单次注入造成的最大世界系 yaw 跳变 (rad)
+  uint64_t vis_dyaw_over_ = 0;     ///< 单次注入 |Δyaw| > 20 mrad 的次数
+  std::chrono::steady_clock::time_point vis_last_log_wall_{};
+  std::chrono::steady_clock::time_point vis_last_stat_wall_{};  ///< 无测量时的周期状态行
+
+  // ================= B3：视觉观测陀螺零偏 =================
+  /// Φ(t) = Σ ω_meas·dt（未补偿累计积分），只在主线程写（Propagation_Undistort）
+  /// 与读（VisualObserveBias），故不加锁。样本按 stamp 排序后累加：本项目
+  /// 出现过外部节点污染回放导致时间戳乱序 ±3s 的事故，乱序直接积分会把 Φ 打乱。
+  struct PhiSample {
+    double t = 0.0;
+    Eigen::Vector3d phi = Eigen::Vector3d::Zero();
+  };
+  std::deque<PhiSample> vis_phi_hist_;
+  double          vis_phi_last_t_ = -1.0;
+  Eigen::Vector3d vis_phi_last_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d vis_phi_last_gyr_ = Eigen::Vector3d::Zero();
+  bool            vis_phi_init_ = false;
+  uint64_t        vis_phi_unordered_ = 0;  ///< stamp 乱序/重复而被跳过的样本数
+  uint64_t        vis_phi_gap_ = 0;        ///< dt 超上限、按断档处理不积分的次数
+  void  AccumulateGyroPhase();
+  bool  GyroPhaseAt(double t, Eigen::Vector3d &out) const;
+
+  void VisualObserveBias();
+  uint64_t vis_b3_frames_ = 0;
+  uint64_t vis_b3_applied_ = 0;
+  uint64_t vis_b3_rejected_ = 0;   ///< χ² 门控拒绝数
+  uint64_t vis_b3_no_meas_ = 0;
+  uint64_t vis_b3_no_phase_ = 0;
+  double   vis_b3_chi2_sum_ = 0.0;
+  double   vis_b3_chi2_max_ = 0.0;
+  double   vis_b3_dxbg_sum_ = 0.0;
+  double   vis_b3_dxbg_max_ = 0.0;
+  double   vis_b3_resid_sum_ = 0.0;
+  double   vis_b3_fd_max_ = 0.0;   ///< 解析雅可比 vs 中心差分的最大相对偏差
+  uint64_t vis_b3_fd_n_ = 0;
+  std::chrono::steady_clock::time_point vis_b3_last_log_{};
 
   std::atomic<bool> paused_{false};
 };

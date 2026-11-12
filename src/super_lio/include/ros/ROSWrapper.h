@@ -26,11 +26,14 @@
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <opencv2/core.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <std_msgs/msg/u_int32.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 #ifdef LIVOX_SUPPORT
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -166,6 +169,9 @@ private:
 #endif
   void stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
+  /// B2：相机原始图像（raw Image），转灰度后交给 SuperLIO 的视觉相对旋转前端
+  void imageHandler(const sensor_msgs::msg::Image::SharedPtr msg);
+
   void setupParams();
   void setupIO();
   void setupServices();
@@ -174,9 +180,11 @@ private:
   rclcpp::CallbackGroup::SharedPtr cb_sensor_;
   rclcpp::CallbackGroup::SharedPtr cb_imu_;
   rclcpp::CallbackGroup::SharedPtr cb_lidar_;
+  rclcpp::CallbackGroup::SharedPtr cb_image_;
   rclcpp::CallbackGroup::SharedPtr cb_process_;
   rclcpp::CallbackGroup::SharedPtr cb_report_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_image_;
 #ifdef LIVOX_SUPPORT
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
 #endif
@@ -224,6 +232,9 @@ private:
   /// odom 重置计数（单调，绝不清零）及其发布通道
   std::atomic<uint32_t> odom_reset_counter_{0};
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr pub_odom_reset_counter_;
+
+  /// 退化签名（与 lio/odom 同频）：[cond6, axes, active, cond_t, evt_min, ux, uy, uz]
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pub_degeneracy_;
 
   /// 输出队列丢帧计数（原先 >10 时静默 pop_front，无任何可观测性）
   std::atomic<uint64_t> imu_output_drops_{0};

@@ -633,6 +633,11 @@ void SuperLIO::stateProcess(){
 
     checkPoseTrust(sys_pred, cov_pred);
 
+    // B2：视觉相对旋转注入（g_visual_enable=false 时函数首行即返回）
+    VisualObserve();
+    // B3：视觉长基线 -> 陀螺零偏观测，独立的第二次更新（开关关闭时首行即返回）
+    VisualObserveBias();
+
     if(g_time_eva){
       time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
       if(!lost_ || g_lost_map_en){
@@ -1269,6 +1274,11 @@ void SuperLIO::Propagation_Undistort(){
     // 断档冻结：dt 超过上限只对齐时间基准、不积分，避免把断档期的冲击加速度外推成真实运动
     kf_->Predict(imu, g_max_imu_dt);
     propagate_states_.emplace_back(kf_->GetDynamicState());
+  }
+
+  // B3：陀螺未补偿累计积分 Φ(t)=Σ ω_meas·dt（开关关闭时零额外计算，off 路径逐位不变）
+  if (g_visual_enable && g_visual_b3_enable) {
+    AccumulateGyroPhase();
   }
 
   const SE3 T_end = kf_->GetSE3();
@@ -2037,6 +2047,23 @@ void SuperLIO::Observe(){
                                          g_degen_trans_only);
     degeneracy_cond_ = deg.ok ? deg.cond : 0.0;
     degeneracy_axes_ = deg.ok ? deg.axes : 0;
+
+    // 退化方向（世界系平移）：直接取上面 computeDegeneracy 的结果，不另做分解。
+    // degen_trans_only=1 模式本身就是对平移 3x3 块做特征分解（旋转/平移量纲不同，
+    // 混排会造出假退化）：ev.tail<3>() 为平移块特征值（升序），eV.block<3,3>(3,3)
+    // 为对应特征向量，最弱方向的列即世界系退化法向，可直接给视觉侧做按方向融合。
+    // 全 6 维模式（0/2）下最小特征值方向混合了旋转分量，不能当"退化平移轴"，
+    // 此时清零，视觉侧按"无退化/无方向"处理。
+    if (deg.ok && g_degen_trans_only == 1) {
+      degeneracy_evt_min_ = deg.ev(3);
+      degeneracy_cond_t_  = deg.cond;
+      // 平移块占 eV 的行 3..5 / 列 3..5，最弱方向是其中第一列（col 3）。
+      degeneracy_dir_w_   = deg.eV.block<3, 1>(3, 3);
+    } else {
+      degeneracy_evt_min_ = 0.0;
+      degeneracy_cond_t_  = 0.0;
+      degeneracy_dir_w_.setZero();
+    }
 
     const double hi = g_degeneracy_threshold;
     const double lo = g_degeneracy_threshold * std::max(0.05, g_degeneracy_hysteresis);
