@@ -90,6 +90,10 @@ public:
 template<typename Point>
 class OctVox{
 public:
+  /// 槽位上限按 sub_div=4（4×4×4=64）开；sub_div=2 只用前 8 槽，
+  /// 旧编码 idx = dz<<2 | dy<<1 | dx 落在 0..7，与旧版逐位一致。
+  static constexpr uint8_t kMaxSlots = 64;
+
   OctVox(const Point& pt, uint8_t local_idx)
   {
     counts_.fill(UNINIT_MASK);
@@ -125,8 +129,8 @@ public:
   static constexpr uint8_t MAX_POINTS_PER_SUBVOXEL = 20;
   static constexpr double DISTANCE_THRESHOLD_SQ = 0.1 * 0.1;
 
-  std::array<uint8_t, 8> counts_;
-  std::array<Point, 8> points_;
+  std::array<uint8_t, kMaxSlots> counts_;
+  std::array<Point, kMaxSlots> points_;
 };
 
 
@@ -183,8 +187,23 @@ public:
     resolution_ = options.resolution;
     capacity_ = options.capacity;
     inv_resolution_ = 1.0 / resolution_;
-    sub_resolution_ = resolution_ / 2.0;
+
+    // 子体素细分因子 sub_div：2 = 旧行为（2×2×2=8 槽，HKNN 预计算子槽候选表可用）；
+    // 4 = 4×4×4=64 槽（点位粒度 = 粗体素/4，搜索退化为按邻居粗体素全槽扫描，
+    // 早退阈值按 (resolution_/0.5)² 折算——orders_min_dis2 是按 res=0.5 标的米制常数）。
+    const uint8_t sub_div = (g_map_sub_div == 4) ? 4 : 2;
+    sub_bits_ = (sub_div == 4) ? 2 : 1;
+    sub_mask_ = (1u << sub_bits_) - 1u;
+    sub_slots_ = static_cast<uint8_t>(sub_div * sub_div * sub_div);
+    hknn_thr_scale_ = (sub_div == 4)
+                        ? (resolution_ / 0.5f) * (resolution_ / 0.5f)
+                        : 1.0f;
+
+    sub_resolution_ = resolution_ / static_cast<float>(sub_div);
     sub_inv_resolution_ = 1.0 / sub_resolution_;
+    std::cout << " ---> OctVoxMap sub_div=" << static_cast<int>(sub_div)
+              << " sub_resolution=" << sub_resolution_
+              << " thr_scale=" << hknn_thr_scale_ << std::endl;
 
     // M.29 尖峰治理：robin_map 不做预分配时按 2 倍序扩容，每次扩容要整表重哈希，
     // 在 10^5~10^6 体素量级上会偶发几十 ms 的尖峰（实测 1f 达 92 ms，是丢帧元凶）。
@@ -217,6 +236,10 @@ public:
 
   void getTopK(const Point& point, KNNHeapType& top_K) const;
 
+  /// sub_div=4 专用搜索：邻居粗体素全槽扫描（子槽预计算表按 2×2×2 编码生成，
+  /// 无法复用到 2bit/轴，故按组丢弃子槽列表、整槽扫描），早退阈值按粗尺寸缩放。
+  void getTopK_sub4(const Point& point, KNNHeapType& top_K) const;
+
   void getTopK_VN(const Point& point, KNNHeapType& top_K) const;
 
   void reset_max_group(){
@@ -245,6 +268,10 @@ private:
   float inv_resolution_ = 1.0;
   float sub_resolution_ = 0.25;
   float sub_inv_resolution_ = 4.0;
+  uint8_t sub_bits_ = 1;       // 每轴位宽（sub_div=2→1，4→2）
+  int sub_mask_ = 1;           // (1<<sub_bits_)-1
+  uint8_t sub_slots_ = 8;      // sub_div³
+  float hknn_thr_scale_ = 1.0f;  // <1 时提前终止阈值按粗体素尺寸折算
   std::size_t capacity_ = 1000000;
 
   bool reset_map_ = false;
@@ -298,14 +325,14 @@ void OctVoxMap<Point, Scalar>::insert(const Points& cloud_world){
   for(auto& pt : cloud_world){
     KEY fine_key = (pt * sub_inv_resolution_).array().floor().template cast<int>();
     KEY key;
-    key[0] = fine_key[0] >> 1;
-    key[1] = fine_key[1] >> 1;
-    key[2] = fine_key[2] >> 1;
+    key[0] = fine_key[0] >> sub_bits_;
+    key[1] = fine_key[1] >> sub_bits_;
+    key[2] = fine_key[2] >> sub_bits_;
 
-    uint8_t dx = fine_key[0] & 1;
-    uint8_t dy = fine_key[1] & 1;
-    uint8_t dz = fine_key[2] & 1;
-    uint8_t local_idx = (dz << 2) | (dy << 1) | dx;
+    uint8_t dx = fine_key[0] & sub_mask_;
+    uint8_t dy = fine_key[1] & sub_mask_;
+    uint8_t dz = fine_key[2] & sub_mask_;
+    uint8_t local_idx = (dz << (2u * sub_bits_)) | (dy << sub_bits_) | dx;
 
     auto iter = grids_.find(key);
     if (iter == grids_.end()) {
@@ -330,6 +357,8 @@ void OctVoxMap<Point, Scalar>::insert(const Points& cloud_world){
 
 template<typename Point, typename Scalar>
 void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) const {
+  if (sub_bits_ != 1) { getTopK_sub4(point, top_K); return; }
+
   const KEY fine_key = (point * sub_inv_resolution_).array().floor().template cast<int>();
   KEY key;
   key[0] = fine_key[0] >> 1;
@@ -406,6 +435,77 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
 }
 
 
+/// sub_div=4：组内子槽候选表按 2bit/轴 → 3bit/轴 编码，无法异或复用，
+/// 故保留"由近到远分组 + 早退阈值"结构，但每组退化为整槽扫描（共 sub_slots_ 槽）。
+template<typename Point, typename Scalar>
+void OctVoxMap<Point, Scalar>::getTopK_sub4(const Point& point, KNNHeapType& top_K) const {
+  const KEY fine_key = (point * sub_inv_resolution_).array().floor().template cast<int>();
+  KEY key;
+  key[0] = fine_key[0] >> sub_bits_;
+  key[1] = fine_key[1] >> sub_bits_;
+  key[2] = fine_key[2] >> sub_bits_;
+
+  const int dx = fine_key[0] & sub_mask_;
+  const int dy = fine_key[1] & sub_mask_;
+  const int dz = fine_key[2] & sub_mask_;
+
+  // 查询点落在粗体素后半（dx >= 2）时，邻居展开方向整体翻转，
+  // 使预计算表的由近到远顺序仍从查询点一侧开始。
+  const int half_div = 1 << (sub_bits_ - 1);
+  const KEY mirror_axis = KEY(dx >= half_div ? -1 : 1,
+                              dy >= half_div ? -1 : 1,
+                              dz >= half_div ? -1 : 1);
+
+  const int pre_voxel_ptr_size = 8;
+  OctVoxType* top_voxels_2_search[pre_voxel_ptr_size];
+  std::fill_n(top_voxels_2_search, pre_voxel_ptr_size, nullptr);
+
+  for (uint8_t i = 0; i < pre_voxel_ptr_size; ++i) {
+    KEY delta_key = mirror_axis.cwiseProduct(HKNN_neighbor_voxel[i]);
+    KEY n_key = key + delta_key;
+    if (auto iter = grids_.find(n_key); iter != grids_.end()) {
+      top_voxels_2_search[i] = &iter->second->second;
+    }
+  }
+
+  Point __sub_point;
+
+  for (int group_idx = 0; group_idx < group_idx_max_; ++group_idx) {
+    const uint8_t* group_it = flat_search_ptrs_[group_idx];
+    const uint8_t* group_end = flat_search_ptrs_[group_idx + 1];
+
+    while (group_it < group_end) {
+      const uint8_t neighbor_idx = *group_it++;
+      const uint8_t data_size = *group_it++;
+      group_it += data_size;  // 子槽候选表对 2bit/轴 编码无效，跳过并整槽扫描
+
+      OctVoxType* voxel_ptr = nullptr;
+      if (neighbor_idx < pre_voxel_ptr_size) {
+        voxel_ptr = top_voxels_2_search[neighbor_idx];
+      } else {
+        KEY delta_key = mirror_axis.cwiseProduct(HKNN_neighbor_voxel[neighbor_idx]);
+        KEY n_key = key + delta_key;
+        if (auto iter = grids_.find(n_key); iter != grids_.end())
+          voxel_ptr = &iter->second->second;
+      }
+      if (!voxel_ptr) continue;
+
+      for (uint8_t _i = 0; _i < sub_slots_; ++_i) {
+        if (voxel_ptr->getPoint(_i, __sub_point)) {
+          const float dist2 = (__sub_point - point).squaredNorm();
+          top_K.try_insert(dist2, __sub_point);
+        }
+      }
+    }
+
+    if (top_K.count == 5)
+      if (top_K.max_dist2_ < orders_min_dis2[group_idx] * hknn_thr_scale_) {
+        break;
+      }
+  }
+}
+
+
 template<typename Point, typename Scalar>
 void OctVoxMap<Point, Scalar>::getTopK_VN(const Point& point, KNNHeapType& top_K) const{
   KEY key = (point * inv_resolution_).array().floor().template cast<int>();
@@ -421,7 +521,7 @@ void OctVoxMap<Point, Scalar>::getTopK_VN(const Point& point, KNNHeapType& top_K
 
   Point pt;
   for(auto& voxel : voxels_2_search) {
-    for(uint8_t _i = 0; _i < 8; ++_i) {
+    for(uint8_t _i = 0; _i < sub_slots_; ++_i) {
       if(!voxel->getPoint(_i, pt)) continue;
       float dist2 = (pt - point).squaredNorm();
       top_K.try_insert(dist2, pt);
@@ -441,7 +541,7 @@ void OctVoxMap<Point, Scalar>::getMap(std::vector<float>& output) const{
   float pcl_point[3];
   for (const auto& voxel_pair : data_) {
     const OctVoxType& voxel = voxel_pair.second;
-    for(uint8_t i = 0; i < 8; ++i) {
+    for(uint8_t i = 0; i < sub_slots_; ++i) {
       if (!voxel.getPoint(i, point)) continue;
       pcl_point[0] = static_cast<float>(point.x());
       pcl_point[1] = static_cast<float>(point.y());
@@ -488,13 +588,13 @@ void OctVoxMap<Point, Scalar>::saveMap() const {
   }
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  size_t total_points = data_.size() * 8;
+  size_t total_points = data_.size() * sub_slots_;
   
   cloud->points.reserve(total_points);
   
   for (const auto& voxel_pair : data_) {
     const OctVoxType& voxel = voxel_pair.second;
-    for(uint8_t i = 0; i < 8; ++i) {
+    for(uint8_t i = 0; i < sub_slots_; ++i) {
       pcl::PointXYZ pcl_point;
       Point point;
       if (!voxel.getPoint(i, point)) continue;

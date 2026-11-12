@@ -84,6 +84,10 @@ namespace LI2Sup{
   /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity
   extern int    g_map_hash_reserve_size;
 
+  /// 子体素细分因子：2 = 2×2×2 = 8 槽（旧行为，HKNN 子槽候选表可用）；
+  /// 4 = 4×4×4 = 64 槽（点位粒度 = 粗体素/4，内存约 ×8，搜索退化为整槽扫描）。
+  extern int    g_map_sub_div;
+
   /// kf
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;

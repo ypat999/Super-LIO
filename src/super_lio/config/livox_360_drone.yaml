@@ -2,7 +2,8 @@
   ros__parameters:
     lio.map.save_map: true
     lio.map.if_filter: false
-    lio.map.save_map_dir: "/home/cat/slam_data/pcd"
+    # 支持 "~/..." 与 "$HOME/..."（加载时按当前机器 HOME 展开），不要写死 /home/<user>
+    lio.map.save_map_dir: "~/slam_data/pcd"
     lio.map.map_name: "test.pcd"
     lio.map.ds_size: 0.25
     lio.map.save_interval: 50
@@ -53,6 +54,8 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: 0.25
+    # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
+    lio.hash_map.sub_div: 4
 
     lio.kf.kf_type: 0
     lio.kf.kf_max_iterations: 4
