@@ -273,9 +273,11 @@ void SuperLIO::VisualObserve() {
     if (g_visual_chi2_thresh > 0.0 && chi2 > g_visual_chi2_thresh) {
       ++vis_rejected_;
       if (g_debug_level > 0 || (vis_rejected_ % 50) == 1) {
+        // 决定性实验埋点：拒绝帧也带 Pstd，才能做 acc(P) 自适应曲线
         LOG(WARNING) << "[VisB2] reject chi2=" << chi2 << " > " << g_visual_chi2_thresh
                      << " t=" << t1 << " sigma=" << sigma << " |e|=" << e0.norm() * 1e3
-                     << "mrad inl=" << m.inliers << " rej=" << vis_rejected_;
+                     << "mrad inl=" << m.inliers << " rej=" << vis_rejected_
+                     << " Pstd=[" << (P_rot.cwiseSqrt() * 1e3).transpose() << "]mrad";
       }
       return;
     }
