@@ -305,6 +305,7 @@ namespace LI2Sup{
   extern bool   g_map_clamp_mu;      // 均值更新后夹回子体素包围盒
   extern int    g_map_max_points;    // 每个子体素最多融合点数
   extern double g_map_merge_dist;    // 与 μ 的合并距离门限（m）
+  extern int    g_map_sub_div;       // 子体素细分因子：2=2×2×2=8槽, 4=4×4×4=64槽(默认)
 
   /// HKNN 分组搜索显式化
   extern int    g_hknn_max_group;    // -1=全部 6 组；1..6=只搜前 N 组（有效半径递减）

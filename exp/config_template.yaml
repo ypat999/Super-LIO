@@ -57,6 +57,9 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: __VOX_RES__
+    # 子体素细分因子：2=2×2×2=8槽(原行为)，4=4×4×4=64槽（点位粒度=res/4）
+    # 注意：库内默认是 4，这里由 run_one.sh 显式渲染，保证矩阵可复现
+    lio.hash_map.sub_div: __SUB_DIV__
     # M.29：构造时预分配哈希桶，消除扩容期整表重哈希尖峰（只改桶数，不改行为）
     lio.hash_map.reserve_en: __HASH_RESERVE_EN__
     lio.hash_map.reserve_size: __HASH_RESERVE_SIZE__

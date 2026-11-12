@@ -398,6 +398,11 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.hash_map.merge_dist", 0.1);
   node.get_parameter("lio.hash_map.merge_dist", g_map_merge_dist);
 
+  // 子体素细分因子：4 = 4×4×4=64 槽（默认），2 = 2×2×2=8 槽（旧行为）。
+  // 其它取值按 2 处理（见 OctVoxMap::SetOptions）。
+  node.declare_parameter<int>("lio.hash_map.sub_div", 4);
+  node.get_parameter("lio.hash_map.sub_div", g_map_sub_div);
+
   node.declare_parameter<int>("lio.hash_map.hknn_max_group", -1);
   node.get_parameter("lio.hash_map.hknn_max_group", g_hknn_max_group);
 
@@ -418,7 +423,8 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] hash_map/rep_mode: " << g_map_rep_mode
             << " clamp_mu: " << g_map_clamp_mu
             << " max_points: " << g_map_max_points
-            << " merge_dist: " << g_map_merge_dist << RESET;
+            << " merge_dist: " << g_map_merge_dist
+            << " sub_div: " << g_map_sub_div << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/hknn_max_group: " << g_hknn_max_group
             << " order_scale: " << g_hknn_order_scale << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/plane_knn_k: " << g_plane_knn_k << RESET;

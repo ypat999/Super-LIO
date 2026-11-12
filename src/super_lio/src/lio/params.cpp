@@ -179,6 +179,12 @@ namespace LI2Sup{
   bool   g_map_clamp_mu = false;
   int    g_map_max_points = 20;
   double g_map_merge_dist = 0.1;
+  // 子体素细分因子：2=2×2×2=8 槽（旧行为），4=4×4×4=64 槽（默认）。
+  // 实测（evict=0，粗体素 0.20 / 0.30）：KNN 命中率由 /2 的 2.55% / 17.32%
+  // 降到 0.24% / 2.30%；闭环误差 0.87m / 1.06m（drone）。代价：每体素槽位 ×8
+  // 的内存（1f 场景 RSS 3.4G、体素 1.18M）与每帧约 +2~+6ms 搜索延迟。
+  // 推荐配对：粗 0.20 + 细 0.05（精度档），粗 0.30 + 细 0.075（平衡档）。
+  int    g_map_sub_div = 4;
   int    g_hknn_max_group = -1;
   double g_hknn_order_scale = 1.0;
 

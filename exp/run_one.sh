@@ -91,6 +91,9 @@ MAP_MAX_POINTS=${MAP_MAX_POINTS:-20}
 MAP_MERGE_DIST=${MAP_MERGE_DIST:-0.1}
 HKNN_MAX_GROUP=${HKNN_MAX_GROUP:--1}
 HKNN_ORDER_SCALE=${HKNN_ORDER_SCALE:-1.0}
+# 子体素细分因子：库内默认 4（64 槽），实验矩阵默认锁 2（= 历史行为），
+# 跑 /4 需显式传 SUB_DIV=4，否则既有 case 的结果无法复现。
+SUB_DIV=${SUB_DIV:-2}
 # M.35 平面拟合邻域 K（默认 8 = 当前代码行为；跑 K 矩阵时显式传 5）
 PLANE_KNN_K=${PLANE_KNN_K:-8}
 # SC-PGO 兼容输出（只导出关键帧扫描+位姿，不改变 LIO 行为）
@@ -142,6 +145,7 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__LIDAR_TIME_OFFSET__|$LIDAR_TIME_OFFSET|g" \
     -e "s|__LIDAR_TOPIC__|$LIDAR_TOPIC|g" \
     -e "s|__VOX_RES__|$VOX_RES|g" \
+    -e "s|__SUB_DIV__|$SUB_DIV|g" \
     -e "s|__HASH_RESERVE_EN__|$HASH_RESERVE_EN|g" \
     -e "s|__HASH_RESERVE_SIZE__|$HASH_RESERVE_SIZE|g" \
     -e "s|__AUTO_SCENE_EN__|$AUTO_SCENE_EN|g" \
@@ -219,6 +223,7 @@ fi
   echo "lidar_time_offset=$LIDAR_TIME_OFFSET"
   echo "lidar_topic=$LIDAR_TOPIC"
   echo "vox_resolution=$VOX_RES"
+  echo "sub_div=$SUB_DIV"
   echo "debug_level=$DEBUG_LEVEL"
   echo "normal_weight_en=$NORMAL_WEIGHT_EN"
   echo "normal_sigma=$NORMAL_SIGMA"

@@ -56,6 +56,10 @@ CASES=(
   "expm2_g3_vox015|6|0.15|0.1|0.1|0.15|DEBUG_LEVEL=2 HKNN_MAX_GROUP=3"
   "expm3_nw_vox015|6|0.15|0.1|0.1|0.15|DEBUG_LEVEL=2 NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.05"
   "expm4_nw_g3_vox015|6|0.15|0.1|0.1|0.15|DEBUG_LEVEL=2 NORMAL_WEIGHT_EN=true NORMAL_SIGMA=0.05 HKNN_MAX_GROUP=3"
+  # sub_div=4 实验：粗体素放大一倍、子体素粒度与上面的对照组对齐（res/4 = 旧 res/2），
+  # 输入滤子保持不变 ⇒ 干净的"只有地图结构不同"A/B。
+  "knnfix_sub4_coarse020|6|0.10|0.1|0.1|0.20|DEBUG_LEVEL=2 SUB_DIV=4"
+  "knnfix_sub4_coarse030|6|0.15|0.1|0.1|0.30|DEBUG_LEVEL=2 SUB_DIV=4"
 )
 
 selected=("$@")
