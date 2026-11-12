@@ -9,6 +9,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -1311,6 +1312,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     time_begin = min_time;
   } else if (has_time && g_lidar_type != LID_TYPE::GAZEBO) {
     // Read first valid point's time as reference
+    bool ref_found = false;
     for (size_t i = 0; i < std::min(num_points, size_t(10)); ++i) {
       float x = read_float(i, off_x);
       float y = read_float(i, off_y);
@@ -1329,8 +1331,36 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
           uint64_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint64_t));
           time_begin = static_cast<double>(t);
         }
+        ref_found = true;
         break;
       }
+    }
+    // 兜底：Livox 实测有 44/1602 帧的前 10 点全是无效点（距离为 0）。此时 time_begin
+    // 会留在 0，而 Livox 逐点时间是绝对纳秒（≈1.79e18）⇒ max_offset_time≈1.8e9 s，
+    // end_time 远超 IMU 时间戳，sync_measure 永远 false；更糟的是坏帧卡在 lidar_buf
+    // 队首后，其后所有帧一起停摆（frame_num 从此不再增长）。这里整帧扫一遍取最小原始
+    // 时间戳作为基准，只在坏帧触发，正常帧无额外开销。
+    if (!ref_found) {
+      double mn = std::numeric_limits<double>::max();
+      for (size_t i = 0; i < num_points; ++i) {
+        double t = 0.0;
+        if (time_type == 2) {
+          memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double));
+        } else if (time_type == 1) {
+          float ft; memcpy(&ft, data_ptr + i * point_step + off_time, sizeof(float));
+          t = static_cast<double>(ft);
+        } else if (time_type == 3) {
+          uint32_t ut; memcpy(&ut, data_ptr + i * point_step + off_time, sizeof(uint32_t));
+          t = static_cast<double>(ut);
+        } else if (time_type == 4) {
+          uint64_t ut; memcpy(&ut, data_ptr + i * point_step + off_time, sizeof(uint64_t));
+          t = static_cast<double>(ut);
+        } else {
+          continue;
+        }
+        if (std::isfinite(t) && t < mn) mn = t;
+      }
+      if (mn < std::numeric_limits<double>::max()) time_begin = mn;
     }
   }
 
@@ -1342,7 +1372,14 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   auto read_offset_time = [&](size_t k) -> double {
     if (has_time) {
       switch (time_type) {
-        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); return t - time_begin; }
+        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double));
+          // Livox/Ouster 的 FLOAT64 逐点时间是**纳秒**：Livox 直接给绝对 epoch 纳秒
+          // （实测 ≈1.79e18），Ouster 给 0..1e8 的相对值。原实现只做 t-time_begin
+          // 不做换算，max_offset_time 就变成 1e8 s，end_time 远超 IMU 时间戳，
+          // sync_measure 永远 false（表现为只有 [IMU Lag]、frame_num 恒 0）。
+          const double rel = t - time_begin;
+          if (g_lidar_type == LID_TYPE::OUSTER || std::fabs(t) > 1e12) return rel * 1e-9;
+          return rel; }
         case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
           if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
           else return static_cast<double>(t) - time_begin; }
