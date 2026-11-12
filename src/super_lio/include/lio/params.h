@@ -75,7 +75,15 @@ namespace LI2Sup{
   /// hash_map
   extern std::size_t g_ivox_capacity;
   extern float       g_ivox_resolution;
-  
+
+  /// ===== M.29 地图哈希尖峰治理 =====
+  /// 构造时对 grids_ 做 reserve：只改桶数量、不改键集与 LRU 淘汰顺序，
+  /// 因此位姿输出应逐字节不变；作用是消除扩容期整表重哈希造成的偶发尖峰
+  /// （实测 1f UpdateMap 单窗口 max 92 ms，其中 MapInsert 独占 92.07 ms）。
+  extern bool   g_map_hash_reserve_en;
+  /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity
+  extern int    g_map_hash_reserve_size;
+
   /// kf
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;

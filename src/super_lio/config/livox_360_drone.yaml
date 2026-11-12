@@ -24,7 +24,7 @@
     lio.sensor.voxel_fliter_size: 0.25
 
     lio.sensor.intensity_filter_en: true
-    lio.sensor.intensity_min: 10.0
+    lio.sensor.intensity_min: 5.0
     # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
     lio.sensor.lidar_channels: 0
     # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
@@ -32,7 +32,9 @@
     # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
     lio.sensor.gravity_norm: 9.8066
     lio.sensor.imu_type: 1
-    lio.sensor.imu_na: 0.1
+    # 连续时间加速度噪声 0.1 → 0.01；配合 lio.observe.huber_delta_base=0.20。
+    # 40-run 扫描（6 bag × 16 配置）显示 R 系大场景最优（楼梯 1.599/4.672m、园区 3.050m）。
+    lio.sensor.imu_na: 0.01
     lio.sensor.imu_ng: 0.1
     lio.sensor.imu_nba: 0.0001
     lio.sensor.imu_nbg: 0.003
@@ -138,3 +140,10 @@
     lio.observe.lost_slew_r: 1.0
     # LOST 期间是否继续向 IVox 建图（关，防止污染配准地图；PCD 片段仍照常落盘）
     lio.observe.lost_map_en: false
+
+    # ======================== 量测鲁棒性（B 线收口） ========================
+    # Robust Kernel（自适应 Huber）的 δ 基准：δ_i = base + scale × 残差尺度。
+    # base 0.05→0.20 是把 Huber 切换点抬高、让正常残差留在二次区，
+    # 与 imu_na 0.01（R 矩阵收紧）配套。实测见 40-run 扫描：
+    # 楼梯 1.896→1.599m、1f 园区 3.471→3.050m。代码默认仍 0.05，本 yaml 显式覆写。
+    lio.observe.huber_delta_base: 0.20

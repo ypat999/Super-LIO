@@ -634,8 +634,11 @@ void SuperLIO::enqueueDense(){
   data.pc_full = measures_.lidar.pc_full;    // shared_ptr 共享，避免 2 万点深拷贝
   data.propagate_states = propagate_states_; // 值拷贝（主线程下一帧会覆盖）
   data.imu_gyr.reserve(measures_.imu.size());
-  for (auto &imu : measures_.imu) {
-    data.imu_gyr.emplace_back(imu.gyr);
+  {
+    const V3 bg = kf_->GetSysState().bg;  // 陀螺零偏须与 omega_d 一致（实测约 4e-3 rad/s）
+    for (auto &imu : measures_.imu) {
+      data.imu_gyr.emplace_back(imu.gyr - bg);
+    }
   }
   data.start_time = measures_.lidar.start_time;
   data.timestamp = kf_->GetNavState().timestamp;
@@ -1106,11 +1109,15 @@ void SuperLIO::Propagation_Undistort(){
 
   const SE3 T_end = kf_->GetSE3();
   T_predicted_end_ = T_end;  // save for delta correction after ESKF update
-  // 构建每个区间的原始陀螺仪序列（去畸变 omega_body 用，异步 dense 也复用）
+  // 构建每个区间的陀螺仪序列（去畸变 omega_body 用，异步 dense 也复用）；
+  // 必须减零偏，否则把随时间慢漂的 bg 当机体角速度，畸变量级 ~1°
   std::vector<V3> imu_gyr;
   imu_gyr.reserve(measures_.imu.size());
-  for (auto &imu : measures_.imu) {
-    imu_gyr.emplace_back(imu.gyr);
+  {
+    const V3 bg = kf_->GetSysState().bg;
+    for (auto &imu : measures_.imu) {
+      imu_gyr.emplace_back(imu.gyr - bg);
+    }
   }
 
   undistortCloud(measures_.lidar.pc, propagate_states_, imu_gyr,
@@ -1440,6 +1447,14 @@ void SuperLIO::DownSampleOnly(){
 /// 迭代更新状态；首次迭代直接顺序访问，后续迭代使用紧凑索引
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
+
+  // P0-1：effect_mask_ / abcd_vec_ 等为定长数组（20000），超限会越界；宁少不越界。
+  // DownSample() 已在出口封顶，这里是防止 enable_downsample 关闭等路径绕过该保护。
+  if (ptsize > 20000) {
+    LOG(WARNING) << "[Observe] ptsize " << ptsize << " exceeds 20000"
+                 << ", truncated (tune lio.sensor.filter_rate / enable_downsample)";
+    ptsize = 20000;
+  }
   
   static std::vector<float> _lengths;
   points_body_v3_.resize(ptsize);
@@ -1751,6 +1766,14 @@ void SuperLIO::periodicTimeReport(){
   report_tick_count_ = 0;
 
   time_record_.PrintAndClear();
+  if (ivox_) {
+    // M.29：把插入统计与表规模打到同一个计时窗口，便于判断残余峰值是否与扩容/淘汰同窗
+    auto s = ivox_->takeStats();
+    std::cout << " > [ MapStats ] size=" << ivox_->mapSize()
+              << " buckets=" << ivox_->bucketCount()
+              << " new_voxel=" << s.n_new
+              << " evict=" << s.n_evict << std::endl;
+  }
   data_wrapper_->printLatencies();
   data_wrapper_->clearLatencies();
 }

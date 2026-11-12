@@ -58,6 +58,10 @@ namespace LI2Sup{
   std::size_t g_ivox_capacity = 100000;
   float       g_ivox_resolution = 0.5;
 
+  /// M.29 地图哈希尖峰治理（默认开：只改桶数量，不改行为）
+  bool   g_map_hash_reserve_en = true;
+  int    g_map_hash_reserve_size = 0;
+
   /// kf
   int g_kf_type = 1;                // 1: ESKF, 2: InESKF
   int g_kf_max_iterations = 4;
