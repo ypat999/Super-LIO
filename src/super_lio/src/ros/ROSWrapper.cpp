@@ -2,6 +2,7 @@
 #include "ros/ROSWrapper.h"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "lio/super_lio.h"
+#include <cv_bridge/cv_bridge.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <thread>
@@ -950,6 +951,8 @@ void ROSWrapper::setupIO(){
       rclcpp::CallbackGroupType::MutuallyExclusive);
   cb_report_ = this->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_image_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
 
   rclcpp::SubscriptionOptions sub_opt_imu;
   sub_opt_imu.callback_group = cb_imu_;
@@ -995,6 +998,23 @@ void ROSWrapper::setupIO(){
             lidar_qos,
             std::bind(&ROSWrapper::stdMsgHandler, this, std::placeholders::_1),
             sub_opt_lidar);
+  }
+
+  // B2 图像输入：只有视觉总开关打开时才订阅，关闭时链路上零开销（不解码、不占回调线程）。
+  if (g_visual_enable) {
+    rclcpp::SubscriptionOptions sub_opt_image;
+    sub_opt_image.callback_group = cb_image_;
+    auto image_qos = rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile();
+    if (g_visual_image_qos_reliable) {
+      image_qos.reliable();
+    } else {
+      image_qos.best_effort();
+    }
+    sub_image_ = this->create_subscription<sensor_msgs::msg::Image>(
+        g_visual_image_topic,
+        image_qos,
+        std::bind(&ROSWrapper::imageHandler, this, std::placeholders::_1),
+        sub_opt_image);
   }
 
   /// output ======================================
@@ -1059,6 +1079,30 @@ void ROSWrapper::setupIO(){
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
+
+void ROSWrapper::imageHandler(const sensor_msgs::msg::Image::SharedPtr msg){
+  if (!super_lio_ || msg->data.empty()) return;
+
+  cv_bridge::CvImageConstPtr cv_ptr;
+  try {
+    // 不指定目标编码：cv_bridge 负责 bayer/其他编码 -> bgr8 的常规转换
+    cv_ptr = cv_bridge::toCvShare(msg);
+  } catch (const cv_bridge::Exception& e) {
+    LOG(WARNING) << "[VisRot] 图像解码失败 encoding=" << msg->encoding
+                 << ": " << e.what();
+    return;
+  }
+
+  // 前端支持单通道/三通道；这里统一转灰度，省掉前端一次颜色转换。
+  cv::Mat gray;
+  if (cv_ptr->image.channels() == 1) {
+    gray = cv_ptr->image;
+  } else {
+    cv::cvtColor(cv_ptr->image, gray, cv::COLOR_BGR2GRAY);
+  }
+
+  super_lio_->onVisualImage(gray, stampToSec(msg->header.stamp));
+}
 
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   auto t0 = std::chrono::high_resolution_clock::now();
