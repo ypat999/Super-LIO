@@ -232,40 +232,4 @@ namespace LI2Sup{
   /// Fast tf
   bool g_fast_tf = false;
 
-  /// ===== B2：视觉相对旋转约束 =====
-  bool   g_visual_enable = false;
-  string g_visual_image_topic = "/camera/color/image_raw";
-  double g_visual_img_time_offset = 0.0;
-  double g_visual_frame_slack = 0.05;
-  double g_visual_cam_fx = 611.5093994140625;
-  double g_visual_cam_fy = 611.7654418945312;
-  double g_visual_cam_cx = 639.8602905273438;
-  double g_visual_cam_cy = 397.16888427734375;
-  int    g_visual_cam_width = 1280;
-  int    g_visual_cam_height = 800;
-  double g_visual_cam_dist[4] = {0.0, 0.0, 0.0, 0.0};
-  double g_visual_Rcl[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
-  double g_visual_Pcl[3] = {0.0, 0.0, 0.0};
-  int    g_visual_klt_max_features = 150;
-  double g_visual_klt_min_distance = 10.0;
-  double g_visual_klt_fb_error = 1.0;
-  int    g_visual_klt_pyramid_levels = 3;
-  bool   g_visual_klt_use_fast = true;
-  int    g_visual_klt_fast_threshold = 20;
-  int    g_visual_klt_lk_window = 21;
-  double g_visual_essential_threshold = 1.0;
-  double g_visual_essential_prob = 0.999;
-  int    g_visual_min_inliers = 30;
-  double g_visual_sigma_rot = 0.02;
-  bool   g_visual_b2_enable = true;   ///< B2 注入本体开关（前端仍由 g_visual_enable 控制）
-  double g_visual_chi2_thresh = 9.0;  ///< B2 旋转注入 χ² 门控阈值（<=0 关闭门控）
-  bool   g_visual_image_qos_reliable = false;
-
-  double g_visual_b3_baseline_dt = 1.0;
-  double g_visual_b3_sigma_rot = 0.05;
-  double g_visual_b3_chi2_thresh = 9.0;
-  int    g_visual_b3_pyramid_levels = 4;
-  bool   g_visual_b3_enable = false;
-  bool   g_visual_b3_fd_check = true;
-
 }

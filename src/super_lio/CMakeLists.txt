@@ -32,10 +32,6 @@ find_package(PCL REQUIRED)
 find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 
-# OpenCV / cv_bridge 依赖保留：后续光流实验仍需要
-find_package(OpenCV REQUIRED)
-find_package(cv_bridge REQUIRED)
-
 find_package(livox_ros_driver2 QUIET)
 if(livox_ros_driver2_FOUND)
   message(STATUS "livox_ros_driver2 found, enabling Livox support")
@@ -64,11 +60,10 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
   ${Glog_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
 )
 
-file(GLOB_RECURSE LIO_LIB_SRC "src/lio/*.cpp" "src/ros/*.cpp" "src/visual/*.cpp")
-file(GLOB_RECURSE LIO_LIB_HEADERS "include/lio/*.hpp" "include/lio/*.h" "include/visual/*.hpp" "include/visual/*.h")
+file(GLOB_RECURSE LIO_LIB_SRC "src/lio/*.cpp" "src/ros/*.cpp")
+file(GLOB_RECURSE LIO_LIB_HEADERS "include/lio/*.hpp" "include/lio/*.h")
 
 add_library(lio ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
 
@@ -86,7 +81,6 @@ ament_target_dependencies(lio PUBLIC
   tf2_ros
   tf2_geometry_msgs
   tf2_sensor_msgs
-  cv_bridge
 )
 
 if(LIVOX_SUPPORT)
@@ -97,7 +91,6 @@ endif()
 target_link_libraries(lio PUBLIC
   Eigen3::Eigen
   ${PCL_LIBRARIES}
-  ${OpenCV_LIBS}
   glog
   pthread
   ${cpp_typesupport_target}

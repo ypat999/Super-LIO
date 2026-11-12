@@ -376,58 +376,6 @@ namespace LI2Sup{
   /// to reduce tf latency for downstream consumers.
   extern bool g_fast_tf;
 
-  /// ===== B2：视觉相对旋转约束（光流两帧几何 -> ESKF 旋转注入）=====
-  /// 关闭时整条链路（订阅、前端、注入）都不存在，行为与无视觉版本逐帧一致。
-  extern bool   g_visual_enable;
-  extern std::string g_visual_image_topic;
-  /// 图像 header 时刻 + 该偏移 = 归到 lidar 帧头的采集时刻
-  extern double g_visual_img_time_offset;
-  /// 图像对与 lidar 帧窗口的对齐松弛量(s)
-  extern double g_visual_frame_slack;
-  /// 针孔内参
-  extern double g_visual_cam_fx, g_visual_cam_fy, g_visual_cam_cx, g_visual_cam_cy;
-  extern int    g_visual_cam_width, g_visual_cam_height;
-  /// k1,k2,p1,p2（plumb_bob）
-  extern double g_visual_cam_dist[4];
-  /// T_cam_lidar：行主序 3x3 + 平移。body 帧即 IMU 帧，用 Rcl 近似 R_cam_body。
-  extern double g_visual_Rcl[9];
-  extern double g_visual_Pcl[3];
-  /// KLT 前端
-  extern int    g_visual_klt_max_features;
-  extern double g_visual_klt_min_distance;
-  extern double g_visual_klt_fb_error;
-  extern int    g_visual_klt_pyramid_levels;
-  extern bool   g_visual_klt_use_fast;
-  extern int    g_visual_klt_fast_threshold;
-  extern int    g_visual_klt_lk_window;
-  /// 两帧几何（Essential）
-  extern double g_visual_essential_threshold;
-  extern double g_visual_essential_prob;
-  /// 低于该内点数则本帧对不产生测量
-  extern int    g_visual_min_inliers;
-  /// 相对旋转测量噪声标准差(rad)
-  extern double g_visual_sigma_rot;
-  /// B2 瞬时旋转注入本体开关（false = 只跑前端与 B3，便于 B2/B3 独立开关）
-  extern bool   g_visual_b2_enable;
-  extern double g_visual_chi2_thresh;  ///< B2 旋转注入 χ² 门控阈值（<=0 关闭门控）
-  /// 图像订阅 QoS：false = best_effort（与多数相机驱动/rosbag 回放兼容）
-  extern bool   g_visual_image_qos_reliable;
-
-  /// ===== B3：视觉长基线 -> 陀螺零偏观测（18 维观测通道）=====
-  /// 残差 e = Log(ΔR_measᵀ · Exp(bg·Δt − Φ_base))，Φ_base 为基线内未补偿陀螺积分。
-  /// 姿态在残差里完全消掉，∂e/∂δbg ≈ Δt·J，故等效零偏精度 = sigma/Δt。
-  extern bool   g_visual_b3_enable;
-  /// 长基线图像对的最小时间间隔(s)
-  extern double g_visual_b3_baseline_dt;
-  /// 旋转残差噪声标准差(rad)；等效零偏 σ = 该值 / baseline_dt
-  extern double g_visual_b3_sigma_rot;
-  /// χ² 门控阈值（3 自由度）：eᵀ(HPHᵀ+R)⁻¹e 超过则丢弃本次更新
-  extern double g_visual_b3_chi2_thresh;
-  /// 长基线 KLT 金字塔层数（位移大，需比相邻帧更多层）
-  extern int    g_visual_b3_pyramid_levels;
-  /// 每次注入用有限差分复核解析雅可比并记录最大偏差（开销为常数次 so3Log）
-  extern bool   g_visual_b3_fd_check;
-
 
 }
 

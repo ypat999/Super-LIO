@@ -2,7 +2,6 @@
 #include "ros/ROSWrapper.h"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "lio/super_lio.h"
-#include <cv_bridge/cv_bridge.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <thread>
@@ -476,119 +475,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.submap.submap_capacity", 0);
   node.get_parameter("lio.submap.submap_capacity", g_submap_capacity);
 
-  // ===== B2：视觉相对旋转（光流两帧几何 -> ESKF 旋转注入）=====
-  node.declare_parameter<bool>("lio.visual.enable", false);
-  node.get_parameter("lio.visual.enable", g_visual_enable);
-
-  node.declare_parameter<std::string>("lio.visual.image_topic", "/camera/color/image_raw");
-  node.get_parameter("lio.visual.image_topic", g_visual_image_topic);
-
-  node.declare_parameter<double>("lio.visual.img_time_offset", 0.0);
-  node.get_parameter("lio.visual.img_time_offset", g_visual_img_time_offset);
-
-  node.declare_parameter<double>("lio.visual.frame_slack", 0.05);
-  node.get_parameter("lio.visual.frame_slack", g_visual_frame_slack);
-
-  node.declare_parameter<double>("lio.visual.cam_fx", 611.5093994140625);
-  node.get_parameter("lio.visual.cam_fx", g_visual_cam_fx);
-  node.declare_parameter<double>("lio.visual.cam_fy", 611.7654418945312);
-  node.get_parameter("lio.visual.cam_fy", g_visual_cam_fy);
-  node.declare_parameter<double>("lio.visual.cam_cx", 639.8602905273438);
-  node.get_parameter("lio.visual.cam_cx", g_visual_cam_cx);
-  node.declare_parameter<double>("lio.visual.cam_cy", 397.16888427734375);
-  node.get_parameter("lio.visual.cam_cy", g_visual_cam_cy);
-  node.declare_parameter<int>("lio.visual.cam_width", 1280);
-  node.get_parameter("lio.visual.cam_width", g_visual_cam_width);
-  node.declare_parameter<int>("lio.visual.cam_height", 800);
-  node.get_parameter("lio.visual.cam_height", g_visual_cam_height);
-
-  node.declare_parameter<std::vector<double>>(
-      "lio.visual.cam_dist",
-      std::vector<double>(4, 0.0));
-  {
-    std::vector<double> dist;
-    node.get_parameter("lio.visual.cam_dist", dist);
-    for (size_t i = 0; i < dist.size() && i < 4; ++i) g_visual_cam_dist[i] = dist[i];
-  }
-
-  node.declare_parameter<std::vector<double>>(
-      "lio.visual.Rcl",
-      std::vector<double>{1, 0, 0, 0, 1, 0, 0, 0, 1});
-  {
-    std::vector<double> v;
-    node.get_parameter("lio.visual.Rcl", v);
-    for (size_t i = 0; i < v.size() && i < 9; ++i) g_visual_Rcl[i] = v[i];
-  }
-
-  node.declare_parameter<std::vector<double>>(
-      "lio.visual.Pcl",
-      std::vector<double>(3, 0.0));
-  {
-    std::vector<double> v;
-    node.get_parameter("lio.visual.Pcl", v);
-    for (size_t i = 0; i < v.size() && i < 3; ++i) g_visual_Pcl[i] = v[i];
-  }
-
-  node.declare_parameter<int>("lio.visual.klt.max_features", 150);
-  node.get_parameter("lio.visual.klt.max_features", g_visual_klt_max_features);
-  node.declare_parameter<double>("lio.visual.klt.min_distance", 10.0);
-  node.get_parameter("lio.visual.klt.min_distance", g_visual_klt_min_distance);
-  node.declare_parameter<double>("lio.visual.klt.fb_error", 1.0);
-  node.get_parameter("lio.visual.klt.fb_error", g_visual_klt_fb_error);
-  node.declare_parameter<int>("lio.visual.klt.pyramid_levels", 3);
-  node.get_parameter("lio.visual.klt.pyramid_levels", g_visual_klt_pyramid_levels);
-  node.declare_parameter<bool>("lio.visual.klt.use_fast", true);
-  node.get_parameter("lio.visual.klt.use_fast", g_visual_klt_use_fast);
-  node.declare_parameter<int>("lio.visual.klt.fast_threshold", 20);
-  node.get_parameter("lio.visual.klt.fast_threshold", g_visual_klt_fast_threshold);
-  node.declare_parameter<int>("lio.visual.klt.lk_window", 21);
-  node.get_parameter("lio.visual.klt.lk_window", g_visual_klt_lk_window);
-
-  node.declare_parameter<double>("lio.visual.essential.threshold", 1.0);
-  node.get_parameter("lio.visual.essential.threshold", g_visual_essential_threshold);
-  node.declare_parameter<double>("lio.visual.essential.prob", 0.999);
-  node.get_parameter("lio.visual.essential.prob", g_visual_essential_prob);
-  node.declare_parameter<int>("lio.visual.gate.min_inliers", 30);
-  node.get_parameter("lio.visual.gate.min_inliers", g_visual_min_inliers);
-  node.declare_parameter<double>("lio.visual.sigma_rot", 0.02);
-  node.get_parameter("lio.visual.sigma_rot", g_visual_sigma_rot);
-  node.declare_parameter<bool>("lio.visual.b2.enable", true);
-  node.get_parameter("lio.visual.b2.enable", g_visual_b2_enable);
-  node.declare_parameter<double>("lio.visual.chi2_thresh", 9.0);
-  node.get_parameter("lio.visual.chi2_thresh", g_visual_chi2_thresh);
-
-  LOG(INFO) << GREEN << " ---> [Param] visual/b2: enable="
-            << (g_visual_b2_enable ? "true" : "false")
-            << " sigma_rot=" << g_visual_sigma_rot
-            << " chi2_thresh=" << g_visual_chi2_thresh << RESET;
-
-  // B3：视觉长基线 -> 陀螺零偏观测
-  node.declare_parameter<bool>("lio.visual.b3.enable", false);
-  node.get_parameter("lio.visual.b3.enable", g_visual_b3_enable);
-  node.declare_parameter<double>("lio.visual.b3.baseline_dt", 1.0);
-  node.get_parameter("lio.visual.b3.baseline_dt", g_visual_b3_baseline_dt);
-  node.declare_parameter<double>("lio.visual.b3.sigma_rot", 0.05);
-  node.get_parameter("lio.visual.b3.sigma_rot", g_visual_b3_sigma_rot);
-  node.declare_parameter<double>("lio.visual.b3.chi2_thresh", 9.0);
-  node.get_parameter("lio.visual.b3.chi2_thresh", g_visual_b3_chi2_thresh);
-  node.declare_parameter<int>("lio.visual.b3.pyramid_levels", 4);
-  node.get_parameter("lio.visual.b3.pyramid_levels", g_visual_b3_pyramid_levels);
-  node.declare_parameter<bool>("lio.visual.b3.fd_check", true);
-  node.get_parameter("lio.visual.b3.fd_check", g_visual_b3_fd_check);
-
-  LOG(INFO) << GREEN << " ---> [Param] visual/b3: enable="
-            << (g_visual_b3_enable ? "true" : "false")
-            << " baseline_dt=" << g_visual_b3_baseline_dt
-            << " sigma_rot=" << g_visual_b3_sigma_rot
-            << " chi2_thresh=" << g_visual_b3_chi2_thresh << RESET;
-
-  node.declare_parameter<bool>("lio.ros.image_qos_reliable", false);
-  node.get_parameter("lio.ros.image_qos_reliable", g_visual_image_qos_reliable);
-
-  LOG(INFO) << GREEN << " ---> [Param] visual/enable: "
-            << (g_visual_enable ? "true" : "false")
-            << " topic=" << g_visual_image_topic << RESET;
-
   // visual
   node.declare_parameter<bool>("lio.output.robot", false);
   node.get_parameter("lio.output.robot", g_2_robot);
@@ -952,8 +838,6 @@ void ROSWrapper::setupIO(){
       rclcpp::CallbackGroupType::MutuallyExclusive);
   cb_report_ = this->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
-  cb_image_ = this->create_callback_group(
-      rclcpp::CallbackGroupType::MutuallyExclusive);
 
   rclcpp::SubscriptionOptions sub_opt_imu;
   sub_opt_imu.callback_group = cb_imu_;
@@ -999,23 +883,6 @@ void ROSWrapper::setupIO(){
             lidar_qos,
             std::bind(&ROSWrapper::stdMsgHandler, this, std::placeholders::_1),
             sub_opt_lidar);
-  }
-
-  // B2 图像输入：只有视觉总开关打开时才订阅，关闭时链路上零开销（不解码、不占回调线程）。
-  if (g_visual_enable) {
-    rclcpp::SubscriptionOptions sub_opt_image;
-    sub_opt_image.callback_group = cb_image_;
-    auto image_qos = rclcpp::QoS(rclcpp::KeepLast(5)).durability_volatile();
-    if (g_visual_image_qos_reliable) {
-      image_qos.reliable();
-    } else {
-      image_qos.best_effort();
-    }
-    sub_image_ = this->create_subscription<sensor_msgs::msg::Image>(
-        g_visual_image_topic,
-        image_qos,
-        std::bind(&ROSWrapper::imageHandler, this, std::placeholders::_1),
-        sub_opt_image);
   }
 
   /// output ======================================
@@ -1080,30 +947,6 @@ void ROSWrapper::setupIO(){
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
-
-void ROSWrapper::imageHandler(const sensor_msgs::msg::Image::SharedPtr msg){
-  if (!super_lio_ || msg->data.empty()) return;
-
-  cv_bridge::CvImageConstPtr cv_ptr;
-  try {
-    // 不指定目标编码：cv_bridge 负责 bayer/其他编码 -> bgr8 的常规转换
-    cv_ptr = cv_bridge::toCvShare(msg);
-  } catch (const cv_bridge::Exception& e) {
-    LOG(WARNING) << "[VisRot] 图像解码失败 encoding=" << msg->encoding
-                 << ": " << e.what();
-    return;
-  }
-
-  // 前端支持单通道/三通道；这里统一转灰度，省掉前端一次颜色转换。
-  cv::Mat gray;
-  if (cv_ptr->image.channels() == 1) {
-    gray = cv_ptr->image;
-  } else {
-    cv::cvtColor(cv_ptr->image, gray, cv::COLOR_BGR2GRAY);
-  }
-
-  super_lio_->onVisualImage(gray, stampToSec(msg->header.stamp));
-}
 
 void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   auto t0 = std::chrono::high_resolution_clock::now();

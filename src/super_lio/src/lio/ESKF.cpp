@@ -303,28 +303,6 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   // 与 IMU 回调线程的 Predict 互斥；obs 内会嵌套调用 Get*（递归锁）
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  // 6 维 ObsFunc 是 18 维通道的特例：观测矩阵左上 6×6、其余为零。
-  // HTVH/HTVr 声明在 lambda 之外，与原实现的「跨迭代复用同一块缓冲」语义一致。
-  M6 HTVH;
-  V6 HTVr;
-  return UpdateObserveImpl([&](const KFState &, M18 &H, V18 &r) {
-    obs(GetKFState(), HTVH, HTVr);
-    H.setZero();
-    r.setZero();
-    H.template block<6, 6>(0, 0) = HTVH;
-    r.template head<6>() = HTVr;
-  });
-}
-
-bool ESKF::UpdateObserveFull(ESKF::ObsFuncFull obs) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  return UpdateObserveImpl(obs);
-}
-
-bool ESKF::UpdateObserveImpl(const ESKF::ObsFuncFull &obs) {
-  // 与 IMU 回调线程的 Predict 互斥；obs 内会嵌套调用 Get*（递归锁）
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-
   // propagated state
   SO3 R_pred = R_;
   V3  p_pred = p_;
@@ -336,8 +314,8 @@ bool ESKF::UpdateObserveImpl(const ESKF::ObsFuncFull &obs) {
   M18 P_pred = P_;
   M18 Y_pred = P_pred.inverse();  // Pre-compute information matrix (one 18x18 inverse)
 
-  M18 HTRH;
-  V18 b;
+  M6 HTVH;
+  V6 HTVr;
 
   M18 Pk = M18::Zero();
   M18 Qk = M18::Zero();
@@ -352,7 +330,7 @@ bool ESKF::UpdateObserveImpl(const ESKF::ObsFuncFull &obs) {
       need_converge_ = true;
     }
 
-    obs(GetKFState(), HTRH, b);
+    obs(GetKFState(), HTVH, HTVr);
 
     V18 dx_prior = V18::Zero();
     dx_prior.template block<3,1>(0,0)  = (R_pred.inverse() * R_).log_vee();
@@ -373,7 +351,9 @@ bool ESKF::UpdateObserveImpl(const ESKF::ObsFuncFull &obs) {
 
     dx_prior = G_prior * dx_prior;
 
-    // H^T R^{-1} H 与 H^T R^{-1} r 已由 obs 直接写入 M18/V18（B3：不再截到左上 6×6）
+    // H^T R^{-1} H
+    M18 HTRH = M18::Zero();
+    HTRH.template block<6,6>(0,0) = HTVH;
 
     // Information form update (single 18x18 inverse per iteration):
     //   Yk = G_prior^{-T} * Y_pred * G_prior^{-1} + HTRH
@@ -384,6 +364,9 @@ bool ESKF::UpdateObserveImpl(const ESKF::ObsFuncFull &obs) {
     G_inv.template block<3,3>(0,0) = J_prior.inverse();
     M18 Yk = G_inv.transpose() * Y_pred * G_inv + HTRH;
     Qk = Yk.inverse();
+
+    V18 b = V18::Zero();
+    b.template head<6>() = HTVr;
 
     K_x = Qk * HTRH;
 
