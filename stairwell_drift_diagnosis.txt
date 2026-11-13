@@ -5,6 +5,7 @@ Super-LIO 狭窄空间漂移：事实校准 + 可执行实验清单
       第二节的代码事实是动手前的唯一依据，不要沿用旧版本文档里的过时描述。
 最新状态（2026-10-23）：TL;DR 5k + 正文 M.22（补扫与组合回归）+ M.23（交接清单：
       全部 run 目录与参数、判据口径、可引用结论、被推翻的旧结论、未完成项）。接手先读这三处。
+最新状态（2026-11-14）：M.39（K=5→8 与 sub_div=4 上生产：结论见 M.39 §7，资产见 §9）。
 ================================================================================
 
 ================================================================================
@@ -6277,3 +6278,126 @@ M.38 【2026-11-10 deg_cond 与漂移不单调：三方对照推翻既有因果�
      ./run_one.sh m37_c2_degen 6 0.25 0.01 0.1 0.25
    ※ deg_* 列只在 DEGENERACY_DETECT_EN=true 时写出，只开 DEBUG_LEVEL=2 不够
      （本轮第一次跑漏了这个开关，白扔 11 分钟；已在配置里核对后才重跑）。
+
+================================================================================
+M.39 【2026-11-11 ~ 11-14】K=5→8 修复进生产 + sub_div=4 全量复验 + Trust 姿态阈值 25°
+--------------------------------------------------------------------------------
+■ 0. 一句话
+   sub_div=4 想要的是"点位更细"，但真正卡住它的是**平面拟合邻域只有 5 点**：
+   K 提到 8 并修掉堆里"只扫前 5 槽"的历史缺陷后，sub4 在三个 bag 上全部跑通，
+   drone 闭环从 1.169 m 降到 0.904 m；代价是 Observe +1.5~1.7 ms（sub2）与
+   一次新的失败模式——Trust 姿态护栏把 16~19° 的**正确**修正当成跳变否决，
+   阈值 15°→25° 后消失。
+
+■ 1. 触发与定位
+   现象：sub_div=4 + K=5，noshell 跑到约 330 s 失锁并发散到 |p|≈5.35e5 m；
+        同一份数据 sub_div=2 正常。
+   定位：不是细分编码/索引的问题（h4 槽位、mirror_axis、早退阈值都对），
+        而是"参考面法向抖动"。sub4 让每个子槽只剩 0.0625 m 的点位粒度，
+        均值压缩更强，5 点拟合出的法向在长走廊里逐帧翻动，观测残差逐渐
+        把状态推离真值。
+   判据：只换 K（5→8），其余参数与代码不动 ⇒ noshell 全程 674 s 不再失锁。
+        ⇒ K 是前置条件，不是调优项。
+
+■ 2. 代码改动（三个真实缺陷 + 一条分支）
+   2.1 KNNHeap 容量与"最坏项"搜索
+       - KNNHeap<5> → KNNHeap<8>（OctVoxMap.hpp 与 super_lio.h 两处模板参数；
+         exp 分支已把 KNNHeap 抽到 KNNHeap.hpp，并有 test/test_knn_heap.cpp）
+       - update_worst()（exp 中仍名 update_worst_unrolled）原实现硬编码
+         dist2_[0..4]。容量提到 8 后索引 5~7 的远点永远不会被替换，
+         max_dist2_ 被系统性低估 ⇒ 堆里不是"全局最近 K 个"。
+         这段正是 M.35 裁定的历史缺陷（67c0acd 把容量 5→8 却漏改 unrolled），
+         生产分支此前没有同步，本轮补上。
+       - 教训（M.35 已记，这里再强调）：修之前跑出来的"K=8 数据"无效——
+         m35_k5_* 与 m35_k8fix_* 的 odom.csv md5 完全相同，就是这条导致的。
+         本轮所有 K=8 结论都来自"M.35 (b) 修好之后"的二进制。
+   2.2 getTopK 的提前退出判断
+       getTopK 与 getTopK_sub4 里的 `count == 5` 必须同步改成 8，否则堆静默
+       只填 5 个点，K 改了等于没改（症状与 2.1 相同，但原因不同）。
+   2.3 calc_plane_coeff 的点数上限
+       原实现只在 N==5 时走 5×3 QR，其它 N 一律只用前 4 点求解——K=8 时
+       等于只用一半邻域。改为定长 8 行缓冲 + A.topLeftCorner(N,3)
+       .colPivHouseholderQr().solve(b.head(N))，支持任意 N≤8；
+       super_lio_reloc.cpp 的同名函数同步（其残差阈值仍写死 0.1）。
+   2.4 sub_div=4 分支（前一轮已落地，这里记录口径）
+       kMaxSlots = 64；sub_bits_ = 2 ⇒ local_idx = dx | dy<<2 | dz<<4；
+       搜索走 getTopK_sub4（邻居粗体素按组整槽扫描 + mirror_axis，无子槽
+       预计算表）；早退阈值按 hknn_thr_scale_ = (resolution_/0.5)² 折算
+       （orders_min_dis2 是按 res=0.5 标定的米制常数，res=0.25 时 = 0.25）。
+       sub_div=2 仍走原 getTopK（8 槽、sub_bits_=1），行为逐位不变。
+
+■ 3. K 的代价（10 Hz，单帧预算 100 ms，[Observe] 均值/最大）
+   sub2：K=5 2.83 / 3.02 ms（max 17.9 / 22.0）→ K=8 4.55 ms（max 24.4）
+         ⇒ +1.5~1.7 ms（约 +55%），对预算无压力。
+   sub2 + M.36 ulp2 优化：4.66 → 5.23 ms（优化项本身仍成立）。
+   sub4：主导项不是 K 而是 64 槽全扫 —— noshell Observe 10~18 ms（max 43），
+         MapInsert 0.27~0.57 ms（max 2.5）；drone MapInsert 0.08~0.17 ms，
+         drone_1f 0.09~0.55 ms（max 1.9）。仍留有 ~5 倍余量。
+   ⇒ 若以后要压 sub4 的 Observe，该动的是"槽扫描的剪枝/分组早退"，
+     不是再调 K。
+
+■ 4. 新失败模式：Trust 姿态护栏的误否决（本轮最重要的新发现）
+   K=8 + sub4 在楼梯边缘会把相邻面（踏步立面 vs 踏面）混进同一次拟合，
+   于是单帧姿态修正出现 15.9° / 19.1° 的跳变，而位移只有 5 / 8 cm。
+   旧阈值 trust_jump_rot_max=15° 把这两帧判成"跳变"并撤销激光修正进 LOST：
+   drone 闭环 1.169 m → 4.689 m。
+   归因实验（阈值只放到 25°，其它不动）：闭环 0.831~0.904 m、yaw 1.04°，
+   0 次否决 ⇒ **被否决的那两帧修正本身是对的**，错的是判据。
+   复跑三次确认确定性（drone_r3 与首跑数值逐位相同）。
+   ⇒ 定稿 lio.observe.trust_jump_rot_max: 25.0（位置阈值 trust_jump_max=1.0
+     仍是兜底）。注意这是"姿态阈值放宽"，不是"关护栏"：>25° 仍会撤销修正。
+
+■ 5. 三 bag 全量复验（sub_div=4 + K=8 + rot_max=25，全量跑、无截断）
+   bag                  时长     里程     闭环 / 终点            其它
+   livox_record_drone   465.9 s  300.8 m  3D 0.904 m (0.301%)   竖直 −0.090 m、转角 1.174°、yaw −1.037°
+   livox_record_drone_1f 639.6 s 776.1 m  终点 2.87 m            z∈[−2.80, 1.95]；旧 K=5 为 4.19 m
+   livox_record_noshell 674.4 s  704.3 m  终点 2.05 m            z∈[−0.95, 5.76]；sub4+K5 在 330 s 发散
+   三 bag 均 0 次 Trust 否决、0 个相邻帧位移 > 0.5 m。
+   与旧基线（K=5 + sub2 口径）对照：drone 1.169 m / 转角 3.41° → 0.904 m / 1.174°，
+   不是"换细分换来的精度"，而是把 K 补齐之后 sub4 才不再被自己的观测拖走。
+
+■ 6. 部署与路径自适应
+   - K 是模板参数 ⇒ **必须全量 rebuild**，只替换 yaml 不生效。
+   - lio.map.save_map_dir 支持 "~" / "$HOME" 前缀（ROSWrapper 装载时展开并打印
+     实际路径），配置改为 "~/slam_data/pcd"，异机不用改 yaml。
+   - lio.hash_map.sub_div 默认 4（生产 yaml 显式写出），hash_capacity 2e6。
+   - 生产分支提交：4cf20ed（sub_div=4 分支 + 自适应路径 + 容量）→
+     755fb3f（K 5→8 平面拟合修复）；exp 分支提交 b202cc2（同结论文档 +
+     trust 25 + 自适应路径）。
+
+■ 7. 可直接引用的结论
+   C-1 sub4 依赖 K≥8；K=5 时 sub4 在长走廊是确定性发散（可复现），不是偶发。
+   C-2 "K=8 数据"只有在该缺陷修复后才可信（md5 相同的坑）。
+   C-3 Trust 姿态阈值 15° 对 sub4+K8 过严，16~19° 的楼梯边缘修正是真实信号；
+       25° 是实测下限，位置阈值仍是 1 m。
+   C-4 sub4 的耗时瓶颈是槽扫描（10~18 ms），不是 K（+1.5~1.7 ms）。
+   C-5 sub4 的收益目前体现在**不发散 + 闭环一致性**上，没有证据表明它能降低
+       1f 的水平残差（1f 终点 2.87 m 与细分无关，属 M.21 的老问题）。
+
+■ 8. 遗留与下一步
+   - sub4 的 Observe 10~18 ms 还有优化空间（分组早退 / 距离上界剪枝），
+     但要先确认不会再次破坏 C-1 的稳定性。
+   - trust_jump_rot_max=25 目前只有 drone 一个场景的负向证据支撑；
+     建议在 1f 与 noshell 的楼梯段主动构造"相邻面混入"的窗口做一次正向核验
+     （统计 >15° 且 <25° 的修正帧数与它们对闭环的贡献）。
+   - M.38 的 P-2（重复周期数 → 漂移幅度）仍未做，与本轮无关但仍是最高性价比。
+
+■ 9. 本轮资产（本地 exp/results_*，git_head 见各 meta.txt）
+   results_knnfix/{knnfix_vox010,vox015,vox025}        noshell，K 修复前/后对照（含无效数据）
+   results_livox_record_drone/knnfix_vox0{10,15,25}    drone，同上
+   results_livox_record_drone_1f/knnfix_vox0{10,15,25}+vox010_cap4m
+   results_sub4_regress/knnfix_vox010_regress          drone，sub2 回归（确认行为不变）
+   results_fz_{drone,1f}/{fz_vox010,fz_vox015,fz_sub4_coarse020,fz_sub4_coarse030}
+   results_fz_cap/{cap2_vox010_4m,cap4_sub4_coarse020}
+   ⇒ 这些是 M.35~M.39 期间的回放产物；本轮三 bag 定稿数据在 /tmp/prod_bags_rot25
+     （未入库，需要时按 §10 复跑即可重现）。
+
+■ 10. 复跑
+   # 生产二进制（K=8 + sub4 默认），三个 bag 依次跑
+   ros2 launch super_lio super_lio.py --bag /home/ywj/slam_data/livox_record_drone
+   # 只改姿态阈值做归因（其余不动）
+   -p lio.observe.trust_jump_rot_max:=25.0
+   # 闭环判据
+   python3 exp/odom_recorder.py --out <run_dir>/odom.csv
+   python3 exp/loop_error.py --bag /home/ywj/slam_data/livox_record_drone <run_dir>
+   # 单帧耗时看 [Observe]/[MapInsert] 的 avg/max（lio.eva.timer）
