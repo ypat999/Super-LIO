@@ -31,7 +31,9 @@
                               0.0, 0.0, 1.0]
     lio.extrinsic.odom_robo: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    lio.hash_map.hash_capacity: 100000000
+    # 桶数预分配：1e8 桶 ≈ 8.3 GB 常驻（启动即占满，WSL/Windows 侧内存压力主因）。
+    # 151 s 的 NTU 序列实际访问体素远小于 2e7，降到 2e7（≈1.7 GB）不影响精度。
+    lio.hash_map.hash_capacity: 20000000
     lio.hash_map.vox_resolution: 0.5
 
     lio.kf.kf_type: 0

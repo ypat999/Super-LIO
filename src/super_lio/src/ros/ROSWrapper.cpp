@@ -8,6 +8,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #ifdef LIVOX_SUPPORT
@@ -36,6 +37,21 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.map.save_map_dir", "");
   node.get_parameter("lio.map.save_map_dir", g_save_map_dir);
   // g_save_map_dir = g_root_dir + g_save_map_dir;
+  // 支持 "~/..." 与 "$HOME/..."：配置随机器走，不再写死 /home/<user>
+  if (!g_save_map_dir.empty()) {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr) {
+      const std::string h(home);
+      if (g_save_map_dir == "~") {
+        g_save_map_dir = h;
+      } else if (g_save_map_dir.rfind("~/", 0) == 0) {
+        g_save_map_dir = h + g_save_map_dir.substr(1);
+      } else if (g_save_map_dir.rfind("$HOME/", 0) == 0) {
+        g_save_map_dir = h + g_save_map_dir.substr(5);
+      }
+    }
+  }
+  LOG(INFO) << "[Param] map.save_map_dir: '" << g_save_map_dir << "'";
 
   node.declare_parameter<std::string>("lio.map.map_name", "default");
   node.get_parameter("lio.map.map_name", g_map_name);

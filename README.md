@@ -38,6 +38,99 @@
 >     另由 `map_mutex_` 保护，确保后台不再写地图点后再存图
 > - `localization.yaml` / SZD 降落参数见各相关包 README。
 
+> **实验分支说明**（`exp/degeneracy-adaptive`）
+>
+> 定位：生产分支仍是 `no-de-check`（只收 bug 修复）；退化自适应与精度实验全部在本分支。
+> 相对 `no-de-check`，`src/super_lio/src/lio/super_lio.cpp` 约 +808 / −57 行，其中
+> **默认生效且会改变数值结果的只有 K=8 平面拟合邻域**：
+> `OctVoxMap/KNNHeap.hpp` 的 `KNNHeap<8, Point>`、`super_lio.h` 的 `KNNHeap<8, BASIC::V3>`
+> 两处模板参数（`getTopK` 的提前终止判断改用 `KNNHeapType::kSize`，不再硬编码 8）。
+> 要在此分支复现历史基线，需把这两处改回 5（`calc_plane_coeff` 的 8×3 缓冲可保留：
+> N≤5 时 QR 只作用于 `topLeftCorner(N)`，结果等价）。
+>
+> `KNNHeap` 已从 `OctVoxMap.hpp` 抽成独立头文件，便于单测：
+> 最远元素定位 `update_worst()` 改为遍历全部 K 个槽位（旧实现只展开比较 `dist2_[0..4]`，
+> K=8 堆满后第 6~8 槽的远点无法被淘汰，返回的邻居集合不是全局最近 K 个）。
+> 回归测试：`test/test_knn_heap.cpp`（与暴力 Top-K 逐点对照，覆盖 n<K/=K/>K、
+> 随机插入顺序、等距、以及 K=5 防回归）：
+>
+> ```bash
+> g++ -std=c++17 -O2 -I src/super_lio/include -I /usr/include/eigen3 \
+>     test/test_knn_heap.cpp -o /tmp/test_knn_heap && /tmp/test_knn_heap
+> ```
+>
+> 其余实验均为默认关闭/零值，不改变基线行为（开启时按需在 yaml 中加）：
+> - 退化检测：`lio.observe.degeneracy_detect_en`（阈值 `degeneracy_threshold`、
+>   回差 `degeneracy_hysteresis`、进/出帧数 `degeneracy_enter_frames`/`degeneracy_exit_frames`、
+>   `degen_trans_only` 仅按平移块判退化）；`degeneracy_truncate_en` + `tikhonov_lambda`；
+>   `adaptive_param_en`（退化时切到 `adaptive_*` 档）
+> - 细通道再匹配：`lio.observe.fine_channel_en`（`fine_channel_weight` /
+>   `fine_channel_max_points` / `fine_max_dist` / `fine_channel_min_gain`）
+> - 观测模型：`lio.observe.beam_err`（默认 0=关闭，开启后 σ²(r)=dept_err²+(beam_err·r)²）、
+>   `dept_err`、`ground_weight`（地面/天花板软约束）、`obs_dist_k`、`thresh_motion_k`
+>   （高速旋转放宽 Huber）、`delta_interp_en`（逐点 ΔT 时间对齐）、`normal_weight_en`
+> - 时延在线标定：`lio.calib_td.en`（`apply_en` 才写回；未锁定前修正量恒 0）
+> - 场景自动档：`lio.auto_scene.en`
+> - 固定地图/冻结地图：`lio.map.freeze` + `lio.map.load_path` + `lio.map.init_pose`
+> - 传感器标定：`lio.sensor.imu_gyr_scale`（1.0=不修正）、
+>   `lio.sensor.lidar_time_offset`（秒，只改逐点去畸变时刻，不改帧尾时间）
+>
+> 新增话题 `lio/degeneracy`（`std_msgs/Float64MultiArray`，与 `lio/odom` 同频）：
+> `[cond6, axes, active, cond_t, evt_min, ux, uy, uz]` —— 6 维条件数、退化轴数、去抖后状态、
+> 平移块条件数、平移块最小特征值、世界系最弱平移方向单位向量（仅 `degen_trans_only=1` 时有意义，
+> 其余模式清零）。视觉侧可据此"只在该方向让权"，无需坐标变换。
+>
+> 其他：`NTU.yaml` 的 `lio.hash_map.hash_capacity` 由 1e8 降到 2e7（桶预分配常驻内存约 8 GB → 约 1.7 GB，
+> 短序列不影响精度）；`lio.hash_map.reserve_en`（默认 true）只预分配桶数，不改键集与淘汰顺序 ⇒ 结果不变。
+> 代码级开关（无 ROS 参数，改 `params.cpp` 默认值后需重新编译）：`g_map_rep_mode`
+> （0=增量均值 / 1=离中心最近的真实点 / 2=首观测固定）、`g_map_clamp_mu`、
+> `g_map_max_points`、`g_map_merge_dist`。
+
+> **sub_div=4 上生产：K=8 平面拟合是前置条件**（`no-de-check` 与 `exp/degeneracy-adaptive` 均已生效）
+>
+> 起因：`lio.hash_map.sub_div=4`（4×4×4=64 子槽，点位粒度 0.25/4=0.0625 m）在长走廊
+> 用 K=5 平面拟合时，noshell（约 330 s 后）失锁并发散到 |p|≈5.35e5 m；同一份数据 sub_div=2
+> 正常。根因是邻域点太少 + 均值压缩导致参考面法向抖动，不是细分逻辑本身。
+>
+> 改动（生产 `755fb3f`）：
+> - `KNNHeap<5>` → `KNNHeap<8>`（`OctVoxMap.hpp`（exp 分支已抽成独立 `KNNHeap.hpp`）
+>   与 `super_lio.h` 两处模板参数），两处 `getTopK` 提前退出判断同步 `count == 8`
+> - `update_worst()`（exp 中函数名仍为 `update_worst_unrolled()`）改为按 K 通用比较。旧实现硬编码
+>   `dist2_[0..4]`，容量提到 8 后第 6~8 槽的远点无法被剔除、`max_dist2_` 被低估，
+>   堆里留的不是全局最近 K 个（该缺陷在 exp 分支由 M.35 先行修复，生产随之对齐）
+> - `calc_plane_coeff` 改为 8 点定长缓冲 + `A.topLeftCorner(N,3).colPivHouseholderQr()`，
+>   支持任意 N≤8（原 `N==5` 才走 QR，其它情况只用前 4 点）；`super_lio_reloc.cpp` 同名函数同步
+> - `make` 模板参数变了，**车上部署必须全量 rebuild**，只换 yaml 不生效
+>
+> `sub_div=4` 的实现要点：`kMaxSlots = 64`，`sub_bits_=2`
+> （`local_idx = dx | dy<<2 | dz<<4`），搜索走 `getTopK_sub4`（邻居粗体素全槽扫描，
+> 无子槽预计算表），早退阈值按 `hknn_thr_scale_ = (resolution_/0.5)²` 折算
+> （`orders_min_dis2` 是按 res=0.5 标定的米制常数）。sub_div=2 仍走原 `getTopK`，
+> 行为逐位不变。
+>
+> Trust 姿态阈值：`lio.observe.trust_jump_rot_max` 15 → **25 deg**。sub4+K8 在楼梯边缘会把
+> 相邻面混入平面拟合，产生 16~19 deg 的单帧姿态修正（位移仅 5~8 cm，修正本身正确），
+> 15 deg 会把这类正确修正当成跳变否决 —— drone 闭环 1.17 m → 4.69 m。放宽到 25 deg 后
+> 闭环 0.90 m、yaw 1.04 deg。位置阈值仍是 `trust_jump_max=1.0` 兜底。
+>
+> 耗时（10 Hz，单帧预算 100 ms；`lio.eva.timer` 的 `[Observe]` 均值/最大）：
+> - sub_div=2：K=5 2.83~3.02 ms（max 17.9~22.0）→ K=8 4.55 ms（max 24.4），约 +1.5 ms / +55%
+> - sub_div=4：Observe 主导项是 64 槽全扫而非 K——noshell 10~18 ms（max 43），
+>   MapInsert 0.27~0.57 ms（max 2.5）
+>
+> 三 bag 复验（sub_div=4 + K=8 + rot 25）：
+>
+> | bag | 时长 | 里程 | 闭环/终点 | 其它 |
+> | --- | --- | --- | --- | --- |
+> | `livox_record_drone` | 465.9 s | 300.8 m | 3D **0.904 m (0.301%)** | 竖直 −0.090 m、转角 1.174°、yaw −1.037° |
+> | `livox_record_drone_1f` | 639.6 s | 776.1 m | 终点 2.87 m | z∈[−2.80, 1.95]，旧 K=5 为 4.19 m |
+> | `livox_record_noshell` | 674.4 s | 704.3 m | 终点 2.05 m | z∈[−0.95, 5.76]，原 sub4+K5 在 330 s 发散 |
+>
+> 三 bag 均 0 次 Trust 否决、0 个相邻帧位移 > 0.5 m。
+>
+> 路径自适应：`lio.map.save_map_dir` 支持 `~` / `$HOME` 前缀（`ROSWrapper` 装载时展开），
+> 配置从 `/home/cat/slam_data/pcd` 改为 `"~/slam_data/pcd"`，异机无需改 yaml。
+
 
 <div align="center">
   <p>

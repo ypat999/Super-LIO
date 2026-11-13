@@ -2,7 +2,8 @@
   ros__parameters:
     lio.map.save_map: true
     lio.map.if_filter: false
-    lio.map.save_map_dir: "/home/cat/slam_data/pcd"
+    # 支持 "~" / "$HOME" 前缀（ROSWrapper 装载时展开），配置随机器走，不写死 /home/<user>
+    lio.map.save_map_dir: "~/slam_data/pcd"
     lio.map.map_name: "test.pcd"
     lio.map.ds_size: 0.25
     lio.map.save_interval: 50
@@ -135,7 +136,11 @@
     lio.observe.trust_guard_en: true
     # 单帧允许的位置/姿态跳变（10Hz、2m/s 正常帧间位移约 0.2m，留 5 倍余量）
     lio.observe.trust_jump_max: 1.0
-    lio.observe.trust_jump_rot_max: 15.0
+    # 姿态阈值 25deg：sub_div=4 + K=8 在楼梯边缘会把相邻面混入平面拟合，
+    # 产生 16~19deg 的单帧姿态修正（位移仅 5~8cm，修正本身正确）。
+    # drone 实测 15deg 阈值会误否决这类正确修正（闭环 4.69m），
+    # 放宽到 25deg 后闭环 0.90m、yaw 1.04deg；位置阈值仍是 1m 兜底。
+    lio.observe.trust_jump_rot_max: 25.0
     # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
     lio.observe.trust_corr_max: 0.5
     lio.observe.trust_corr_rot_max: 10.0
