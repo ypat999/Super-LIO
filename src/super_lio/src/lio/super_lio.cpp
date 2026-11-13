@@ -633,6 +633,9 @@ void SuperLIO::stateProcess(){
 
     checkPoseTrust(sys_pred, cov_pred);
 
+    // 外部传感器约束注入（默认空实现，未 override 时零影响）
+    ExternalObserve();
+
     if(g_time_eva){
       time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
       if(!lost_ || g_lost_map_en){

@@ -56,6 +56,15 @@ public:
   /// 与 process 线程解耦，因此即使 process 卡在持锁区里也能照常输出现场状态。
   void watchdogCheck();
 
+  /// 外部传感器观测注入钩子（视觉等）：默认空实现。
+  /// 派生类 override 后，在每帧雷达观测（含信任域裁决）之后、建图与输出之前
+  /// 调用 eskf()->UpdateObserveFull(...) 写回约束。
+  /// 未 override 时整条链路与纯 LIO 逐位一致。
+  virtual void ExternalObserve() {}
+
+  /// 供派生类/外部调用者访问滤波器；线程安全由 ESKF 内部递归锁保证。
+  ESKF::Ptr eskf() const { return kf_; }
+
 protected:
   struct OutputData {
     NavState state;

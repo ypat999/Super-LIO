@@ -414,6 +414,104 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
 }
 
 
+/// 通用 m 维外部观测：与 UpdateObserve 同一套迭代信息滤波数学，
+/// 唯一区别是 H/r/Rm 由外部给定（列序与 18 维误差状态一致），
+/// 不再把观测硬编码在状态 0-5 上。用于视觉等传感器写回 ESKF。
+bool ESKF::UpdateObserveFull(const ESKF::ObsFuncFull& obs) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  SO3 R_pred = R_;
+  V3  p_pred = p_;
+  V3  v_pred = v_;
+  V3  bg_pred = bg_;
+  V3  ba_pred = ba_;
+  V3  g_pred = g_;
+
+  M18 P_pred = P_;
+  M18 Y_pred = P_pred.inverse();
+
+  M18 Qk = M18::Zero();
+  M18 K_x = M18::Zero();
+
+  need_converge_ = false;
+
+  int used_iters = 0;
+  for (int iter = 0; iter < options_.num_iterations_; ++iter) {
+    used_iters = iter + 1;
+    if (iter > 2) {
+      need_converge_ = true;
+    }
+
+    Eigen::MatrixXd H;
+    Eigen::VectorXd r;
+    Eigen::MatrixXd Rm;
+    obs(GetKFState(), H, r, Rm);
+
+    const int m = static_cast<int>(r.size());
+    if (m <= 0 || H.rows() != m || H.cols() != 18 ||
+        Rm.rows() != m || Rm.cols() != m) {
+      LOG(WARNING) << "[ESKF] UpdateObserveFull 维度非法 (m=" << m
+                   << ", H=" << H.rows() << "x" << H.cols()
+                   << ", R=" << Rm.rows() << "x" << Rm.cols() << ")，跳过本次注入";
+      return false;
+    }
+
+    V18 dx_prior = V18::Zero();
+    dx_prior.template block<3,1>(0,0)  = (R_pred.inverse() * R_).log_vee();
+    dx_prior.template block<3,1>(3,0)  = p_  - p_pred;
+    dx_prior.template block<3,1>(6,0)  = v_  - v_pred;
+    dx_prior.template block<3,1>(9,0)  = bg_ - bg_pred;
+    dx_prior.template block<3,1>(12,0) = ba_ - ba_pred;
+    dx_prior.template block<3,1>(15,0) = g_  - g_pred;
+
+    M18 G_prior = M18::Identity();
+    M3 J_prior = M3::Identity()
+               - 0.5 * SO3::hat(dx_prior.template block<3,1>(0,0));
+    G_prior.template block<3,3>(0,0) = J_prior;
+
+    dx_prior = G_prior * dx_prior;
+
+    // 信息形式：H^T R^{-1} H 与 H^T R^{-1} r
+    const Eigen::MatrixXd Rinv = Rm.inverse();
+    M18 HTRH = (H.transpose() * Rinv * H).cast<scalar>();
+    V18 b    = (H.transpose() * Rinv * r).cast<scalar>();
+
+    M18 G_inv = M18::Identity();
+    G_inv.template block<3,3>(0,0) = J_prior.inverse();
+    M18 Yk = G_inv.transpose() * Y_pred * G_inv + HTRH;
+    Qk = Yk.inverse();
+
+    K_x = Qk * HTRH;
+    dx_ = Qk * b + (K_x - M18::Identity()) * dx_prior;
+
+    Update();
+
+    last_dx_inf_ = dx_.lpNorm<Eigen::Infinity>();
+    last_qk_finite_ = Qk.allFinite();
+
+    if (dx_.lpNorm<Eigen::Infinity>() < options_.quit_eps_ && iter > 0) {
+      break;
+    }
+  }
+  last_iters_ = used_iters;
+
+  P_ = Qk;
+
+  M18 G_reset = M18::Identity();
+  M3 J_reset = M3::Identity()
+             - 0.5 * SO3::hat(dx_.template block<3,1>(0,0));
+  G_reset.template block<3,3>(0,0) = J_reset;
+
+  P_ = G_reset * P_ * G_reset.transpose();
+  P_ = 0.5 * (P_ + P_.transpose());
+
+  dx_.setZero();
+
+  last_obs_time_ = current_obs_time_;
+  return true;
+}
+
+
 void ESKF::ResetIMUIntegration() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   forward_time_ = -1;

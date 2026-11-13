@@ -62,6 +62,17 @@ public:
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
 
+  /// 通用 m 维外部观测（视觉等）：与上面 6 维路径完全独立，既有路径逐位不变。
+  ///   H : m×18，误差状态列序 R(0-2) p(3-5) v(6-8) bg(9-11) ba(12-14) g(15-17)
+  ///   r : m×1，残差 z ⊖ h(x)（r=0 表示与当前预测一致）
+  ///   Rm: m×m，观测噪声协方差
+  /// 回调在每次迭代内被调用，可用当前状态重算 H/r（视觉旋转残差依赖 bg）。
+  using ObsFuncFull = std::function<void(const KFState& kf_state,
+                                         Eigen::MatrixXd& H,
+                                         Eigen::VectorXd& r,
+                                         Eigen::MatrixXd& Rm)>;
+  bool UpdateObserveFull(const ObsFuncFull& obs);
+
   double GetTime() const {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     return current_time_;
