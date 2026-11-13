@@ -60,26 +60,23 @@ public:
           worst_ = insert_idx;
         }
       } else {
-        update_worst_unrolled();
+        update_worst();
       }
     }
   }
 
 private:
-  inline void update_worst_unrolled() {
-    float d0 = dist2_[0], d1 = dist2_[1], d2 = dist2_[2], d3 = dist2_[3], d4 = dist2_[4];
-    
-    uint8_t idx01 = d0 > d1 ? 0 : 1;
-    float max01 = d0 > d1 ? d0 : d1;
-    
-    uint8_t idx23 = d2 > d3 ? 2 : 3;
-    float max23 = d2 > d3 ? d2 : d3;
-    
-    uint8_t idx0123 = max01 > max23 ? idx01 : idx23;
-    float max0123 = max01 > max23 ? max01 : max23;
-    
-    worst_ = max0123 > d4 ? idx0123 : 4;
-    max_dist2_ = max0123 > d4 ? max0123 : d4;
+  inline void update_worst() {
+    uint8_t worst = 0;
+    float max_d = dist2_[0];
+    for (int i = 1; i < K; ++i) {
+      if (dist2_[i] > max_d) {
+        max_d = dist2_[i];
+        worst = static_cast<uint8_t>(i);
+      }
+    }
+    worst_ = worst;
+    max_dist2_ = max_d;
   }
 
 public:
@@ -141,7 +138,7 @@ public:
   using Ptr = std::shared_ptr<OctVoxMap>;
   using KEY = Eigen::Vector3i;
   using Points = std::vector<Point, Eigen::aligned_allocator<Point>>;
-  using KNNHeapType = KNNHeap<5, Point>;
+  using KNNHeapType = KNNHeap<8, Point>;
   using OctVoxType = OctVox<Point>;
 
   struct Options {
@@ -426,7 +423,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
       else group_it+=data_size;
     }
 
-    if (top_K.count == 5)
+    if (top_K.count == 8)
       if (top_K.max_dist2_ < orders_min_dis2[group_idx]){
         break;
       }
@@ -498,7 +495,7 @@ void OctVoxMap<Point, Scalar>::getTopK_sub4(const Point& point, KNNHeapType& top
       }
     }
 
-    if (top_K.count == 5)
+    if (top_K.count == 8)
       if (top_K.max_dist2_ < orders_min_dis2[group_idx] * hknn_thr_scale_) {
         break;
       }

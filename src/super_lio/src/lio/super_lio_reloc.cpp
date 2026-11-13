@@ -40,28 +40,16 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
 
 namespace LI2Sup{
 
-inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
+inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd)
 {
-  Eigen::Vector3d normvec;
-  if (N == 5) {
-    Eigen::Matrix<double, 5, 3> A;
-    Eigen::Matrix<double, 5, 1> b;
-    for (int j = 0; j < 5; j++) {
-      A.row(j) = points[j].cast<double>();
-      b(j) = -1.0;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
+  Eigen::Matrix<double, 8, 3> A = Eigen::Matrix<double, 8, 3>::Zero();
+  Eigen::Matrix<double, 8, 1> b = Eigen::Matrix<double, 8, 1>::Zero();
+  for (int j = 0; j < N; j++) {
+    A.row(j) = points[j].cast<double>();
+    b(j) = -1.0;
   }
-  else {
-    Eigen::Matrix<double, 4, 3> A;
-    Eigen::Matrix<double, 4, 1> b;
-
-    for (int j = 0; j < N; j++) {
-      A.row(j) = points[j].cast<double>();
-      b(j) = -1.0;
-    }
-    normvec = A.colPivHouseholderQr().solve(b);
-  }
+  Eigen::Vector3d normvec =
+      A.topLeftCorner(N, 3).colPivHouseholderQr().solve(b.head(N));
 
   double n = normvec.norm();
   if (n < 1e-6f) return false;

@@ -115,7 +115,7 @@ protected:
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
-  using KNNHeapType = KNNHeap<5, BASIC::V3>;
+  using KNNHeapType = KNNHeap<8, BASIC::V3>;
   StateFn state_fn_;
   ESKF::Ptr kf_;
   OctVoxMapType::Ptr ivox_;
