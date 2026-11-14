@@ -55,6 +55,10 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: 0.25
+    # M.40 参数定稿：细分 4 + 平面拟合邻域 K=8（与 no-de-check 生产分支对齐，
+    # 显式写出避免依赖代码默认值；代码里 sub_div 上限 4、K 上限 8）。
+    lio.hash_map.sub_div: 4
+    lio.hash_map.plane_knn_k: 8
 
     lio.kf.kf_type: 0
     lio.kf.kf_max_iterations: 4
@@ -113,6 +117,11 @@
     # 注意：不要与本文件外的"A 线"（hub0.20 + imu_na 0.3 + nbg 3e-3 + 法向权重 σ0.035）
     # 混用——A 线只在螺旋楼梯上最优，在 1f 上明显变差，且对参数极敏感。
     lio.observe.huber_delta_base: 0.20
+    # M.40 1f 的 na×nw 2×2 归因：normal_weight 保持关闭。na=0.01 时开它只压水平
+    # （1.352→0.745 m），竖直反而多漏 1.0 m（−1.761→−2.768 m），end3D 2.220→2.867；
+    # na=0.3 时该开关在 1f 上三个轴 |Δ|≤0.13 m（几乎无效）。
+    lio.observe.normal_weight_en: false
+    lio.observe.normal_sigma: 0.05
 
     # ======================== 坏帧护栏 ========================
     # 处理停顿会让 IMU 缓冲欠载，去畸变用残缺轨迹把点云扭坏，配准一次跳变

@@ -6401,3 +6401,98 @@ M.39 【2026-11-11 ~ 11-14】K=5→8 修复进生产 + sub_div=4 全量复验 + 
    python3 exp/odom_recorder.py --out <run_dir>/odom.csv
    python3 exp/loop_error.py --bag /home/ywj/slam_data/livox_record_drone <run_dir>
    # 单帧耗时看 [Observe]/[MapInsert] 的 avg/max（lio.eva.timer）
+
+================================================================================
+M.40  2026-11-14  E-1~E-5 执行结果：trust 正向核验、seq2 抗伪观测、Observe 优化、
+      1f 的 na×nw 2×2 归因（本轮唯一改变生产判断的部分）
+================================================================================
+■ 0. 口径
+   全部为回放；除 E-4 外均为整包。基线：filter_rate 6 / voxel 0.25 / sub_div 4 /
+   plane_knn_k 8 / trust_jump_rot_max 25 / huber_delta_base 0.20 / imu_nbg 0.003 /
+   degeneracy_detect_en=true。
+   A 线 = imu_na 0.3 + normal_weight_en(true, σ=0.035)；
+   B 线 = imu_na 0.01 + normal_weight_en(false, σ=0.05，关闭时无关)。
+   判据：端点 3D/水平/竖直差、双圈切分（离开起点 >10 m 后首次回到 1 m 内）、
+   逐帧最近邻配对（|dt|≤20 ms）、debug.csv 的 deg_cond、node.log 的 [Trust]。
+
+■ 1. E-2：trust_jump_rot_max=25 的正向核验（M.39 §8 遗留第 1 条）
+   两 bag（1f / noshell）× 两阈值（25 / 15），共 4 跑：
+     results/m40_e2_1f_r25、m40_e2_1f_r15、m40_e2_ns_r25、m40_e2_ns_r15
+   姿态修正角 corr_r = |log(R_post·R_pred^T)| 分位：
+     1f    p50 0.15° / p95 0.32° / max 0.67°
+     ns    p50 0.11° / p95 0.26° / max 0.70°
+   分档 1~5° / 5~15° / 15~25° / >25° **全部 0 帧**；node.log [Trust] 0 条。
+   r25 与 r15 逐帧配对：位置差 p50 = p95 = max = 0.000 m（ns 的 odom md5 相同；
+   1f 仅 recorder 采样行数 6252 vs 6375 不同）。
+   ⇒ 本数据上 15° 与 25° 完全等价，25° 不会漏掉真实大修正；M.39 的 C-3 有余量。
+
+■ 2. E-3：seq2 抗伪观测（ghost 注入）
+   construction_seq2_d2（base）vs construction_seq2_ghost_d2（注入 2.6 m 伪点），
+   595.1 s、398.4 → 401.0 m：
+     end3D 0.026 / 0.028 m；水平 0.023 / 0.024 m；dz +0.012 / +0.016 m；
+     dyaw 20.70° / 20.70°（完全一致）
+   ⇒ 伪点注入只让终点动 2 mm、姿态不变 ⇒ 当前关联/鲁棒核不吃这类虚假观测。
+
+■ 3. E-4：Observe 槽扫描优化（noshell 前 330 s 截断回归）
+   同一 git_head 5f9faf9、同一参数、同一 bag 的两版二进制：
+     results/m40_e4_base（优化前）/ m40_e4_opt（优化后）
+   轨迹逐点一致（end3D 均为 12.065 m；截断段非闭环，该绝对数不作精度结论）。
+   [Observe] avg 9.55 → 6.89 ms（−28%），max 12.28 → 11.11 ms。
+   ⇒ 优化是纯性能改动，不改变结果。
+
+■ 4. E-5：1f 的 na × nw 2×2 归因（1f 全量 6397 帧 / 约 777 m / 双圈）
+   四组（A 复用 m40_e2_1f_r25，B/C/D 为本轮新跑）：
+     A  na 0.30 / nw on   end3D 3.071  水平 1.458  竖直 −2.703  dyaw −1.71°  777.2 m / 625.1 s
+     B  na 0.01 / nw off  end3D 2.220  水平 1.352  竖直 −1.761  dyaw −1.46°  774.5 m / 637.4 s
+     C  na 0.01 / nw on   end3D 2.867  水平 0.745  竖直 −2.768  dyaw −1.40°  774.1 m / 637.4 s
+     D  na 0.30 / nw off  end3D 3.129  水平 1.338  竖直 −2.828  dyaw −1.60°  777.8 m / 637.7 s
+   单因素效应（m）：
+     na 0.3→0.01 @ nw on   Δend −0.20  Δ水平 −0.71  Δ竖直 −0.07（略差）
+     na 0.3→0.01 @ nw off  Δend −0.91  Δ水平 +0.01（无效）  Δ竖直 +1.07
+     nw on→off @ na 0.30   Δend +0.06  Δ水平 −0.12  Δ竖直 −0.13（几乎无效）
+     nw on→off @ na 0.01   Δend −0.65  Δ水平 +0.61  Δ竖直 +1.01
+   deg_cond（>150 为退化）：
+     A p50 252.2，>150 占 85.9%；B p50 236.1，83.5%；C p50 255.4，85.8%；D p50 236.6，83.6%
+     ⇒ 1f 全程重度退化，四组无档位差异。
+   双圈切分（首圈回起点，水平 / dz）：
+     A 360.6 s：0.948 / −0.332    B 360.2 s：0.988 / −0.166    D 360.3 s：0.998 / −0.140
+     C 297.2 s 为误切（1.42 m/s，明显快于其余组 1.19 m/s），该行首圈数字不采用。
+   结论：
+     C-6  na 与 nw 强交互，不存在全项最优组合。na 只在 nw=on 时压水平
+          （1.458→0.745）；nw=off 只在 na=0.01 时压竖直（−2.768→−1.761）；
+          na=0.3 时 nw 开关三个轴的 |Δ|≤0.13 m（竖直被 IMU 姿态钉住，扫描侧无余地）。
+     C-7  1f 上竖直是主项（|dz| 1.76~2.83 m），水平只有 0.75~1.46 m。
+          用竖直换水平不划算：C 比 B 水平好 0.61 m，但竖直差 1.01 m、end3D 差 0.65 m。
+     C-8  误差注入时刻不对称：水平约 2/3 在第 1 圈就长出来（首圈 0.95~1.0 m @360 s），
+          第 2 圈只加 0.35~0.5 m；竖直相反，第 1 圈只有 −0.14~−0.33 m，
+          第 2 圈再漏 −1.4~−2.5 m，末端四组统一额外下坠约 1.5 m。
+          ⇒ 水平是首圈一次性偏置，竖直是第二圈持续泄漏，必须分开治。
+     C-9  复核 M.39 C-5：1f 水平残差与 na/nw 基本无关（0.75~1.46 m 区间内互换），
+          再次指向"缺观测"，不是参数问题。
+     C-10 生产口径仍取 B 线（end3D 2.220，竖直最小）；A/D（na 0.3）在 1f 上 end3D 均 >3 m。
+   ※ B 组尚未做重复性复跑，2.22 m 的组间噪声量级未知（见 §7）。
+
+■ 5. 参数定稿（exp 与 no-de-check 两分支一致）
+   imu_na 0.01 / imu_ng 0.1 / imu_nbg 0.003 / huber_delta_base 0.20 /
+   trust_jump_rot_max 25 / sub_div 4 / plane_knn_k 8 / normal_weight_en false
+   （no-de-check 分支无 normal_weight 特性，天然等价于 off）。
+   no-de-check 远端已含 4cf20ed（sub_div 参数化）与 755fb3f（K 5→8）。
+   exp 分支把 sub_div / plane_knn_k / normal_weight_en 显式写进
+   src/super_lio/config/livox_360_drone.yaml，避免依赖代码默认值。
+
+■ 6. 本轮资产
+   results/m40_e2_1f_{r25,r15}、results/m40_e2_ns_{r25,r15}      E-2
+   results/m40_e3_{base,ghost}                                    E-3
+   results/m40_e4_{base,opt}                                      E-4
+   results/m40_e5_1f_bline、m40_e5_1f_c_na01_nwon、
+   results/m40_e5_1f_d_na03_nwoff（A 组复用 m40_e2_1f_r25）       E-5
+   脚本：exp/e5_sum.py、e5_laps.py、e5_cmp.py、e5_cond.py、e5_zprof.py、p2_trust.py
+   复跑：exp/lane_e5.sh（B）、exp/lane_e5b.sh（C、D，串行避免饿死播包）
+
+■ 7. 遗留
+   - B 组重复性复跑（同参再跑 1 次），确认 end3D 2.22 m 的噪声量级；
+     否则 0.2~0.3 m 级别的组间差异不可信。
+   - 竖直第 2 圈泄漏需要新增观测（地面/楼层平面先验、回环、SC-PGO），
+     属机制改动，不是参数；M.21-5 的判断未变。
+   - 水平首圈偏置对应待采的 B6（1f 左圈 1/4、1/2、3/4 停车分段），
+     是唯一能切段定位该偏置的现有手段。
