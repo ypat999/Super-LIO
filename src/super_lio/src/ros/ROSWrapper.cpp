@@ -205,6 +205,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << "[Param] hash_map.sub_div: " << g_map_sub_div
             << (g_map_sub_div == 4 ? " (4×4×4=64 slots)" : " (2×2×2=8 slots)");
 
+  // 平面拟合邻域大小 K：KNNHeap 数组容量固定 8（模板参数），这里钳到 [4, 8]
+  node.declare_parameter<int>("lio.hash_map.plane_knn_k", 8);
+  node.get_parameter("lio.hash_map.plane_knn_k", g_plane_knn_k);
+  if (g_plane_knn_k < 4) g_plane_knn_k = 4;
+  if (g_plane_knn_k > 8) g_plane_knn_k = 8;
+  LOG(INFO) << "[Param] hash_map.plane_knn_k: " << g_plane_knn_k << " (4..8)";
+
   // kf
   node.declare_parameter<int>("lio.kf.kf_type", 0);
   node.get_parameter("lio.kf.kf_type", g_kf_type);
@@ -237,9 +244,17 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.huber_delta_scale", 0.003);
   node.get_parameter("lio.observe.huber_delta_scale", g_huber_delta_scale);
 
+  // 法向质量加权：按平面拟合残差降权，默认关（= 原行为）
+  node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
+  node.get_parameter("lio.observe.normal_weight_en", g_normal_weight_en);
+  node.declare_parameter<double>("lio.observe.normal_sigma", 0.05);
+  node.get_parameter("lio.observe.normal_sigma", g_normal_sigma);
+
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/normal_weight: en=" << g_normal_weight_en
+            << " sigma=" << g_normal_sigma << RESET;
 
   // 坏帧护栏
   node.declare_parameter<bool>("lio.observe.frame_gap_guard_en", true);
@@ -594,6 +609,14 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
         else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
         else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
+        else if (name == "lio.observe.normal_weight_en") g_normal_weight_en = p.as_bool();
+        else if (name == "lio.observe.normal_sigma") g_normal_sigma = p.as_double();
+        else if (name == "lio.hash_map.plane_knn_k") {
+          int k = p.as_int();
+          if (k < 4) k = 4;
+          if (k > 8) k = 8;
+          g_plane_knn_k = k;
+        }
         else if (name == "lio.kf.kf_max_iterations") g_kf_max_iterations = p.as_int();
         else if (name == "lio.kf.kf_quit_eps") g_kf_quit_eps = p.as_double();
       }

@@ -88,6 +88,11 @@ namespace LI2Sup{
   /// 4 = 4×4×4 = 64 槽（点位粒度 = 粗体素/4，内存约 ×8，搜索退化为整槽扫描）。
   extern int    g_map_sub_div;
 
+  /// 平面拟合邻域大小 K（4..8，默认 8）。
+  /// KNNHeap 的容量仍是模板参数 8（数组尺寸），这里只控制"填到几个算满"
+  /// 以及 getTopK 的提前退出判据，因此 K<8 时数组尾部保持 0 不参与。
+  extern int    g_plane_knn_k;
+
   /// kf
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;
@@ -158,6 +163,13 @@ namespace LI2Sup{
   /// 远处点测量噪声更大，需要更大的阈值避免误降权
   /// 推荐值: 0.003 (30m处阈值增加0.09m)
   extern double g_huber_delta_scale;
+
+  /// ===== 法向质量加权（实验 1，默认关 = 原行为）=====
+  /// 平面拟合残差 max|dist| 越大（平面越"脏"），该点观测权重越低：
+  ///   w *= 1 / (1 + (fit_res / g_normal_sigma)^2)
+  /// 权重按点缓存在帧内，首轮拟合算出，后续迭代沿用。
+  extern bool   g_normal_weight_en;
+  extern double g_normal_sigma;
 
   /// ===== 坏帧护栏 =====
   /// 处理停顿会让 imu_buffer_ 欠载（实测一帧 100 ms 的雷达只有 55 ms IMU 覆盖），

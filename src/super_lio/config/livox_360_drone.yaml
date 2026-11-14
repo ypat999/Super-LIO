@@ -56,6 +56,9 @@
     lio.hash_map.vox_resolution: 0.25
     # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
     lio.hash_map.sub_div: 4
+    # 平面拟合邻域大小 K（4..8）。K=8 是量产定稿值，显式写出避免依赖默认值；
+    # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）。
+    lio.hash_map.plane_knn_k: 8
 
     lio.kf.kf_type: 0
     lio.kf.kf_max_iterations: 4
@@ -153,3 +156,8 @@
     # 与 imu_na 0.01（R 矩阵收紧）配套。实测见 40-run 扫描：
     # 楼梯 1.896→1.599m、1f 园区 3.471→3.050m。代码默认仍 0.05，本 yaml 显式覆写。
     lio.observe.huber_delta_base: 0.20
+    # 法向质量加权：按平面拟合残差 max|dist| 降权 w *= 1/(1+(fit_res/σ)²)。
+    # 保持关闭（量产 B 线定稿）：1f 实测开它只压水平（1.352→0.745 m），
+    # 竖直反而多漏 1.0 m（−1.761→−2.768 m），end3D 2.220→2.867 m。
+    lio.observe.normal_weight_en: false
+    lio.observe.normal_sigma: 0.05

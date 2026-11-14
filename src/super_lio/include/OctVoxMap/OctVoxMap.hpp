@@ -9,6 +9,7 @@
 #include <memory>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 #include <execution>
 #include <filesystem>
 #include <unordered_map>
@@ -44,7 +45,9 @@ public:
   std::array<Point, K> points_;
 
   inline void try_insert(float dist2, const Point& pt) {
-    const bool not_full = (count < K);
+    // 邻域大小 K 提到运行时（g_plane_knn_k）：模板参数仍决定数组容量，
+    // 这里夹到容量内，参数传错最多退化为"按容量运行"，不会越界。
+    const bool not_full = (count < eff_k());
     const bool should_insert = not_full || (dist2 < max_dist2_);
     
     if (should_insert) {
@@ -81,6 +84,9 @@ private:
 
 public:
   inline float max_dist2() const { return max_dist2_; }
+  static constexpr int capacity() { return K; }
+  /// 运行时生效的邻域大小（受参数 g_plane_knn_k 与模板容量 K 共同决定）
+  inline int eff_k() const { return std::min(g_plane_knn_k, K); }
 };
 
 
@@ -423,7 +429,7 @@ void OctVoxMap<Point, Scalar>::getTopK(const Point& point, KNNHeapType& top_K) c
       else group_it+=data_size;
     }
 
-    if (top_K.count == 8)
+    if (top_K.count == static_cast<uint8_t>(top_K.eff_k()))
       if (top_K.max_dist2_ < orders_min_dis2[group_idx]){
         break;
       }
@@ -495,7 +501,7 @@ void OctVoxMap<Point, Scalar>::getTopK_sub4(const Point& point, KNNHeapType& top
       }
     }
 
-    if (top_K.count == 8)
+    if (top_K.count == static_cast<uint8_t>(top_K.eff_k()))
       if (top_K.max_dist2_ < orders_min_dis2[group_idx] * hknn_thr_scale_) {
         break;
       }

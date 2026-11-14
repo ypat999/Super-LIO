@@ -65,6 +65,9 @@ namespace LI2Sup{
   /// 子体素细分（量产默认 4：楼梯/园区细通道点位粒度 0.0625 m）
   int    g_map_sub_div = 4;
 
+  /// 平面拟合邻域大小（默认 8 = 当前量产行为，装载时钳到 [4, 8]）
+  int    g_plane_knn_k = 8;
+
   /// kf
   int g_kf_type = 1;                // 1: ESKF, 2: InESKF
   int g_kf_max_iterations = 4;
@@ -113,6 +116,10 @@ namespace LI2Sup{
   double g_obs_weight = 1000.0;
   double g_huber_delta_base = 0.05;
   double g_huber_delta_scale = 0.003;
+
+  /// 法向质量加权（默认关 = 原行为；sigma 是残差参考尺度，单位 m）
+  bool   g_normal_weight_en = false;
+  double g_normal_sigma = 0.05;
 
   /// 坏帧护栏（默认开启 skip 模式）
   bool   g_frame_gap_guard_en = true;

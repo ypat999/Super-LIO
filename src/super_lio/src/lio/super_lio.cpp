@@ -44,7 +44,10 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
 namespace LI2Sup{
 
 /// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
-inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd)
+/// fit_res（可选出参）：参与拟合点的最大绝对残差，
+/// 供法向质量加权（g_normal_weight_en）判断平面"脏不脏"。
+inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd,
+                             double* fit_res = nullptr)
 {
   Eigen::Matrix<double, 8, 3> A = Eigen::Matrix<double, 8, 3>::Zero();
   Eigen::Matrix<double, 8, 1> b = Eigen::Matrix<double, 8, 1>::Zero();
@@ -63,12 +66,15 @@ inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::
   abcd[0] = normvec[0];
   abcd[1] = normvec[1];
   abcd[2] = normvec[2];
-  
+
+  double max_abs_dist = 0.0;
   for (int i = 0; i < N; ++i) {
     const V3& p = points[i];
     auto dist = abcd[0] * p(0) + abcd[1] * p(1) + abcd[2] * p(2) + abcd[3];
+    max_abs_dist = std::max(max_abs_dist, static_cast<double>(std::abs(dist)));
     if (std::abs(dist) > g_plane_fit_threshold) return false;
   }
+  if (fit_res) *fit_res = max_abs_dist;
   return true;
 }
 
@@ -1445,8 +1451,11 @@ void SuperLIO::Observe(){
   }
   
   static std::vector<float> _lengths;
+  // 法向质量权重：首轮按平面拟合残差算一次，后续迭代沿用（默认 1.0 = 不带权）
+  static std::vector<float> _w_quality;
   points_body_v3_.resize(ptsize);
   _lengths.resize(ptsize);
+  _w_quality.assign(ptsize, 1.0f);
 
   effect_knn_num_ = ptsize;
   // Don't iota effect_knn_idxs_ yet — first iteration uses direct indexing
@@ -1483,8 +1492,14 @@ void SuperLIO::Observe(){
           continue;
         }
         effect_knn_mask_[idx] = true;
-        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx]);
+        double fit_res = 0.0;
+        effect_mask_[idx] = calc_plane_coeff(top_K.count, top_K.points_, abcd_vec_[idx], &fit_res);
         if(!effect_mask_[idx]) continue;
+        if(g_normal_weight_en){
+          const float q = static_cast<float>(fit_res) /
+                          static_cast<float>(std::max(1e-3, g_normal_sigma));
+          _w_quality[idx] = 1.0f / (1.0f + q * q);
+        }
 
         auto& abcd = abcd_vec_[idx];
         scalar error;
@@ -1501,8 +1516,9 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        const float w_base = (abs_error <= huber_delta) ? g_obs_weight
+                                                       : g_obs_weight * huber_delta / abs_error;
+        const float w = g_normal_weight_en ? w_base * _w_quality[idx] : w_base;
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }
@@ -1551,8 +1567,9 @@ void SuperLIO::Observe(){
         // 距离自适应 Huber 核：残差超过阈值时线性降权，防止静止震荡
         const float huber_delta = g_huber_delta_base + g_huber_delta_scale * _lengths[idx];
         const float abs_error = std::abs(error);
-        const float w = (abs_error <= huber_delta) ? g_obs_weight
-                                                    : g_obs_weight * huber_delta / abs_error;
+        const float w_base = (abs_error <= huber_delta) ? g_obs_weight
+                                                       : g_obs_weight * huber_delta / abs_error;
+        const float w = g_normal_weight_en ? w_base * _w_quality[idx] : w_base;
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
       }
