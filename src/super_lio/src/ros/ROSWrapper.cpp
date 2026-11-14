@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 #ifdef LIVOX_SUPPORT
 #include "livox_ros_driver2/msg/custom_msg.hpp"
@@ -972,6 +973,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     time_begin = min_time;
   } else if (has_time && g_lidar_type != LID_TYPE::GAZEBO) {
     // Read first valid point's time as reference
+    bool ref_found = false;
     for (size_t i = 0; i < std::min(num_points, size_t(10)); ++i) {
       float x = read_float(i, off_x);
       float y = read_float(i, off_y);
@@ -990,8 +992,26 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
           uint64_t t; memcpy(&t, data_ptr + i * point_step + off_time, sizeof(uint64_t));
           time_begin = static_cast<double>(t);
         }
+        ref_found = true;
         break;
       }
+    }
+    // 兜底：若前 10 个点全为无效点（NaN/inf），参考时间仍为 0，
+    // 逐点偏移会退化成裸时间戳（≈1.79e18 ns → 数十亿秒），
+    // 使 end_time 远离 IMU 时间轴、lidar_buf 队首堵死（frame_num 恒 0）。
+    // 这里整帧扫最小时间戳作为参考，保证坏帧也能推进。
+    if (!ref_found) {
+      double mn = std::numeric_limits<double>::max();
+      for (size_t i = 0; i < num_points; ++i) {
+        double t = 0.0;
+        if (time_type == 2) { memcpy(&t, data_ptr + i * point_step + off_time, sizeof(double)); }
+        else if (time_type == 1) { float ft; memcpy(&ft, data_ptr + i * point_step + off_time, sizeof(float)); t = static_cast<double>(ft); }
+        else if (time_type == 3) { uint32_t ut; memcpy(&ut, data_ptr + i * point_step + off_time, sizeof(uint32_t)); t = static_cast<double>(ut); }
+        else if (time_type == 4) { uint64_t ut; memcpy(&ut, data_ptr + i * point_step + off_time, sizeof(uint64_t)); t = static_cast<double>(ut); }
+        else { continue; }
+        if (std::isfinite(t) && t < mn) mn = t;
+      }
+      if (mn < std::numeric_limits<double>::max()) time_begin = mn;
     }
   }
 
@@ -1001,7 +1021,14 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   auto read_offset_time = [&](size_t k) -> double {
     if (has_time) {
       switch (time_type) {
-        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double)); return t - time_begin; }
+        case 2: { double t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(double));
+          // Livox 的 FLOAT64 逐点时间是**绝对时间戳（纳秒）**（实测 ≈1.79e18），
+          // Ouster 的 FLOAT64 逐点时间是 0..1e8 的相对纳秒。
+          // 原实现直接相减当秒用，end_time 会被放大成天文数字导致 sync 卡死；
+          // 这里统一按纳秒换算到秒（|t|>1e12 用于兜住 32 位时间被误当 FLOAT64 的情况）。
+          const double rel = t - time_begin;
+          if (g_lidar_type == LID_TYPE::OUSTER || std::fabs(t) > 1e12) return rel * 1e-9;
+          return rel; }
         case 1: { float t; memcpy(&t, data_ptr + k * point_step + off_time, sizeof(float));
           if (g_lidar_type == LID_TYPE::VELO16 || g_lidar_type == LID_TYPE::VELO32) return static_cast<double>(t);
           else return static_cast<double>(t) - time_begin; }

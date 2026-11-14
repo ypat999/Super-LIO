@@ -16,12 +16,23 @@
     lio.ros.imu_topic: "/livox/imu"
     lio.ros.map_save_service_topic: "/map_save"
 
+    # 雷达类型：1=Livox（当前值），2=Ouster，0/其它=通用。
+    # 注意逐点时间字段的语义差异（ROSWrapper::stdMsgHandler）：
+    #   Livox FLOAT64 逐点时间是**绝对时间戳（ns，≈1.79e18）**；
+    #   Ouster FLOAT64 是 0..1e8 的相对 ns；Ouster UINT32 是相对 ns。
+    # 这些字段一律按 ns→s 换算，否则 end_time 会跑到天文数字，sync 永远等不到 IMU；
+    # 另外坏帧（前 10 个点全 NaN/inf）会整帧扫最小时间戳兜底 time_begin，
+    # 避免 lidar_buf 队首堵死（frame_num 恒 0）。改动雷达型号时不要回退这两处逻辑。
     lio.sensor.lidar_type: 1
     lio.sensor.blind: 0.5
     lio.sensor.maxrange: 100.0
+    # 降采样抽点率：每 N 个点取 1 个。6 是量产定稿值；
+    # 实测 6→1（不抽点，点量 ×6）闭环误差反而变差约 24%（计算耗时拖累去畸变与配准）。
     lio.sensor.filter_rate: 6
     lio.sensor.enable_filter_offset: false
     lio.sensor.enable_downsample: true
+    # 体素降采样尺寸(m)：0.25 是量产定稿值。
+    # 实测 0.15 / 0.20 相对 0.25 在本场景无收益（精度持平、耗时上升），不要再调小。
     lio.sensor.voxel_fliter_size: 0.25
 
     lio.sensor.intensity_filter_en: true
@@ -35,6 +46,12 @@
     lio.sensor.imu_type: 1
     # 连续时间加速度噪声 0.1 → 0.01；配合 lio.observe.huber_delta_base=0.20。
     # 40-run 扫描（6 bag × 16 配置）显示 R 系大场景最优（楼梯 1.599/4.672m、园区 3.050m）。
+    # imu_na 与 normal_weight 强耦合（1f 2×2 归因，end3D / 水平 / 竖直，单位 m）：
+    #   A: na0.3 + nw on  3.071 / 1.458 / −2.703   ← 螺旋楼梯最优（na 大=更信 IMU 平滑）
+    #   B: na0.01 + nw off 2.220 / 1.352 / −1.761  ← 量产定稿（当前配置）
+    #   C: na0.01 + nw on  2.867 / 0.745 / −2.768  ← 水平优先备选，竖直更差
+    #   D: na0.3 + nw off  3.129 / 1.338 / −2.828  ← 无优势，不推荐
+    # 选型：默认 B；仅纯螺旋楼梯、且能接受水平退化时切 A。
     lio.sensor.imu_na: 0.01
     lio.sensor.imu_ng: 0.1
     lio.sensor.imu_nba: 0.0001
@@ -57,7 +74,9 @@
     # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
     lio.hash_map.sub_div: 4
     # 平面拟合邻域大小 K（4..8）。K=8 是量产定稿值，显式写出避免依赖默认值；
-    # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）。
+    # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）；
+    # K=5 配合 sub_div=4 在长走廊还会失锁发散（commit 755fb3f）。
+    # 结论：K 保持 8，不要为了省算力调小。
     lio.hash_map.plane_knn_k: 8
 
     lio.kf.kf_type: 0
@@ -155,9 +174,18 @@
     # base 0.05→0.20 是把 Huber 切换点抬高、让正常残差留在二次区，
     # 与 imu_na 0.01（R 矩阵收紧）配套。实测见 40-run 扫描：
     # 楼梯 1.896→1.599m、1f 园区 3.471→3.050m。代码默认仍 0.05，本 yaml 显式覆写。
+    # 组合约束：A 线（na0.3 + nw on，σ=0.035）与 B 线（na0.01 + nw off）都用 0.20；
+    # 不要单独把 base 调回 0.05，那会与收紧后的 imu_na 失配（回到 1.896/3.471 档）。
     lio.observe.huber_delta_base: 0.20
     # 法向质量加权：按平面拟合残差 max|dist| 降权 w *= 1/(1+(fit_res/σ)²)。
     # 保持关闭（量产 B 线定稿）：1f 实测开它只压水平（1.352→0.745 m），
     # 竖直反而多漏 1.0 m（−1.761→−2.768 m），end3D 2.220→2.867 m。
+    # 推荐组合（与 imu_na 成对使用，单改开关会打架）：
+    #   A 线（螺旋楼梯）：imu_na=0.3 + normal_weight_en=true  （σ 用 0.035）
+    #   B 线（量产默认）：imu_na=0.01 + normal_weight_en=false（σ 不生效，保持 0.05）
+    #   C 组合（水平优先）：imu_na=0.01 + normal_weight_en=true（σ=0.05，竖直牺牲 ~1 m）
+    #   D 组合（na0.3 + nw off）实测最差，不推荐。
     lio.observe.normal_weight_en: false
+    # 仅在 normal_weight_en=true 时生效：σ 越小降权越激进。
+    # A 线实测用 0.035；C 组合沿用 0.05。两档都试过，差异不大，不要继续往小调（会砍掉正常平面）。
     lio.observe.normal_sigma: 0.05
