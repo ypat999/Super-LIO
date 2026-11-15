@@ -80,6 +80,7 @@ CALIB_TD_EN=${CALIB_TD_EN:-false}
 CALIB_TD_APPLY=${CALIB_TD_APPLY:-false}
 FRAME_GAP_GUARD_EN=${FRAME_GAP_GUARD_EN:-false}
 TRUST_GUARD_EN=${TRUST_GUARD_EN:-true}
+TRUST_JUMP_ROT_MAX=${TRUST_JUMP_ROT_MAX:-15.0}
 FRAME_GAP_MAX=${FRAME_GAP_MAX:-0.2}
 IMU_COVER_MAX=${IMU_COVER_MAX:-0.03}
 GUARD_MAX_CONSEC=${GUARD_MAX_CONSEC:-9}
@@ -190,6 +191,7 @@ sed -e "s|__OUTDIR__|$OUT|g" \
     -e "s|__IMU_COVER_MAX__|$IMU_COVER_MAX|g" \
     -e "s|__GUARD_MAX_CONSEC__|$GUARD_MAX_CONSEC|g" \
     -e "s|__TRUST_GUARD_EN__|$TRUST_GUARD_EN|g" \
+    -e "s|__TRUST_JUMP_ROT_MAX__|$TRUST_JUMP_ROT_MAX|g" \
     -e "s|__OUTPUT_MAP__|$OUTPUT_MAP|g" \
     -e "s|__MAP_REP_MODE__|$MAP_REP_MODE|g" \
     -e "s|__MAP_CLAMP_MU__|$MAP_CLAMP_MU|g" \
@@ -268,6 +270,7 @@ fi
   echo "imu_cover_max=$IMU_COVER_MAX"
   echo "guard_max_consecutive=$GUARD_MAX_CONSEC"
   echo "trust_guard_en=$TRUST_GUARD_EN"
+  echo "trust_jump_rot_max=$TRUST_JUMP_ROT_MAX"
   echo "output_map=$OUTPUT_MAP"
   echo "map_rep_mode=$MAP_REP_MODE"
   echo "map_clamp_mu=$MAP_CLAMP_MU"

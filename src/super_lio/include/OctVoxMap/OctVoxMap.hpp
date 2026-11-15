@@ -111,6 +111,7 @@ public:
     counts_.fill(UNINIT_MASK);
     points_[local_idx] = pt;
     counts_[local_idx] = 1;
+    occupied_mask_ = 1ULL << local_idx;
   }
 
   ~OctVox() {}
@@ -133,6 +134,7 @@ public:
   void AddPoint(const Point& pt, uint8_t local_idx) {
     uint8_t& count = counts_[local_idx];
     Point& stored_point = points_[local_idx];
+    occupied_mask_ |= 1ULL << local_idx;
     if(count == UNINIT_MASK) {
       stored_point = pt;
       count = 1;
@@ -174,12 +176,34 @@ public:
     return true;
   }
 
+  /// M.40 E-4：已占用槽位掩码，供 sub_div=4 搜索只遍历占用槽（跳过 64 次空槽判断）
+  uint64_t occupiedMask() const { return occupied_mask_; }
+
+  /// 调用方已确认掩码位：直接取点，不做 counts_ 判断
+  const Point& pointUnchecked(uint8_t local_idx) const { return points_[local_idx]; }
+
+  /// M.40 E-4：粗体素包围盒到查询点的距离下界平方（保守剪枝，> 第 K 距离即可整槽跳过）
+  float aabbDist2(const Point& q) const {
+    const float size = sub_res_ * static_cast<float>(1u << axis_bits_);
+    float d2 = 0.0f;
+    for (int k = 0; k < 3; ++k) {
+      const float lo = origin_[k];
+      const float hi = lo + size;
+      float d = 0.0f;
+      if (q[k] < lo) d = lo - q[k];
+      else if (q[k] > hi) d = q[k] - hi;
+      d2 += d * d;
+    }
+    return d2;
+  }
+
   static constexpr uint8_t UNINIT_MASK = 0x00;
 
   // 固定按 sub_div=4 的上限开槽：sub_div=2 只用前 8 槽（idx 0..7 连续，
   // 冷槽不触碰热路径缓存），亚字节级行为与旧版一致。
   std::array<uint8_t, kMaxSlots> counts_;
   std::array<Point, kMaxSlots> points_;
+  uint64_t occupied_mask_ = 0;      // 槽位占用位图（M.40 E-4）
 
   Point origin_ = Point(0, 0, 0);  // 粗体素最小角（用于推算子体素中心）
   float sub_res_ = 0.0f;
@@ -531,8 +555,6 @@ void OctVoxMap<Point, Scalar>::getTopK_sub4(const Point& point, KNNHeapType& top
     }
   }
 
-  Point __sub_point;
-
   for (int group_idx = 0; group_idx < group_idx_max_; ++group_idx) {
     const uint8_t* group_it = flat_search_ptrs_[group_idx];
     const uint8_t* group_end = flat_search_ptrs_[group_idx + 1];
@@ -553,11 +575,21 @@ void OctVoxMap<Point, Scalar>::getTopK_sub4(const Point& point, KNNHeapType& top
       }
       if (!voxel_ptr) continue;
 
-      for (uint8_t _i = 0; _i < sub_slots_; ++_i) {
-        if (voxel_ptr->getPoint(_i, __sub_point)) {
-          const float dist2 = (__sub_point - point).squaredNorm();
-          top_K.try_insert(dist2, __sub_point);
-        }
+      // M.40 E-4：保守剪枝——粗体素包围盒的距离下界已超过当前第 K 近距离时，
+      // 该体素任何槽位都不可能进入 top-K，整槽跳过（不改变结果，只省算力）。
+      if (top_K.count == static_cast<uint8_t>(top_K.eff_k()) &&
+          voxel_ptr->aabbDist2(point) > top_K.max_dist2_) {
+        continue;
+      }
+
+      // 只遍历已占用槽位（位图迭代），跳过 64 次 getPoint 空槽判断
+      uint64_t slot_mask = voxel_ptr->occupiedMask();
+      while (slot_mask) {
+        const uint8_t _i = static_cast<uint8_t>(__builtin_ctzll(slot_mask));
+        slot_mask &= slot_mask - 1;
+        const Point& pt = voxel_ptr->pointUnchecked(_i);
+        const float dist2 = (pt - point).squaredNorm();
+        top_K.try_insert(dist2, pt);
       }
     }
 
