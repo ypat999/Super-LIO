@@ -6659,3 +6659,113 @@ M.41 【2026-11-15】补录：E-1（P-2）复盘、drone 生产参数口径矛�
         统计"本圈末 vs 上一圈同位置"与 cond，把 §5 的 0.7 cm/周期变成带误差棒的结论。
    E-2b：M.40 §7 遗留的 1f B 组重复性复跑（同参再跑 1 次，确认 end3D 2.22 m 的噪声量级）。
    E-4b：E-4 代码入库后 base/opt 各重跑 1 次，确认 9.55 → 6.89 ms 在干净构建下可复现。
+================================================================================
+M.42 【2026-11-15】配置收尾：传感器时间戳 bugfix 回移、参数组合注释落位、
+      两分支配置对齐（本轮不跑任何 bag）
+================================================================================
+
+■ 0. 一句话
+   本轮是"把已有结论固化成代码与配置"，没有新数据：把 exp 的传感器时间戳修复
+   （ad4fd45）回移到 no-de-check，把 M.39/M.40 的各参数结论按原位写进
+   livox_360_drone.yaml，并把 livox_360.yaml 补齐到与 drone 同覆盖度。
+   两个分支的 yaml 现在都能直接看到"多组推荐参数组合"及其量化依据。
+
+■ 1. 前提与口径（全部沿用 M.39/M.40，不新增判据）
+   bag：livox_record_drone（楼梯，闭环真值）、livox_record_drone_1f（777 m 双圈）、
+        livox_record_noshell（狗载 706 m，无闭环）。
+   判据：端点 3D / 水平 / 竖直差、双圈切分、逐帧最近邻配对、deg_cond、[Trust] 计数。
+   线定义：
+     A 线 = imu_na 0.30 + normal_weight_en(true, σ=0.035)
+     B 线 = imu_na 0.01 + normal_weight_en(false, σ=0.05 无效)   ← 量产定稿
+     C 组合 = imu_na 0.01 + nw on ；D 组合 = imu_na 0.30 + nw off
+   M.40 §4 的 1f 2×2（end3D / 水平 / 竖直，m）：
+     A 3.071 / 1.458 / −2.703   B 2.220 / 1.352 / −1.761
+     C 2.867 / 0.745 / −2.768   D 3.129 / 1.338 / −2.828
+   本轮验证手段（不跑数据）：独立 worktree + `colcon build --packages-select super_lio`
+   ＋ `ros2 run --params-file` 看参数装载日志＋两 yaml 的 key 集/取值脚本比对。
+
+■ 2. 流程 A：传感器时间戳 bugfix 回移（exp ad4fd45 → no-de-check）
+   现象：Livox 点云帧的逐点时间被当"秒"用，end_time 跑到 1e8 s 量级，
+        sync_measure 永远等不到对应 IMU，表现为只有 [IMU Lag]、frame_num 恒 0；
+        另一类是坏帧（前 10 点全无效）把 time_begin 留在 0，坏帧卡在 lidar_buf
+        队首后所有帧一起停摆。
+   根因：Livox 的 PointCloud2 FLOAT64 逐点时间是**绝对 epoch 纳秒**（实测 ≈1.79e18），
+        Ouster 的 FLOAT64 是 0..1e8 相对纳秒、UINT32 是相对纳秒；原实现只做了
+        `t - time_begin`，没有 ns→s 换算。
+   改动（src/super_lio/src/ros/ROSWrapper.cpp，共 3 处 + 1 include）：
+     (1) read_offset_time 的 case 2：`rel = t - time_begin`；
+         `OUSTER || |t|>1e12` 时 ×1e-9，其余原样返回（|t|>1e12 兜住 32 位时间
+         被误读成 FLOAT64 的情况）。
+     (2) 参考点读取加 `ref_found` 标记。
+     (3) 未找到参考点时整帧扫最小原始时间戳作为 time_begin（仅在坏帧触发）。
+     (4) 补 `#include <limits>`（兜底块用 numeric_limits）。
+   验证：no-de-check @ 独立 worktree，`--base-paths` + 独立 build/install base 编译通过；
+        exp 侧原补丁未被改动（case 3 的 OUSTER 1e-9、case 4 的 `t*1e-9 - time_begin`
+        保持原注释与语义）。
+
+■ 3. 流程 B：drone yaml 参数原位注释（src/super_lio/config/livox_360_drone.yaml）
+   原则：在参数所在位置写"实测数字 + 适用/不适用条件"，不再另起章节。
+     lidar_type      ：FLOAT64 逐点时间语义（Livox 绝对 ns / Ouster 相对 ns）＋坏帧兜底。
+     filter_rate     ：6→3→1 闭环单调变差（0.531%→0.661%，即 fr1 差 24%），
+                       Observe 单帧 4.06→7.10→14.84 ms ⇒ 6 是统一口径。
+     voxel           ：0.25→0.20/0.15 耗时持平、点数 +3~5%，无形状收益 ⇒ 维持 0.25；
+                       且只在 init 生效，运行时 set 无效。
+     imu_na          ：写入 A/B/C/D 四组合与 2×2 数字；na 0.3 只在螺旋楼梯最优。
+     normal_weight_en/sigma：写入四组合与 σ 取值（A 线 0.035、C 线 0.05），
+                       并注明"单改开关、不改 na 会打架"。
+     huber_delta_base：0.05→0.20 与 na 0.01 配套（楼梯 1.896→1.599 m、
+                       1f 3.471→3.050 m），不要单独回调。
+     plane_knn_k     ：K=5 楼梯边缘混面（M.39 §4）＋ sub4 长走廊确定性发散（755fb3f）。
+     trust_jump_rot_max：15° 误否决 15.9°/19.1° 的正确修正 → drone 闭环 1.169→4.689 m；
+                       放宽到 25° 得 0.831~0.904 m、0 次否决；M.40 E-2 在 1f/ns 上
+                       15° 与 25° 逐帧完全等价（位置差 0.000 m）⇒ 25° 有余量、不漏真实修正。
+
+■ 4. 流程 C：livox_360.yaml 与 drone 配置对齐补全
+   方法：解析两文件 `/**/ros__parameters` 的 key 集，先列"仅 drone 有"，
+        再按 drone 的分区位置插入，取值一律取**本分支代码默认值**。
+   新增（19）：pcd_prefix、sub_div=4、plane_knn_k=8、
+        huber_delta_base=0.05、frame_gap_guard_en、frame_gap_max=0.2、
+        imu_cover_max=0.03、guard_max_consecutive=9、max_imu_dt=0.05、
+        trust_guard_en=true、trust_jump_max=1.0、trust_jump_rot_max=15.0、
+        trust_corr_max=0.5、trust_corr_rot_max=10.0、lost_recover_frames=5、
+        lost_slew_p=0.10、lost_slew_r=1.0、lost_map_en=false、odom_cov_en=false（仅 exp）。
+   注：本文件原值一行未改（脚本核对 diff：0 处改动、0 处删除、+57 行）。
+   no-de-check 同步时遇到 3 个"两分支默认值不同"的键，必须区别对待，否则会改行为：
+     frame_gap_guard_en   exp 默认 false / no-de-check 默认 **true** → 分支内用 true
+     normal_weight_en     exp 该文件为 A 线 true / no-de-check 默认 false → 用 false
+     normal_sigma         0.035 / 0.05 → 用 0.05（关闭时无效）
+     odom_cov_en          no-de-check 代码无此参数（属 exp 独有）→ 不写入该分支
+   冲突原因：no-de-check 的 livox_360.yaml 是旧版（没有法向加权段），
+        cherry-pick 在"normal_sigma → 卡尔曼段"之间整块冲突，按新增块解决。
+
+■ 5. 结论
+   C-15 传感器时间戳修复是"可用性 bug"而不是精度问题：不修则 Livox/Ouster 的
+        FLOAT64 时间轴直接错 9 个数量级，节点表现为彻底无输出；修后不改变任何
+        已有轨迹结果（只影响 end_time 与坏帧推进）。
+   C-16 参数结论已"就地固化"：drone yaml 的每个旋钮旁边都能读到对应的 bag/数字/
+        适用条件，避免再次出现 M.41 §3 那种"引用了不存在的生产组合成绩"。
+   C-17 两分支同名 yaml 的默认值并不相同（护栏、法向加权、odom_cov_en），
+        "照搬配置"会静默改变行为；跨分支同步必须先比对代码默认值，再决定取值。
+   C-18 配置覆盖度已对齐：livox_360.yaml 从"只有基础 60 余键"补到与 drone 同集，
+        且全部取默认值 ⇒ 本文件的历史实验口径（fr1、na/ng=0.1、nbg=1e-4、
+        nw on σ=0.035）完全不变，可继续作为 M.12/M.13 的复现配置。
+   C-19 推荐组合（可直接抄）：
+        量产默认 = B 线（na 0.01 / nw off / huber 0.20 / rot 25 / sub4 / K8 /
+                    nbg 3e-3 / fr6 / voxel 0.25）
+        纯螺旋楼梯 = A 线（na 0.30 / nw on σ0.035 / 其余同 B）
+        水平优先且可接受竖直 +1 m = C 组合（na 0.01 / nw on σ0.05）
+        D 组合（na 0.30 / nw off）实测最差（1f end3D 3.129 m），不推荐。
+
+■ 6. 提交台账（截至本轮）
+   exp/degeneracy-adaptive  094e988  config(livox_360): 补齐相对 drone 缺失的参数与注释
+   no-de-check              81925de  fix(ros): 回移传感器时间戳 bugfix + drone yaml 组合注释
+   no-de-check              11c0026  config(livox_360): cherry-pick 094e988（冲突按新增块解决）
+   no-de-check              c00cab6  config(livox_360): 三键取值改用本分支代码默认值
+   说明：exp 的 livox_360_drone.yaml 只有"参数显式化"，没有本轮这批组合注释；
+        no-de-check 的 livox_360_drone.yaml 才是带注释版本。
+
+■ 7. 遗留
+   - exp 的 drone yaml 尚未同步 M.42 §3 的组合注释（仅在 no-de-check）。
+   - no-de-check 的 livox_360.yaml 新增键取默认值；若要与 exp 同口径（A 线），
+     需显式改 normal_weight_en/normal_sigma，属有意的行为变更，未做。
+   - M.41 §9 的 E-1a / E-1b / E-2b / E-4b 全部未动，本轮未跑任何回放。
