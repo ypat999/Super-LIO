@@ -109,7 +109,7 @@ def generate_launch_description():
         name='super_lio_node',
         output='screen',
         parameters=[config_yaml, {'use_sim_time': use_sim_time}],
-        prefix=['taskset', '-c', '7'],   # 绑定 CPU 7
+        prefix=['taskset -c 7'],   # 绑定 CPU 7
         arguments=['--ros-args', '--log-level', 'info']
     )
     ld.add_action(super_lio_node)
