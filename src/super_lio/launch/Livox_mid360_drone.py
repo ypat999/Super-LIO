@@ -96,7 +96,7 @@ def generate_launch_description():
             {"user_config_path": livox_config_path},
             {"cmdline_input_bd_code": 'livox0000000001'},
         ],
-        prefix=['taskset  -c  4'],   # 绑定 CPU 4
+        prefix=['taskset -c 4'],   # 绑定 CPU 4
         condition=IfCondition(PythonExpression("'" + lidar_mode + "' == 'ONLINE'"))
     )
 
@@ -124,7 +124,7 @@ def generate_launch_description():
         parameters=[config_yaml, {'use_sim_time': use_sim_time,
                                   'lio.dynamic_removal.enable': dynamic_removal_flag,
                                   'lio.sc_pgo.enable': sc_pgo_flag}],
-        prefix=['taskset', '-c', '7'],   # 绑定 CPU 7
+        prefix=['taskset -c 7'],   # 绑定 CPU 7
         arguments=['--ros-args', '--log-level', 'info']
     )
     ld.add_action(super_lio_node)
