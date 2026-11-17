@@ -137,7 +137,7 @@ void SuperLIO::init(){
           try{
             fs::remove(entry.path());
             deleted_count++;
-            LOG(INFO) << GREEN << " ---> Deleted old PCD fragment: " << filename << RESET;
+            // 启动清理时可能删除上千个历史分片，逐文件打印会刷屏，末尾已有汇总
           } catch(const std::exception& e){
             LOG(WARNING) << RED << " ---> Failed to delete " << filename 
                         << ": " << e.what() << RESET;
@@ -148,7 +148,7 @@ void SuperLIO::init(){
           try{
             fs::remove(entry.path());
             deleted_count++;
-            LOG(INFO) << GREEN << " ---> Deleted old pose file: " << filename << RESET;
+            // 启动清理时可能删除上千个历史位姿文件，逐文件打印会刷屏，末尾已有汇总
           } catch(const std::exception& e){
             LOG(WARNING) << RED << " ---> Failed to delete " << filename 
                         << ": " << e.what() << RESET;
@@ -509,8 +509,20 @@ void SuperLIO::SaveThread(){
       }
       std::string map_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
                                  std::string(".pcd"));
-      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/" << g_pcd_prefix << "scans_" << data.pcd_index 
-                << "  size:  " << data.cloud_to_save->size() << RESET;
+      // 分片保存是逐帧触发的，逐条打印会刷屏；限频 5s 一条并汇总被压制的条数
+      static auto last_save_log = std::chrono::steady_clock::time_point{};
+      static int suppressed_save_logs = 0;
+      const auto now_log = std::chrono::steady_clock::now();
+      if (std::chrono::duration<double>(now_log - last_save_log).count() >= 5.0) {
+        LOG(INFO) << GREEN << " ---> current scan saved to /PCD/" << g_pcd_prefix << "scans_" << data.pcd_index 
+                  << "  size:  " << data.cloud_to_save->size()
+                  << (suppressed_save_logs > 0 ? " (期间抑制 " + std::to_string(suppressed_save_logs) + " 条)" : "")
+                  << RESET;
+        last_save_log = now_log;
+        suppressed_save_logs = 0;
+      } else {
+        ++suppressed_save_logs;
+      }
       pcl::io::savePCDFileBinary(map_name, *data.cloud_to_save);
       
       std::string odom_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
