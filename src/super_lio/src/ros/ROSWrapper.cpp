@@ -298,6 +298,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.kf.kf_quit_eps", 0.0);
   node.get_parameter("lio.kf.kf_quit_eps", g_kf_quit_eps);
 
+  node.declare_parameter<bool>("lio.kf.dynamic_start", false);
+  node.get_parameter("lio.kf.dynamic_start", g_kf_dynamic_start);
+
+  LOG(INFO) << GREEN << " ---> [Param] kf/dynamic_start: "
+            << (g_kf_dynamic_start ? "true (跳过静态零偏标定, bg0=0)" : "false") << RESET;
+
   // observe
   node.declare_parameter<double>("lio.observe.plane_fit_threshold", 0.15);
   node.get_parameter("lio.observe.plane_fit_threshold", g_plane_fit_threshold);

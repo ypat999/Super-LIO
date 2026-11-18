@@ -67,6 +67,7 @@ namespace LI2Sup{
   bool g_kf_freeze_gravity = false;
   int g_ref_gravity_axis = 2;       // 0: +X, 1: +Y, 2: -Z (default)
   double g_kf_quit_eps;
+  bool g_kf_dynamic_start = false;  // 默认 false：保持原静态初始化行为
 
   /// submap 
   double g_submap_resolution;

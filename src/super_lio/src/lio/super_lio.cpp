@@ -454,7 +454,17 @@ bool SuperLIO::kf_init(){
   options.quit_eps_ = g_kf_quit_eps;
 
   float imu_scale = g_gravity_norm / mean_acce.norm();
-  kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);
+
+  // dynamic_start=true：认定开头这段窗口不静止，跳过静态零偏标定 —— 不把
+  // mean_gyro 当 bg0（取 0，陀螺零偏交给 ESKF 在线估）。
+  // mean_acce 仍用于重力方向对齐与 imu_scale 归一：没有更好的来源，且去掉
+  // imu_scale 会让 g 单位的比力直接进积分，后果比零偏污染更严重。
+  const V3 bg0 = g_kf_dynamic_start ? V3::Zero() : mean_gyro;
+  LOG(INFO) << GREEN << "      Dynamic Start: "
+            << (g_kf_dynamic_start ? "true" : "false")
+            << "  -> bg0 = [" << bg0.transpose() << "] rad/s" << RESET;
+
+  kf_->SetInitialConditions(options, bg0, V3::Zero(), imu_scale, ref_gravity);
   auto state = kf_->GetSysState();
   state.R = SO3(rot);
   state.p = V3::Zero();             // World origin at initial imu/lidar position.
