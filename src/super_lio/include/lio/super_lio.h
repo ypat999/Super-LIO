@@ -65,6 +65,24 @@ public:
   /// 供派生类/外部调用者访问滤波器；线程安全由 ESKF 内部递归锁保证。
   ESKF::Ptr eskf() const { return kf_; }
 
+  /// 本帧观测信息矩阵的退化签名快照，供进程内派生类直接读取。
+  /// 用途：视觉支路（方案 A/B）在单体内无需订阅 `/lio/degeneracy` 话题，
+  /// 也不需要在 LIO 侧新增话题发布，直接从内存取同源数据。
+  /// info 为原始位姿观测 Hessian（`HTVH`，布局 [rot(0-2), pos(3-5)]，未经截断），
+  /// 与退化检测同源；`has_info=false` 表示本帧尚未产出（首帧前）。
+  struct DegeneracySnapshot {
+    bool  ok     = false;
+    double cond  = 0.0;
+    int    axes  = 0;
+    bool  active = false;
+    BASIC::V3d dir_w = BASIC::V3d::Zero();  ///< 最弱方向（世界系，零向量=无方向）
+    bool  has_info = false;
+    BASIC::M6d info = BASIC::M6d::Zero();
+  };
+
+  /// 线程安全地拷贝一份退化签名快照（写方在 Observe 线程，读方可跨线程）。
+  DegeneracySnapshot degeneracySnapshot() const;
+
 protected:
   struct OutputData {
     NavState state;
@@ -101,6 +119,17 @@ protected:
   void stateWaitMapInit();
   void stateProcess();
   virtual bool kf_init();
+
+  // ===== 进程内输出钩子（纯加法，默认空实现；未覆写时纯 LIO 行为逐位不变）=====
+  // 供单体化视觉支路（方案 A/B）在同进程直接接收 LIO 输出，取代 DDS 话题回环。
+  /// 每帧输出线程取到 OutputData 后调用（位姿 + body/world 点云）。
+  virtual void onLioOutput(const OutputData& data) { (void)data; }
+  /// DenseThread 产出全量机体系点云后调用（在 dense 话题发布前）。
+  virtual void onDenseCloud(const BASIC::CloudPtr& cloud, double stamp) {
+    (void)cloud;
+    (void)stamp;
+  }
+
   virtual bool map_init();
   /// 实验 C：载入固定初始地图并跳过 map_init（g_map_load_path 非空时启用）
   bool loadFixedMap();
@@ -179,6 +208,10 @@ protected:
   int    degeneracy_axes_   = 0;
   bool   degeneracy_active_ = false;   // 去抖后的退化状态（响应机制都用它）
   int    degen_state_cnt_   = 0;       // 状态机连续帧计数
+
+  // 进程内退化签名快照（供 degeneracySnapshot() 跨线程安全读取）
+  mutable std::mutex snapshot_mutex_;
+  DegeneracySnapshot snapshot_;
   // 观测静态基线（init 时从配置缓存），供"退化档 ↔ 正常档"切换时恢复
   bool   base_normal_weight_en_ = false;
   double base_normal_sigma_      = 0.05;

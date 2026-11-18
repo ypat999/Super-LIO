@@ -864,6 +864,8 @@ void SuperLIO::DenseThread(){
     }
 
     // 3. 发布 cloud_body_dense（机体系全量）
+    // 单体化钩子：在话题发布前把同一份全量点云推给派生类（默认空实现，不影响原行为）
+    onDenseCloud(dense_body, data.timestamp);
     data_wrapper_->pub_cloud_body_dense(dense_body, data.timestamp);
 
     // 4. 变换到 world（全量）——仅供 PCD 落盘，world 系全量不再对外发布话题
@@ -2031,6 +2033,14 @@ void SuperLIO::Observe(){
   // 放在退化检测之前不影响任何既有逻辑（只读本帧累加量，不写滤波状态）。
   if (g_calib_td_en) finalizeTimeDelayCalib(frame_omega_);
 
+  // 进程内快照：本帧原始观测信息矩阵（与退化检测同源，未经截断），
+  // 供单体内视觉支路（方案 B 的 lidarUpdate）直接读取，无需新增话题。
+  {
+    std::lock_guard<std::mutex> lk(snapshot_mutex_);
+    snapshot_.has_info = true;
+    snapshot_.info = last_HTVH;
+  }
+
   // ===== 退化检测 + 去抖状态机（每帧一次，用最后迭代的原始 Hessian）=====
   // 输出的 degeneracy_active_ 供下一帧的截断 / 参数自适应使用。
   // 滞回（进 cond>thr，出 cond<thr·hysteresis）+ 最短持续帧数，避免帧级抖动。
@@ -2061,6 +2071,16 @@ void SuperLIO::Observe(){
       } else {
         degen_state_cnt_ = 0;
       }
+    }
+
+    // 进程内快照：退化签名（cond/axes/active/最弱方向），供单体视觉支路直读。
+    {
+      std::lock_guard<std::mutex> lk(snapshot_mutex_);
+      snapshot_.ok = deg.ok;
+      snapshot_.cond = deg.ok ? deg.cond : 0.0;
+      snapshot_.axes = deg.ok ? deg.axes : 0;
+      snapshot_.active = degeneracy_active_;
+      snapshot_.dir_w = deg.ok ? BASIC::V3d(deg.eV.block<3, 1>(3, 0)) : BASIC::V3d::Zero();
     }
 
     // ===== M.31 场景自动档：启动窗口内累计高退化帧占比，满窗判定一次 =====
@@ -2469,7 +2489,15 @@ void SuperLIO::OutputThread(){
         data_wrapper_->recordLatency("[Lidar->CloudWorld]", lat_ms);
       }
     }
+
+    // 单体化钩子：所有官方输出发布完毕后，把同一帧数据推给派生类（默认空实现）
+    onLioOutput(data);
   }
+}
+
+SuperLIO::DegeneracySnapshot SuperLIO::degeneracySnapshot() const {
+  std::lock_guard<std::mutex> lk(snapshot_mutex_);
+  return snapshot_;
 }
 
 void SuperLIO::printTimeRecord(){
