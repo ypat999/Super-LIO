@@ -73,13 +73,13 @@
     lio.hash_map.vox_resolution: 0.25
     # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
     # 原装2，狭窄空间4
-    lio.hash_map.sub_div: 2
+    lio.hash_map.sub_div: 4
     # 平面拟合邻域大小 K（4..8）。K=8 是量产定稿值，显式写出避免依赖默认值；
     # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）；
     # K=5 配合 sub_div=4 在长走廊还会失锁发散（commit 755fb3f）。
     # 结论：K 保持 8，不要为了省算力调小。
     # 原装5，狭窄空间8
-    lio.hash_map.plane_knn_k: 5
+    lio.hash_map.plane_knn_k: 8
 
     lio.kf.kf_type: 0
     lio.kf.kf_max_iterations: 4
