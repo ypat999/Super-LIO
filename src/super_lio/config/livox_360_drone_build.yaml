@@ -1,0 +1,193 @@
+/**:
+  ros__parameters:
+    lio.map.save_map: true
+    lio.map.if_filter: false
+    # 支持 "~/..." 与 "$HOME/..."（加载时按当前机器 HOME 展开），不要写死 /home/<user>
+    lio.map.save_map_dir: "~/slam_data/pcd/home3_probe_v7"
+    lio.map.map_name: "test.pcd"
+    lio.map.ds_size: 0.1
+    lio.map.save_interval: 10
+
+    # 点云切片保存前缀，用于多雷达同时建图时区分不同雷达的切片
+    # 例如: "front_" -> 保存为 front_scans_0.pcd, front_scans_1.pcd
+    # 空字符串表示无前缀（默认）
+    lio.map.pcd_prefix: ""
+    lio.ros.lidar_topic: "/livox/lidar"
+    lio.ros.imu_topic: "/livox/imu"
+    lio.ros.map_save_service_topic: "/map_save"
+
+    # 雷达类型：1=Livox（当前值），2=Ouster，0/其它=通用。
+    # 注意逐点时间字段的语义差异（ROSWrapper::stdMsgHandler）：
+    #   Livox FLOAT64 逐点时间是**绝对时间戳（ns，≈1.79e18）**；
+    #   Ouster FLOAT64 是 0..1e8 的相对 ns；Ouster UINT32 是相对 ns。
+    # 这些字段一律按 ns→s 换算，否则 end_time 会跑到天文数字，sync 永远等不到 IMU；
+    # 另外坏帧（前 10 个点全 NaN/inf）会整帧扫最小时间戳兜底 time_begin，
+    # 避免 lidar_buf 队首堵死（frame_num 恒 0）。改动雷达型号时不要回退这两处逻辑。
+    lio.sensor.lidar_type: 1
+    lio.sensor.blind: 0.5
+    lio.sensor.maxrange: 100.0
+    # 降采样抽点率：每 N 个点取 1 个。6 是量产定稿值；
+    # 实测 6→1（不抽点，点量 ×6）闭环误差反而变差约 24%（计算耗时拖累去畸变与配准）。
+    lio.sensor.filter_rate: 6
+    lio.sensor.enable_filter_offset: false
+    lio.sensor.enable_downsample: true
+    # 体素降采样尺寸(m)：0.25 是量产定稿值。
+    # 实测 0.15 / 0.20 相对 0.25 在本场景无收益（精度持平、耗时上升），不要再调小。
+    lio.sensor.voxel_fliter_size: 0.1
+
+    lio.sensor.intensity_filter_en: false
+    lio.sensor.intensity_min: 5.0
+    # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
+    lio.sensor.lidar_channels: 0
+    # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
+    lio.sensor.full_column_interval: 0
+    # 当地重力加速度大小(m/s²)，用于IMU初始化和重力对齐，影响定位精度
+    lio.sensor.gravity_norm: 9.8066
+    lio.sensor.imu_type: 1
+    # 连续时间加速度噪声 0.1 → 0.01；配合 lio.observe.huber_delta_base=0.20。
+    # 40-run 扫描（6 bag × 16 配置）显示 R 系大场景最优（楼梯 1.599/4.672m、园区 3.050m）。
+    # imu_na 与 normal_weight 强耦合（1f 2×2 归因，end3D / 水平 / 竖直，单位 m）：
+    #   A: na0.3 + nw on  3.071 / 1.458 / −2.703   ← 螺旋楼梯最优（na 大=更信 IMU 平滑）
+    #   B: na0.01 + nw off 2.220 / 1.352 / −1.761  ← 量产定稿（当前配置）
+    #   C: na0.01 + nw on  2.867 / 0.745 / −2.768  ← 水平优先备选，竖直更差
+    #   D: na0.3 + nw off  3.129 / 1.338 / −2.828  ← 无优势，不推荐
+    # 选型：默认 B；仅纯螺旋楼梯、且能接受水平退化时切 A。
+    lio.sensor.imu_na: 0.01
+    lio.sensor.imu_ng: 0.1
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.003
+
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412, 
+                              1.0, 0.0, 0.0, 
+                              0.0, 1.0, 0.0, 
+                              0.0, 0.0, 1.0]
+    # lio.extrinsic.odom_robo: [0.05, 0.0, -0.1, 0.0, 0.0, 0.0]
+    # base_link 相对 IMU/livox 的外参（x, y, z, roll, pitch, yaw，单位 m/deg）。
+    # 必须与 launch 中 livox_frame -> base_link 静态 TF
+    # [-0.05, 0, 0.05, yaw=180°, pitch=210°, roll=0] 完全等价，否则
+    # /lio/robo/odom 与 TF 树的 base_link 不重合。旋转两种欧拉分解结果相同，
+    # 平移需满足 -R(odom_robo)·t = (-0.05, 0, 0.05) ⇒ t = (0.018301, 0, 0.068301)。
+    lio.extrinsic.odom_robo: [0.018301, 0.0, 0.068301, 180.0, -30.0, 0.0]
+
+    lio.hash_map.hash_capacity: 20000000
+    lio.hash_map.vox_resolution: 0.1
+    # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
+    # 原装2，狭窄空间4
+    lio.hash_map.sub_div: 2
+    # 平面拟合邻域大小 K（4..8）。K=8 是量产定稿值，显式写出避免依赖默认值；
+    # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）；
+    # K=5 配合 sub_div=4 在长走廊还会失锁发散（commit 755fb3f）。
+    # 结论：K 保持 8，不要为了省算力调小。
+    # 原装5，狭窄空间8
+    lio.hash_map.plane_knn_k: 5
+
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 8
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+
+    lio.output.robot: true
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.map: true
+    lio.output.map_body: true
+    lio.output.pub_step: 1
+    lio.output.footprint_pub_en: true
+    # odom 协方差策略（已固定，无开关）：
+    #   /lio/odom(10Hz)      —— 始终带 ESKF 后验协方差，供 safety 健康监看；
+    #   /lio/robo/odom(200Hz)—— 协方差恒为 0（发往 PX4 的路）。实测 200Hz
+    #     高频协方差输出对 PX4 计算负担过大并带来不可预计行为；PX4
+    #     ev_pos_control 有 max(EKF2_EVP_NOISE^2, 0.01^2) 地板，0 会被抬回名义噪声。
+    lio.output.tf_base_footprint_frame: "base_footprint"
+    # 世界坐标系的TF帧名
+    lio.output.world_frame: "world"
+    # IMU坐标系的TF帧名
+    lio.output.imu_frame: "imu"
+
+    # 性能统计：true 时每分钟统计一次并打印（各阶段处理耗时垂 + 点云/odom 端到端延迟的均值/最大值）；false 时不输出（推荐时 false）。退出时仍会打印一次总结。
+    lio.eva.timer: true
+
+    lio.dynamic_removal.enable: true            # 是否启用动态点移除(如行人、车辆等移动物体)
+    lio.dynamic_removal.method: 0               # 移除方法: 0=时序法(检查前后帧占用), 1=射线法(射线穿透检测)
+    lio.dynamic_removal.grid_size: 0.2          # 体素网格大小(m), 用于空间离散化
+    lio.dynamic_removal.min_neighbors: 1        # 孤立点移除阈值, 体素邻居数<此值视为孤立点并移除
+    lio.dynamic_removal.frame_window: 1         # [method=0时有效] 时序法检查前后各N帧的占用情况
+    lio.dynamic_removal.raycast_min_hits: 2     # [method=1时有效] 射线穿透次数阈值, 需同时满足穿透比>0.5
+    lio.dynamic_removal.isolated_removal: false # 是否移除孤立点(周围邻居少的点)
+    
+    # ======================== SC-PGO 离线处理参数 ========================
+    # 是否启用 SC-PGO 兼容数据输出（输出 body-frame 扫描 + KITTI 位姿到 Scans/ 目录）
+    lio.sc_pgo.enable: false
+    # 关键帧平移距离阈值(米)，累计平移超过此值抽取一帧
+    lio.sc_pgo.keyframe_gap: 0.5
+    # 关键帧旋转角度阈值(度)，累计旋转超过此值抽取一帧
+    lio.sc_pgo.keyframe_deg_gap: 5.0
+
+    # ======================== 单核模式 ========================
+    # 是否启用单核运行模式。true: 关闭TBB并行，LIO主管线串行执行
+    lio.single_core: false
+
+    # ======================== 快速TF模式 ========================
+    # 是否在IMU频率下发布tf（world->imu, world->base_footprint），降低tf延迟
+    lio.fast_tf: false
+
+    # ======================== 坏帧护栏 ========================
+    # 处理停顿会让 IMU 缓冲欠载，去畸变用残缺轨迹把点云扭坏，配准一次跳变
+    # 1~3.7 m 且不恢复（实测悬停崩塌即此机制）。开启后坏帧不参与配准/建图。
+    lio.observe.frame_gap_guard_en: true
+    # 相邻雷达帧 end_time 间隔上限（秒）。10 Hz 雷达正常 ~0.1 s，取 2 倍
+    lio.observe.frame_gap_max: 0.2
+    # 允许的 IMU 头部缺口（秒）：帧首点时刻之前缺失的 IMU 时长
+    lio.observe.imu_cover_max: 0.03
+    # 安全阀：连续跳过该帧数后强制放行一帧，避免雷达频率低于阈值时永久跳过
+    lio.observe.guard_max_consecutive: 9
+
+    # ======================== 断档冻结 ========================
+    # 链路瞬时中断（重着陆接触不良等）接回时，第一条 IMU 的 dt 等于整段断档时长。
+    # 超过该值的 dt 只对齐时间基准、不积分，避免用冲击加速度把断档时段积分成米级跳变。
+    lio.observe.max_imu_dt: 0.05
+
+    # ======================== 位姿信任域 / LOST ========================
+    # 单帧修正跳变超阈值 → 撤销该次激光修正（保留 IMU 推算）、暂停建图，
+    # 但 odom/TF/点云仍按当前位姿全量输出（空中掉线以飞行连续性优先）。
+    lio.observe.trust_guard_en: true
+    # 单帧允许的位置/姿态跳变（10Hz、2m/s 正常帧间位移约 0.2m，留 5 倍余量）
+    lio.observe.trust_jump_max: 1.0
+    # 姿态阈值 25deg：sub_div=4 + K=8 在楼梯边缘会把相邻面混入平面拟合，
+    # 产生 16~19deg 的单帧姿态修正。drone 实测 15deg 阈值会误否决这类正确修正
+    # （闭环 4.69m），放宽到 25deg 后闭环 0.83m、yaw 0.44deg。位置阈值仍是 1m 兜底。
+    lio.observe.trust_jump_rot_max: 25.0
+    # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
+    lio.observe.trust_corr_max: 0.5
+    lio.observe.trust_corr_rot_max: 10.0
+    lio.observe.lost_recover_frames: 5
+    # LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉 0.1m / 1deg。
+    # 断档后先验与真实位姿可能差米级，直接接受配准会一次跳变、完全否决又会永久停死，
+    # 因此逐帧小步靠近。0.1m/帧@10Hz ≈ 1m/s 的位姿收敛速度，约 1~3s 可拉回。
+    lio.observe.lost_slew_p: 0.10
+    lio.observe.lost_slew_r: 1.0
+    # LOST 期间是否继续向 IVox 建图（关，防止污染配准地图；PCD 片段仍照常落盘）
+    lio.observe.lost_map_en: false
+
+    # ======================== 量测鲁棒性（B 线收口） ========================
+    # Robust Kernel（自适应 Huber）的 δ 基准：δ_i = base + scale × 残差尺度。
+    # base 0.05→0.20 是把 Huber 切换点抬高、让正常残差留在二次区，
+    # 与 imu_na 0.01（R 矩阵收紧）配套。实测见 40-run 扫描：
+    # 楼梯 1.896→1.599m、1f 园区 3.471→3.050m。代码默认仍 0.05，本 yaml 显式覆写。
+    # 组合约束：A 线（na0.3 + nw on，σ=0.035）与 B 线（na0.01 + nw off）都用 0.20；
+    # 不要单独把 base 调回 0.05，那会与收紧后的 imu_na 失配（回到 1.896/3.471 档）。
+    lio.observe.huber_delta_base: 0.20
+    # 法向质量加权：按平面拟合残差 max|dist| 降权 w *= 1/(1+(fit_res/σ)²)。
+    # 保持关闭（量产 B 线定稿）：1f 实测开它只压水平（1.352→0.745 m），
+    # 竖直反而多漏 1.0 m（−1.761→−2.768 m），end3D 2.220→2.867 m。
+    # 推荐组合（与 imu_na 成对使用，单改开关会打架）：
+    #   A 线（螺旋楼梯）：imu_na=0.3 + normal_weight_en=true  （σ 用 0.035）
+    #   B 线（量产默认）：imu_na=0.01 + normal_weight_en=false（σ 不生效，保持 0.05）
+    #   C 组合（水平优先）：imu_na=0.01 + normal_weight_en=true（σ=0.05，竖直牺牲 ~1 m）
+    #   D 组合（na0.3 + nw off）实测最差，不推荐。
+    lio.observe.normal_weight_en: false
+    # 仅在 normal_weight_en=true 时生效：σ 越小降权越激进。
+    # A 线实测用 0.035；C 组合沿用 0.05。两档都试过，差异不大，不要继续往小调（会砍掉正常平面）。
+    lio.observe.normal_sigma: 0.05
