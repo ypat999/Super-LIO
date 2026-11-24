@@ -111,6 +111,7 @@ protected:
     std::vector<BASIC::V3> imu_gyr;               // 每个区间原始陀螺仪（去畸变 omega_body 用）
     double start_time = 0.0;                      // 去畸变起始时间（s）
     double timestamp = 0.0;                       // 状态时间戳（发布 dense 话题用）
+    double receive_time = 0.0;                    // 该帧在宿主侧的接收时刻（墙钟，s）
     BASIC::SE3 T_pred;                            // 预测位姿（去畸变基准）
     BASIC::SE3 T_corrected;                       // 配准修正位姿（delta 修正用）
   };
@@ -125,9 +126,12 @@ protected:
   /// 每帧输出线程取到 OutputData 后调用（位姿 + body/world 点云）。
   virtual void onLioOutput(const OutputData& data) { (void)data; }
   /// DenseThread 产出全量机体系点云后调用（在 dense 话题发布前）。
-  virtual void onDenseCloud(const BASIC::CloudPtr& cloud, double stamp) {
+  /// receive_time：该帧在宿主侧的接收时刻（墙钟秒），供视觉支路在线估计
+  /// 雷达时钟相对宿主时钟的偏移（两时钟独立且会漂移）。
+  virtual void onDenseCloud(const BASIC::CloudPtr& cloud, double stamp, double receive_time) {
     (void)cloud;
     (void)stamp;
+    (void)receive_time;
   }
 
   virtual bool map_init();

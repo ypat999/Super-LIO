@@ -819,6 +819,7 @@ void SuperLIO::enqueueDense(){
   }
   data.start_time = measures_.lidar.start_time;
   data.timestamp = kf_->GetNavState().timestamp;
+  data.receive_time = measures_.lidar.receive_time;
   data.T_pred = T_predicted_end_;
   data.T_corrected = kf_->GetSE3();          // 配准后位姿
 
@@ -875,7 +876,7 @@ void SuperLIO::DenseThread(){
 
     // 3. 发布 cloud_body_dense（机体系全量）
     // 单体化钩子：在话题发布前把同一份全量点云推给派生类（默认空实现，不影响原行为）
-    onDenseCloud(dense_body, data.timestamp);
+    onDenseCloud(dense_body, data.timestamp, data.receive_time);
     data_wrapper_->pub_cloud_body_dense(dense_body, data.timestamp);
 
     // 4. 变换到 world（全量）——仅供 PCD 落盘，world 系全量不再对外发布话题
