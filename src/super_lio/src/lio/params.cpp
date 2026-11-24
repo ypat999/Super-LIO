@@ -62,9 +62,6 @@ namespace LI2Sup{
   bool   g_map_hash_reserve_en = true;
   int    g_map_hash_reserve_size = 0;
 
-  /// 子体素细分（量产默认 4：楼梯/园区细通道点位粒度 0.0625 m）
-  int    g_map_sub_div = 4;
-
   /// 平面拟合邻域大小（默认 8 = 当前量产行为，装载时钳到 [4, 8]）
   int    g_plane_knn_k = 8;
 

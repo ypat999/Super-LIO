@@ -84,10 +84,6 @@ namespace LI2Sup{
   /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity
   extern int    g_map_hash_reserve_size;
 
-  /// 子体素细分因子：2 = 2×2×2 = 8 槽（旧行为，HKNN 子槽候选表可用）；
-  /// 4 = 4×4×4 = 64 槽（点位粒度 = 粗体素/4，内存约 ×8，搜索退化为整槽扫描）。
-  extern int    g_map_sub_div;
-
   /// 平面拟合邻域大小 K（4..8，默认 8）。
   /// KNNHeap 的容量仍是模板参数 8（数组尺寸），这里只控制"填到几个算满"
   /// 以及 getTopK 的提前退出判据，因此 K<8 时数组尾部保持 0 不参与。

@@ -71,14 +71,8 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: 0.25
-    # 子体素细分：4 → 4×4×4=64 槽，点位粒度 0.25/4 = 0.0625 m（内存约 ×8）
-    # 原装2，狭窄空间4
-    lio.hash_map.sub_div: 2
-    # 平面拟合邻域大小 K（4..8）。K=8 是量产定稿值，显式写出避免依赖默认值；
-    # 5 会在楼梯边缘把相邻面混入平面拟合（见 stairwell_drift_diagnosis.txt M.39）；
-    # K=5 配合 sub_div=4 在长走廊还会失锁发散（commit 755fb3f）。
-    # 结论：K 保持 8，不要为了省算力调小。
-    # 原装5，狭窄空间8
+    # 子体素固定 2×2×2（sub_div 已取消可配置）：点位粒度 = vox_resolution/2。
+    # 平面拟合邻域大小 K（4..8）。原装 5，狭窄空间 8。
     lio.hash_map.plane_knn_k: 5
 
     lio.kf.kf_type: 0
@@ -155,7 +149,7 @@
     lio.observe.trust_guard_en: true
     # 单帧允许的位置/姿态跳变（10Hz、2m/s 正常帧间位移约 0.2m，留 5 倍余量）
     lio.observe.trust_jump_max: 1.0
-    # 姿态阈值 25deg：sub_div=4 + K=8 在楼梯边缘会把相邻面混入平面拟合，
+    # 姿态阈值 25deg：历史配置（细子体素 + K=8）在楼梯边缘会把相邻面混入平面拟合，
     # 产生 16~19deg 的单帧姿态修正。drone 实测 15deg 阈值会误否决这类正确修正
     # （闭环 4.69m），放宽到 25deg 后闭环 0.83m、yaw 0.44deg。位置阈值仍是 1m 兜底。
     lio.observe.trust_jump_rot_max: 25.0

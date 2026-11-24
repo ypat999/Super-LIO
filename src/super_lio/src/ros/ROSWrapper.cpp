@@ -200,12 +200,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << "[Param] hash_map.reserve: en=" << g_map_hash_reserve_en
             << " size=" << g_map_hash_reserve_size << " (0=用 hash_capacity)";
 
-  // 子体素细分：2 = 旧行为（8 槽），4 = 4×4×4（64 槽，粒度 = vox_resolution/4）
-  node.declare_parameter<int>("lio.hash_map.sub_div", 4);
-  node.get_parameter("lio.hash_map.sub_div", g_map_sub_div);
-  LOG(INFO) << "[Param] hash_map.sub_div: " << g_map_sub_div
-            << (g_map_sub_div == 4 ? " (4×4×4=64 slots)" : " (2×2×2=8 slots)");
-
   // 平面拟合邻域大小 K：KNNHeap 数组容量固定 8（模板参数），这里钳到 [4, 8]
   node.declare_parameter<int>("lio.hash_map.plane_knn_k", 8);
   node.get_parameter("lio.hash_map.plane_knn_k", g_plane_knn_k);
