@@ -6,6 +6,7 @@
 #include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 #include <thread>
 #include <chrono>
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -20,8 +21,56 @@ using namespace BASIC;
 
 namespace LI2Sup{
 
+namespace {
+/// 发布节流开关（默认值与历史行为完全一致，不影响 bag / 离线复现）。
+/// 实时部署时这些 DDS 发布是常驻负载：200 Hz 的 imu odom + 2 条 TF、10 Hz 的
+/// 全量/世界系点云，在 RK3588 这类平台上会直接抢走 executor 的处理时间，
+/// 表现为图像/点云在 DDS 侧被覆盖（下游只收到一半）。
+int g_imu_odom_hz = 200;             ///< 高频 imu odom/TF 发布频率，0 = 关闭
+bool g_pub_cloud_body = true;        ///< /lio/cloud_body（抽稀点云）
+bool g_pub_cloud_world = true;       ///< /lio/cloud_world（世界系点云）
+bool g_pub_cloud_body_dense = true;  ///< /lio/cloud_body_dense（全量点云）
+double g_imu_odom_last_sec = 0.0;    ///< 上次入队时刻（消息时间）
+
+/// 实时性保护：lidar_buffer_ 允许积压的帧数上限（0 = 不限制，保持历史 FIFO 行为）。
+/// LIO 单帧耗时超过雷达帧间隔时（RK3588 实测约 141 ms vs 100 ms），FIFO 会让
+/// 输出时间戳无界滞后（实测 70 s 累积到 10 s），彩色支路随即全部配不上图。
+int g_max_lidar_backlog = 2;
+
+/// 按频率决定本帧 IMU 是否要发高频 odom/TF。
+bool shouldPublishImuOdom(double secs) {
+  if (g_imu_odom_hz <= 0) {
+    return false;
+  }
+  const double period = 1.0 / static_cast<double>(g_imu_odom_hz);
+  if (g_imu_odom_last_sec <= 0.0 || secs - g_imu_odom_last_sec >= period - 1e-4) {
+    g_imu_odom_last_sec = secs;
+    return true;
+  }
+  return false;
+}
+}  // namespace
+
 void LoadParamFromRos(rclcpp::Node& node)
 {
+  // ---- 发布节流（实时部署用；默认保持历史行为） ----
+  node.declare_parameter<int>("lio.publish.imu_odom_hz", 200);
+  node.get_parameter("lio.publish.imu_odom_hz", g_imu_odom_hz);
+  node.declare_parameter<bool>("lio.publish.cloud_body", true);
+  node.get_parameter("lio.publish.cloud_body", g_pub_cloud_body);
+  node.declare_parameter<bool>("lio.publish.cloud_world", true);
+  node.get_parameter("lio.publish.cloud_world", g_pub_cloud_world);
+  node.declare_parameter<bool>("lio.publish.cloud_body_dense", true);
+  node.get_parameter("lio.publish.cloud_body_dense", g_pub_cloud_body_dense);
+  LOG(INFO) << GREEN << " ---> [Param] publish: imu_odom_hz=" << g_imu_odom_hz
+            << " cloud_body=" << g_pub_cloud_body << " cloud_world=" << g_pub_cloud_world
+            << " cloud_body_dense=" << g_pub_cloud_body_dense << RESET;
+
+  node.declare_parameter<int>("lio.ros.max_lidar_backlog", 2);
+  node.get_parameter("lio.ros.max_lidar_backlog", g_max_lidar_backlog);
+  LOG(INFO) << GREEN << " ---> [Param] ros.max_lidar_backlog=" << g_max_lidar_backlog
+            << " (0=不限制)" << RESET;
+
   node.declare_parameter<bool>("lio.map.save_map", false);
   node.get_parameter("lio.map.save_map", g_save_map);
 
@@ -1184,8 +1233,8 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 
   DynamicState imu_state, robo_state;
   if(eskf_->Predict(data, imu_state, robo_state)){
-    // 推入队列，由独立线程 imuOutputThread 发布，避免 WiFi 差时 RELIABLE 发布阻塞回调
-    {
+    // 高频 odom/TF 节流：默认 200 Hz（历史行为）；实时部署可降到 50 或直接关闭。
+    if (shouldPublishImuOdom(data.secs)) {
       ImuOutputData out;
       out.imu_state = std::move(imu_state);
       out.robo_state = std::move(robo_state);
@@ -1222,6 +1271,27 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 #ifdef LIVOX_SUPPORT
 void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg){
   if(msg->point_num < 10) return;
+  // 诊断：雷达帧从传感器时间戳到本进程接收的滞后漂移。
+  // 雷达时间戳与墙钟基准不同（固定差约 2.05e8 s），因此只输出相对首帧的漂移：
+  // 漂移持续增长 ⇒ 驱动/DDS 侧已积压（上游问题）；漂移平稳 ⇒ 滞后来自 LIO 处理。
+  {
+    static std::atomic<std::uint64_t> lag_n{0};
+    static std::atomic<double> lag_first{0.0};
+    const double now_s = std::chrono::duration<double>(
+                             std::chrono::high_resolution_clock::now().time_since_epoch())
+                             .count();
+    const double lag = now_s - stampToSec(msg->header.stamp);
+    const auto n = lag_n.fetch_add(1, std::memory_order_relaxed) + 1;
+    double first = lag_first.load(std::memory_order_relaxed);
+    if (n == 1) {
+      lag_first.store(lag, std::memory_order_relaxed);
+      first = lag;
+    }
+    if (n % 20 == 1) {
+      LOG(INFO) << "[LidarIn] n=" << n << " stamp=" << stampToSec(msg->header.stamp)
+                << " lag=" << lag << "s drift=" << (lag - first) << "s pts=" << msg->point_num;
+    }
+  }
   LidarData lidar_data;
   lidar_data.receive_time = std::chrono::duration<double>(
       std::chrono::high_resolution_clock::now().time_since_epoch()).count();
@@ -1762,6 +1832,21 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
   }
 
   if (!lidar_pushed_) {
+    // 实时性保护：处理能力低于雷达帧率时，积压超过上限就丢弃最旧帧，
+    // 把输出时间戳拉回当前时刻（否则滞后无界增长，彩色支路永远配不上图）。
+    // 丢帧仍保有 7~10 Hz 的连续帧，IMU 区间由 sync_measure 按新帧 end_time 消费，
+    // 不会留下空洞。
+    if (g_max_lidar_backlog > 0) {
+      static std::atomic<std::uint64_t> dropped_total{0};
+      while (lidar_buffer_.size() > static_cast<std::size_t>(g_max_lidar_backlog)) {
+        lidar_buffer_.pop_front();
+        const auto n = dropped_total.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n % 50 == 1) {
+          LOG(WARNING) << "[Lidar Drop] 积压超限丢最旧帧：累计=" << n
+                       << " 上限=" << g_max_lidar_backlog;
+        }
+      }
+    }
     meas.lidar = lidar_buffer_.front();
     lidar_pushed_ = true;
   }
@@ -2026,6 +2111,7 @@ void ROSWrapper::pub_degeneracy(){
 }
 
 void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
+  if (!g_pub_cloud_world) return;
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_world_frame;
@@ -2035,6 +2121,7 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
 
 
 void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time, const std::string& lidar_frame){
+  if (!g_pub_cloud_world) return;
   try{
     geometry_msgs::msg::TransformStamped transform_stamped;
     transform_stamped = tf_buffer_->lookupTransform(
@@ -2061,6 +2148,7 @@ void ROSWrapper::pub_cloud_world_undistort_only(const CloudPtr& pc, double time,
 
 
 void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
+  if (!g_pub_cloud_body) return;
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
@@ -2070,6 +2158,7 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
 
 
 void ROSWrapper::pub_cloud_body_dense(const CloudPtr& pc, double time){
+  if (!g_pub_cloud_body_dense) return;
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   cloud.header.frame_id = g_imu_frame;
