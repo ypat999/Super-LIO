@@ -3,10 +3,10 @@
     lio.map.save_map: true
     lio.map.if_filter: false
     # 支持 "~/..." 与 "$HOME/..."（加载时按当前机器 HOME 展开），不要写死 /home/<user>
-    lio.map.save_map_dir: "~/slam_data/pcd/home3_probe_v7"
+    lio.map.save_map_dir: "~/slam_data/pcd/"
     lio.map.map_name: "test.pcd"
-    lio.map.ds_size: 0.1
-    lio.map.save_interval: 10
+    lio.map.ds_size: 0.25
+    lio.map.save_interval: 50
 
     # 点云切片保存前缀，用于多雷达同时建图时区分不同雷达的切片
     # 例如: "front_" -> 保存为 front_scans_0.pcd, front_scans_1.pcd
@@ -33,9 +33,9 @@
     lio.sensor.enable_downsample: true
     # 体素降采样尺寸(m)：0.25 是量产定稿值。
     # 实测 0.15 / 0.20 相对 0.25 在本场景无收益（精度持平、耗时上升），不要再调小。
-    lio.sensor.voxel_fliter_size: 0.1
+    lio.sensor.voxel_fliter_size: 0.25
 
-    lio.sensor.intensity_filter_en: false
+    lio.sensor.intensity_filter_en: true
     lio.sensor.intensity_min: 5.0
     # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
     lio.sensor.lidar_channels: 0
@@ -70,7 +70,7 @@
     lio.extrinsic.odom_robo: [0.018301, 0.0, 0.068301, 180.0, -30.0, 0.0]
 
     lio.hash_map.hash_capacity: 20000000
-    lio.hash_map.vox_resolution: 0.1
+    lio.hash_map.vox_resolution: 0.25
     # 子体素固定 2×2×2（sub_div 已取消可配置）：点位粒度 = vox_resolution/2。
     # 平面拟合邻域大小 K（4..8）。原装 5，狭窄空间 8。
     lio.hash_map.plane_knn_k: 5
@@ -103,7 +103,7 @@
     # 性能统计：true 时每分钟统计一次并打印（各阶段处理耗时垂 + 点云/odom 端到端延迟的均值/最大值）；false 时不输出（推荐时 false）。退出时仍会打印一次总结。
     lio.eva.timer: true
 
-    lio.dynamic_removal.enable: true            # 是否启用动态点移除(如行人、车辆等移动物体)
+    lio.dynamic_removal.enable: false            # 是否启用动态点移除(如行人、车辆等移动物体)
     lio.dynamic_removal.method: 0               # 移除方法: 0=时序法(检查前后帧占用), 1=射线法(射线穿透检测)
     lio.dynamic_removal.grid_size: 0.2          # 体素网格大小(m), 用于空间离散化
     lio.dynamic_removal.min_neighbors: 1        # 孤立点移除阈值, 体素邻居数<此值视为孤立点并移除
