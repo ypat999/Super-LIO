@@ -109,6 +109,7 @@ namespace LI2Sup{
   double g_plane_fit_threshold = 0.15;
 
   double g_obs_weight = 1000.0;
+  double g_obs_rot_weight = 1.0;
   // 实验：距离自适应测量方差（对齐官方 FAST-LIO2）：σ²(r)=dept_err²+(beam_err·r)²。
   // beam_err=0 表示关闭（常数权重，原行为）。
   double g_beam_err = 0.0;
@@ -130,6 +131,10 @@ namespace LI2Sup{
   int    g_degeneracy_enter_frames = 3;
   int    g_degeneracy_exit_frames = 10;
   bool   g_adaptive_param_en = false;
+  /// 沿运动方向截断（M.33，默认关 = 原行为）
+  bool   g_degen_motion_dir_en = false;
+  double g_degen_motion_dir_ratio = 0.15;
+  double g_degen_motion_dir_vmin = 0.30;
   /// 坏帧护栏
   bool   g_frame_gap_guard_en = false;
   double g_frame_gap_max = 0.2;
@@ -180,12 +185,6 @@ namespace LI2Sup{
   bool   g_map_clamp_mu = false;
   int    g_map_max_points = 20;
   double g_map_merge_dist = 0.1;
-  // 子体素细分因子：2=2×2×2=8 槽（旧行为），4=4×4×4=64 槽（默认）。
-  // 实测（evict=0，粗体素 0.20 / 0.30）：KNN 命中率由 /2 的 2.55% / 17.32%
-  // 降到 0.24% / 2.30%；闭环误差 0.87m / 1.06m（drone）。代价：每体素槽位 ×8
-  // 的内存（1f 场景 RSS 3.4G、体素 1.18M）与每帧约 +2~+6ms 搜索延迟。
-  // 推荐配对：粗 0.20 + 细 0.05（精度档），粗 0.30 + 细 0.075（平衡档）。
-  int    g_map_sub_div = 4;
   int    g_hknn_max_group = -1;
   double g_hknn_order_scale = 1.0;
 
@@ -206,12 +205,62 @@ namespace LI2Sup{
   bool   g_trust_guard_en = true;
   double g_trust_jump_max = 1.0;
   double g_trust_jump_rot_max = 15.0;
+  double g_trust_vel_max = 0.0;
+  double g_map_novelty_max = 0.0;
+  double g_map_novelty_jump_min = 0.10;
+  double g_map_novelty_jump_min_rot = 1.0;
+  int    g_map_novelty_streak = 2;
+  double g_map_novelty_early = 0.0;
+  double g_trust_vel_early = 0.0;
+  int    g_novelty_early_streak = 2;
+  double g_open_guard_max_range = 0.0;
+  double g_open_guard_z_span = 0.0;
   double g_trust_corr_max = 0.5;
   double g_trust_corr_rot_max = 10.0;
-  int    g_lost_recover_frames = 5;
+  int    g_lost_recover_frames = 10;
   double g_lost_slew_p = 0.10;
   double g_lost_slew_r = 1.0;
   bool   g_lost_map_en = false;
+  int    g_lost_min_effect_pts = 100;
+  double g_lost_vel_damp = 1.0;
+  double g_lost_vel_max = 1.0;
+  double g_trust_rot_clamp_deg = 0.0;
+  double g_trust_corr_rate_max = 0.0;
+  int    g_trust_corr_rate_window = 20;
+  double g_trust_corr_coh_min = 0.0;
+  double g_trust_corr_rate_lost = 0.0;
+  double g_trust_corr_lost_hold_s = 1.0;
+  /// 只在该 bag 相对时间之后才允许判 SUSPECT（秒，0 = 不限制）
+  double g_trust_suspect_after_s = 0.0;
+  /// SUSPECT 持续超过该时长仍未恢复，强制接受 Voxmap 观测并恢复建图（秒，0 = 关闭）
+  double g_trust_suspect_max_s = 10.0;
+  double g_trust_lost_max_s = 20.0;
+  double g_trust_force_accept_max_p = 3.0;
+  double g_trust_force_accept_max_r = 20.0;
+  double g_map_freeze_after_s = 0.0;
+  double g_anchor_delay_commit_s = 0.0;
+  double g_anchor_window_s = 40.0;
+  /// 可信 Anchor GICP 重定位
+  bool   g_anchor_gicp_en = false;
+  double g_gicp_min_inlier_ratio = 0.5;
+  double g_gicp_max_rmse = 0.30;
+  double g_gicp_max_dpos = 2.0;
+  double g_gicp_max_drot = 30.0;
+  int    g_gicp_fail_max = 10;
+  double g_gicp_target_voxel = 0.10;
+  double g_gicp_target_radius = 40.0;
+  double g_gicp_target_window_s = 10.0;
+  double g_gicp_target_keyframe_dt = 1.0;
+  int    g_gicp_target_max_pts = 40000;
+  int    g_gicp_frame_interval = 10;
+  bool   g_gicp_dense_en = true;
+  int    g_gicp_source_max_pts = 800;
+  int    g_gicp_anchor_body_max_pts = 3000;
+  int    g_gicp_handback_frames = 10;
+  double g_gicp_handback_corr_p = 0.15;
+  double g_gicp_handback_corr_r = 1.5;
+  double g_gicp_handback_agree_p = 0.30;
+  double g_gicp_handback_agree_r = 5.0;
 
   /// for dynamic point removal
   bool g_dynamic_removal_enable = false;

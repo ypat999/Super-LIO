@@ -28,7 +28,7 @@ public:
 private:
   bool kf_init() override;
   bool map_init() override;
-  void UpdateMap() override;
+  void UpdateMap(bool write = true) override;
   void Output() override;
 
 private:

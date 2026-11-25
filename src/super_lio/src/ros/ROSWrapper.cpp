@@ -68,6 +68,56 @@ void LoadParamFromRos(rclcpp::Node& node)
   // 实验 C：固定地图 / 冻结地图更新（默认关闭，保持原行为）
   node.declare_parameter<bool>("lio.map.freeze", false);
   node.get_parameter("lio.map.freeze", g_map_freeze);
+  // 实验：bag 相对时间超过该值后停止写图（0 = 关闭），用于判定地图自污染
+  node.declare_parameter<double>("lio.map.freeze_after_s", 0.0);
+  node.get_parameter("lio.map.freeze_after_s", g_map_freeze_after_s);
+  // 可信 Anchor 延迟提交（0 = 关闭）；见 params.h
+  node.declare_parameter<double>("lio.anchor.delay_commit_s", 0.0);
+  node.get_parameter("lio.anchor.delay_commit_s", g_anchor_delay_commit_s);
+  node.declare_parameter<double>("lio.anchor.window_s", 40.0);
+  node.get_parameter("lio.anchor.window_s", g_anchor_window_s);
+  // 可信 Anchor GICP 重定位（默认关）：异常时用冻结 Anchor 产生第二套位姿观测
+  node.declare_parameter<bool>("lio.anchor.gicp_en", false);
+  node.get_parameter("lio.anchor.gicp_en", g_anchor_gicp_en);
+  node.declare_parameter<double>("lio.anchor.gicp_min_inlier_ratio", 0.5);
+  node.get_parameter("lio.anchor.gicp_min_inlier_ratio", g_gicp_min_inlier_ratio);
+  node.declare_parameter<double>("lio.anchor.gicp_max_rmse", 0.15);
+  node.get_parameter("lio.anchor.gicp_max_rmse", g_gicp_max_rmse);
+  node.declare_parameter<double>("lio.anchor.gicp_max_dpos", 1.5);
+  node.get_parameter("lio.anchor.gicp_max_dpos", g_gicp_max_dpos);
+  node.declare_parameter<double>("lio.anchor.gicp_max_drot", 15.0);
+  node.get_parameter("lio.anchor.gicp_max_drot", g_gicp_max_drot);
+  node.declare_parameter<int>("lio.anchor.gicp_fail_max", 3);
+  node.get_parameter("lio.anchor.gicp_fail_max", g_gicp_fail_max);
+  node.declare_parameter<double>("lio.anchor.gicp_target_voxel", 0.20);
+  node.get_parameter("lio.anchor.gicp_target_voxel", g_gicp_target_voxel);
+  node.declare_parameter<double>("lio.anchor.gicp_target_radius", 30.0);
+  node.get_parameter("lio.anchor.gicp_target_radius", g_gicp_target_radius);
+  node.declare_parameter<double>("lio.anchor.gicp_target_window_s", 10.0);
+  node.get_parameter("lio.anchor.gicp_target_window_s", g_gicp_target_window_s);
+  node.declare_parameter<double>("lio.anchor.gicp_target_keyframe_dt", 1.0);
+  node.get_parameter("lio.anchor.gicp_target_keyframe_dt", g_gicp_target_keyframe_dt);
+  node.declare_parameter<int>("lio.anchor.gicp_target_max_pts", 40000);
+  node.get_parameter("lio.anchor.gicp_target_max_pts", g_gicp_target_max_pts);
+  // GICP 降频 + 稠密源云 + 接管期交还 Voxmap
+  node.declare_parameter<int>("lio.anchor.gicp_frame_interval", 3);
+  node.get_parameter("lio.anchor.gicp_frame_interval", g_gicp_frame_interval);
+  node.declare_parameter<bool>("lio.anchor.gicp_dense_en", true);
+  node.get_parameter("lio.anchor.gicp_dense_en", g_gicp_dense_en);
+  node.declare_parameter<int>("lio.anchor.gicp_source_max_pts", 3000);
+  node.get_parameter("lio.anchor.gicp_source_max_pts", g_gicp_source_max_pts);
+  node.declare_parameter<int>("lio.anchor.gicp_body_max_pts", 3000);
+  node.get_parameter("lio.anchor.gicp_body_max_pts", g_gicp_anchor_body_max_pts);
+  node.declare_parameter<int>("lio.anchor.gicp_handback_frames", 10);
+  node.get_parameter("lio.anchor.gicp_handback_frames", g_gicp_handback_frames);
+  node.declare_parameter<double>("lio.anchor.gicp_handback_corr_p", 0.15);
+  node.get_parameter("lio.anchor.gicp_handback_corr_p", g_gicp_handback_corr_p);
+  node.declare_parameter<double>("lio.anchor.gicp_handback_corr_r", 1.5);
+  node.get_parameter("lio.anchor.gicp_handback_corr_r", g_gicp_handback_corr_r);
+  node.declare_parameter<double>("lio.anchor.gicp_handback_agree_p", 0.30);
+  node.get_parameter("lio.anchor.gicp_handback_agree_p", g_gicp_handback_agree_p);
+  node.declare_parameter<double>("lio.anchor.gicp_handback_agree_r", 5.0);
+  node.get_parameter("lio.anchor.gicp_handback_agree_r", g_gicp_handback_agree_r);
   node.declare_parameter<std::string>("lio.map.load_path", "");
   node.get_parameter("lio.map.load_path", g_map_load_path);
   std::vector<double> map_init_pose;
@@ -83,6 +133,25 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   LOG(INFO) << GREEN << " ---> [Param] map/pcd_prefix: "
             << g_pcd_prefix << RESET;
+
+  LOG(INFO) << GREEN << " ---> [Param] anchor: delay_commit=" << g_anchor_delay_commit_s
+            << " s window=" << g_anchor_window_s
+            << " s gicp=" << g_anchor_gicp_en
+            << " (inlier>=" << g_gicp_min_inlier_ratio
+            << " rmse<=" << g_gicp_max_rmse << " m dpos<=" << g_gicp_max_dpos
+            << " m drot<=" << g_gicp_max_drot << " deg fail_max=" << g_gicp_fail_max
+            << " target_voxel=" << g_gicp_target_voxel
+            << " radius=" << g_gicp_target_radius << " m"
+            << " target_win=" << g_gicp_target_window_s << " s/"
+            << g_gicp_target_keyframe_dt << " s dt, max="
+            << g_gicp_target_max_pts
+            << " dense=" << g_gicp_dense_en
+            << " max_pts=" << g_gicp_source_max_pts
+            << " body_max=" << g_gicp_anchor_body_max_pts
+            << " interval=" << g_gicp_frame_interval
+            << " handback=" << g_gicp_handback_frames
+            << " frames/" << g_gicp_handback_corr_p << " m/"
+            << g_gicp_handback_corr_r << " deg)" << RESET;
 
   node.declare_parameter<std::string>("lio.ros.lidar_topic", "/lidar");
   node.get_parameter("lio.ros.lidar_topic", g_lidar_topic);
@@ -314,6 +383,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.obs_weight", 1000.0);
   node.get_parameter("lio.observe.obs_weight", g_obs_weight);
 
+  node.declare_parameter<double>("lio.observe.rot_weight", 1.0);
+  node.get_parameter("lio.observe.rot_weight", g_obs_rot_weight);
+
   node.declare_parameter<double>("lio.observe.huber_delta_base", 0.05);
   node.get_parameter("lio.observe.huber_delta_base", g_huber_delta_base);
 
@@ -328,6 +400,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.get_parameter("lio.observe.dept_err", g_dept_err);
 
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] observe/rot_weight: " << g_obs_rot_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_scale: " << g_huber_delta_scale << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/beam_err: " << g_beam_err << RESET;
@@ -384,6 +457,14 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.adaptive_huber", 0.0);
   node.get_parameter("lio.observe.adaptive_huber", g_adaptive_huber);
 
+  // M.33 沿运动方向截断（默认关 = 原行为）
+  node.declare_parameter<bool>("lio.observe.degen_motion_dir_en", false);
+  node.get_parameter("lio.observe.degen_motion_dir_en", g_degen_motion_dir_en);
+  node.declare_parameter<double>("lio.observe.degen_motion_dir_ratio", 0.15);
+  node.get_parameter("lio.observe.degen_motion_dir_ratio", g_degen_motion_dir_ratio);
+  node.declare_parameter<double>("lio.observe.degen_motion_dir_vmin", 0.30);
+  node.get_parameter("lio.observe.degen_motion_dir_vmin", g_degen_motion_dir_vmin);
+
   // 细通道（M.27，默认全关 = 原行为）
   node.declare_parameter<bool>("lio.observe.fine_channel_en", false);
   node.get_parameter("lio.observe.fine_channel_en", g_fine_channel_en);
@@ -421,11 +502,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.hash_map.merge_dist", 0.1);
   node.get_parameter("lio.hash_map.merge_dist", g_map_merge_dist);
 
-  // 子体素细分因子：4 = 4×4×4=64 槽（默认），2 = 2×2×2=8 槽（旧行为）。
-  // 其它取值按 2 处理（见 OctVoxMap::SetOptions）。
-  node.declare_parameter<int>("lio.hash_map.sub_div", 4);
-  node.get_parameter("lio.hash_map.sub_div", g_map_sub_div);
-
   node.declare_parameter<int>("lio.hash_map.hknn_max_group", -1);
   node.get_parameter("lio.hash_map.hknn_max_group", g_hknn_max_group);
 
@@ -446,8 +522,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] hash_map/rep_mode: " << g_map_rep_mode
             << " clamp_mu: " << g_map_clamp_mu
             << " max_points: " << g_map_max_points
-            << " merge_dist: " << g_map_merge_dist
-            << " sub_div: " << g_map_sub_div << RESET;
+            << " merge_dist: " << g_map_merge_dist << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/hknn_max_group: " << g_hknn_max_group
             << " order_scale: " << g_hknn_order_scale << RESET;
   LOG(INFO) << GREEN << " ---> [Param] hash_map/plane_knn_k: " << g_plane_knn_k << RESET;
@@ -469,6 +544,29 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.get_parameter("lio.observe.trust_jump_max", g_trust_jump_max);
   node.declare_parameter<double>("lio.observe.trust_jump_rot_max", 15.0);
   node.get_parameter("lio.observe.trust_jump_rot_max", g_trust_jump_rot_max);
+  // 状态速度硬门（0 = 关闭）：挡住"每帧 <1 m 的持续拖拽"型漂移
+  node.declare_parameter<double>("lio.observe.trust_vel_max", 0.0);
+  node.get_parameter("lio.observe.trust_vel_max", g_trust_vel_max);
+  // 地图新点比例门（0 = 关闭）：错误匹配的早期指标
+  node.declare_parameter<double>("lio.observe.map_novelty_max", 0.0);
+  node.get_parameter("lio.observe.map_novelty_max", g_map_novelty_max);
+  node.declare_parameter<double>("lio.observe.map_novelty_jump_min", 0.10);
+  node.get_parameter("lio.observe.map_novelty_jump_min", g_map_novelty_jump_min);
+  node.declare_parameter<double>("lio.observe.map_novelty_jump_min_rot", 1.0);
+  node.get_parameter("lio.observe.map_novelty_jump_min_rot", g_map_novelty_jump_min_rot);
+  node.declare_parameter<int>("lio.observe.map_novelty_streak", 2);
+  node.get_parameter("lio.observe.map_novelty_streak", g_map_novelty_streak);
+  // 早期漂移前兆门（任一为 0 则关闭）：新点比例 + 速度同时抬头
+  node.declare_parameter<double>("lio.observe.map_novelty_early", 0.0);
+  node.get_parameter("lio.observe.map_novelty_early", g_map_novelty_early);
+  node.declare_parameter<double>("lio.observe.trust_vel_early", 0.0);
+  node.get_parameter("lio.observe.trust_vel_early", g_trust_vel_early);
+  node.declare_parameter<int>("lio.observe.novelty_early_streak", 2);
+  node.get_parameter("lio.observe.novelty_early_streak", g_novelty_early_streak);
+  node.declare_parameter<double>("lio.observe.open_guard_max_range", 0.0);
+  node.get_parameter("lio.observe.open_guard_max_range", g_open_guard_max_range);
+  node.declare_parameter<double>("lio.observe.open_guard_z_span", 0.0);
+  node.get_parameter("lio.observe.open_guard_z_span", g_open_guard_z_span);
   node.declare_parameter<double>("lio.observe.trust_corr_max", 0.5);
   node.get_parameter("lio.observe.trust_corr_max", g_trust_corr_max);
   node.declare_parameter<double>("lio.observe.trust_corr_rot_max", 10.0);
@@ -481,6 +579,34 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.get_parameter("lio.observe.lost_slew_r", g_lost_slew_r);
   node.declare_parameter<bool>("lio.observe.lost_map_en", false);
   node.get_parameter("lio.observe.lost_map_en", g_lost_map_en);
+  node.declare_parameter<int>("lio.observe.lost_min_effect_pts", 100);
+  node.get_parameter("lio.observe.lost_min_effect_pts", g_lost_min_effect_pts);
+  node.declare_parameter<double>("lio.observe.lost_vel_damp", 1.0);
+  node.get_parameter("lio.observe.lost_vel_damp", g_lost_vel_damp);
+  node.declare_parameter<double>("lio.observe.lost_vel_max", 1.0);
+  node.get_parameter("lio.observe.lost_vel_max", g_lost_vel_max);
+  node.declare_parameter<double>("lio.observe.trust_rot_clamp_deg", 0.0);
+  node.get_parameter("lio.observe.trust_rot_clamp_deg", g_trust_rot_clamp_deg);
+  node.declare_parameter<double>("lio.observe.trust_corr_rate_max", 0.0);
+  node.get_parameter("lio.observe.trust_corr_rate_max", g_trust_corr_rate_max);
+  node.declare_parameter<int>("lio.observe.trust_corr_rate_window", 20);
+  node.get_parameter("lio.observe.trust_corr_rate_window", g_trust_corr_rate_window);
+  node.declare_parameter<double>("lio.observe.trust_corr_coh_min", 0.0);
+  node.get_parameter("lio.observe.trust_corr_coh_min", g_trust_corr_coh_min);
+  node.declare_parameter<double>("lio.observe.trust_corr_rate_lost", 0.0);
+  node.get_parameter("lio.observe.trust_corr_rate_lost", g_trust_corr_rate_lost);
+  node.declare_parameter<double>("lio.observe.trust_corr_lost_hold_s", 1.0);
+  node.get_parameter("lio.observe.trust_corr_lost_hold_s", g_trust_corr_lost_hold_s);
+  node.declare_parameter<double>("lio.observe.trust_suspect_after_s", 0.0);
+  node.get_parameter("lio.observe.trust_suspect_after_s", g_trust_suspect_after_s);
+  node.declare_parameter<double>("lio.observe.trust_suspect_max_s", 10.0);
+  node.get_parameter("lio.observe.trust_suspect_max_s", g_trust_suspect_max_s);
+  node.declare_parameter<double>("lio.observe.trust_lost_max_s", 20.0);
+  node.get_parameter("lio.observe.trust_lost_max_s", g_trust_lost_max_s);
+  node.declare_parameter<double>("lio.observe.trust_force_accept_max_p", 3.0);
+  node.get_parameter("lio.observe.trust_force_accept_max_p", g_trust_force_accept_max_p);
+  node.declare_parameter<double>("lio.observe.trust_force_accept_max_r", 20.0);
+  node.get_parameter("lio.observe.trust_force_accept_max_r", g_trust_force_accept_max_r);
 
   LOG(INFO) << GREEN << " ---> [Param] observe/max_imu_dt: " << g_max_imu_dt << " s" << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/trust_guard_en: " << g_trust_guard_en
@@ -488,7 +614,20 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " corr_max: " << g_trust_corr_max << " corr_rot_max: " << g_trust_corr_rot_max
             << " recover_frames: " << g_lost_recover_frames
             << " slew_p: " << g_lost_slew_p << " m slew_r: " << g_lost_slew_r << " deg"
-            << " lost_map_en: " << g_lost_map_en << RESET;
+            << " lost_map_en: " << g_lost_map_en
+            << " rot_clamp: " << g_trust_rot_clamp_deg << " deg/frame"
+            << " corr_rate_max: " << g_trust_corr_rate_max << " deg/s @"
+            << g_trust_corr_rate_window << " frames"
+            << " coh_min: " << g_trust_corr_coh_min
+            << " rate_lost: " << g_trust_corr_rate_lost
+            << " hold: " << g_trust_corr_lost_hold_s << " s"
+            << " suspect_after: " << g_trust_suspect_after_s << " s"
+            << " suspect_max: " << g_trust_suspect_max_s << " s"
+            << " lost_max: " << g_trust_lost_max_s << " s"
+            << " force_accept<=" << g_trust_force_accept_max_p << " m/"
+            << g_trust_force_accept_max_r << " deg" << RESET;
+  LOG(INFO) << GREEN << " ---> [Param] map/freeze_after_s: "
+            << g_map_freeze_after_s << " s" << RESET;
 
   // submaps
   node.declare_parameter<double>("lio.submap.submap_resolution", 0.0);
@@ -799,6 +938,7 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.downsample_only") g_downsample_only = p.as_bool();
         else if (name == "lio.observe.plane_fit_threshold") g_plane_fit_threshold = p.as_double();
         else if (name == "lio.observe.obs_weight") g_obs_weight = p.as_double();
+        else if (name == "lio.observe.rot_weight") g_obs_rot_weight = p.as_double();
         else if (name == "lio.observe.huber_delta_base") g_huber_delta_base = p.as_double();
         else if (name == "lio.observe.huber_delta_scale") g_huber_delta_scale = p.as_double();
         else if (name == "lio.observe.beam_err") g_beam_err = p.as_double();
@@ -956,6 +1096,12 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "lio/cloud_body_dense", pointcloud_qos);
 
+  // 退化签名：BEST_EFFORT，与视觉支路（方案 B）的 rclcpp::SensorDataQoS() 订阅兼容；
+  // 离线回放时即便丢几帧也只影响注入强度，不影响正确性。
+  pub_degeneracy_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(
+      "lio/degeneracy",
+      rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile());
+
   // TF 必须 RELIABLE：RViz / Nav2 / tf2 均以默认 RELIABLE 订阅 /tf，
   // BEST_EFFORT 发布会因 QoS 不兼容导致 RViz 一条 TF 都收不到。
   // WiFi 弱网时的发布阻塞已由 imuOutputThread（有界队列）解耦，不再阻塞 IMU 回调。
@@ -1000,21 +1146,38 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
   data.acc = R_IMU_to_Lidar * acc_raw;
   data.gyr = R_IMU_to_Lidar * gyr_raw;
 
+  // 真回退（bag 重播/设备时钟重置）与轻微乱序必须区别对待：
+  // 真回退要让整条时间轴重来；而"晚到一拍的旧样本"只是传输乱序，
+  // 清空缓冲会把已经攒下的有效样本全扔掉——实测一次瞬时乱序就把 200 Hz
+  // IMU 缓冲打成"永远只有 1 个样本"，雷达帧随后全部被坏帧护栏跳过，
+  // Anchor 窗口塌成 4 s，整轮实验报废。这里只丢晚到的那个样本。
+  constexpr double kImuLoopBackResetSec = 1.0;
   bool loop_back = false;
+  bool ooo_drop = false;
   {
     std::lock_guard<std::mutex> lock(buffers_mutex_);
-    if (data.secs < last_timestamp_imu_) {
-      LOG(WARNING) << "imu loop back, clear buffer";
+    const double back = last_timestamp_imu_ - data.secs;
+    if (back > kImuLoopBackResetSec) {
+      LOG(WARNING) << "imu loop back " << back * 1000.0 << " ms (>" 
+                   << kImuLoopBackResetSec * 1000.0 << " ms), clear buffer";
       imu_buffer_.clear();
       imu_buffer_.push_back(data);
       last_timestamp_imu_ = data.secs;
       loop_back = true;
+    } else if (back > 0.0) {
+      ++imu_ooo_drop_;
+      if (imu_ooo_drop_ % 100 == 1) {
+        LOG(WARNING) << "imu out-of-order sample dropped: back=" << back * 1000.0
+                     << " ms, total_dropped=" << imu_ooo_drop_
+                     << ", buffered=" << imu_buffer_.size();
+      }
+      ooo_drop = true;
     } else {
       imu_buffer_.push_back(data);
       last_timestamp_imu_ = data.secs;
     }
   }
-  if (loop_back) {
+  if (loop_back || ooo_drop) {
     // eskf_->Reset();   // todo:
     return;
   }
@@ -1701,6 +1864,10 @@ void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   }
   pub_odom_->publish(odom);    // base_link frame -> lidar frequency
 
+  // 退化签名与 /lio/odom 同频（10 Hz），同源取自 degeneracySnapshot()：
+  // 放在这里而不是函数末尾，避免 base_footprint 分支提前 return 时漏发。
+  pub_degeneracy();
+
   if(g_2_robot){
     static auto pub_msg2uav_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
         "/mavros/vision_pose/pose", 10);
@@ -1824,6 +1991,39 @@ if (g_footprint_pub_en) {
 
 }
 
+
+void ROSWrapper::pub_degeneracy(){
+  if (!pub_degeneracy_) {
+    return;
+  }
+  // 布局与 superlivo_common::DegeneracySignature 对齐：
+  //   [cond6, axes, active, cond_t, evt_min, ux, uy, uz]
+  // cond6 / cond_t 都填快照里的同一个条件数：本仓 lio.observe.degen_trans_only=1 时
+  // 该值即平移 3x3 块的条件数；该标志为 0 时则是完整 6x6。发布端不做二次分解，
+  // 避免与 LIO 内部退化检测各算一套。evt_min 未被视觉支路消费，恒 0。
+  std_msgs::msg::Float64MultiArray msg;
+  msg.data.assign(8, 0.0);
+  if (super_lio_) {
+    const auto snap = super_lio_->degeneracySnapshot();
+    if (snap.ok && snap.has_info) {
+      msg.data[0] = snap.cond;
+      msg.data[1] = static_cast<double>(snap.axes);
+      msg.data[2] = snap.active ? 1.0 : 0.0;
+      msg.data[3] = snap.cond;
+      msg.data[4] = 0.0;
+      const Eigen::Vector3d dir = snap.dir_w;
+      if (dir.norm() > 1e-6) {
+        const Eigen::Vector3d u = dir.normalized();
+        msg.data[5] = u.x();
+        msg.data[6] = u.y();
+        msg.data[7] = u.z();
+      }
+    }
+  }
+  // Float64MultiArray 没有 header 字段；B 侧按消息到达时间判超时（degen_timeout_），
+  // 因此这里只填载荷。
+  pub_degeneracy_->publish(msg);
+}
 
 void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;

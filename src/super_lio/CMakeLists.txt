@@ -96,6 +96,10 @@ target_link_libraries(lio PUBLIC
   ${cpp_typesupport_target}
 )
 
+# pclomp GICP（用户仓库 ndt_omp_ros2）内部用 OpenMP 并行做近邻/协方差
+find_package(OpenMP REQUIRED)
+target_link_libraries(lio PUBLIC OpenMP::OpenMP_CXX)
+
 # ===== 下游（solution_a/b）库级引用 =====
 # BUILD_INTERFACE: 本包内编译时用源码树；INSTALL_INTERFACE: 安装后头文件在
 # include/<pkg>/ 下（见文件末尾 install(DIRECTORY include/) ），因此下游

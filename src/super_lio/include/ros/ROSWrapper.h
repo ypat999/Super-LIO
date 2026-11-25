@@ -31,6 +31,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <std_msgs/msg/u_int32.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 #ifdef LIVOX_SUPPORT
 #include <livox_ros_driver2/msg/custom_msg.hpp>
@@ -193,6 +194,8 @@ private:
   bool lidar_pushed_ = false;
   double last_timestamp_imu_ = -1.0;
   double last_timestamp_lidar_ = -1.0;
+  /// 轻微乱序被丢弃的 IMU 样本计数（只丢该样本，不清缓冲）。
+  uint64_t imu_ooo_drop_ = 0;
 
   // 多线程执行器下，IMU/lidar 回调线程与 process 线程并发访问缓冲区的保护锁
   std::mutex buffers_mutex_;
@@ -220,6 +223,12 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_dense_;
+
+  /// 退化签名话题 `/lio/degeneracy`：[cond6, axes, active, cond_t, evt_min, ux, uy, uz]。
+  /// 与 `SuperLIO::degeneracySnapshot()` 同源，10 Hz 随 /lio/odom 一起发布；
+  /// 供仍走 DDS 的视觉支路（方案 B 当前形态）消费。
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pub_degeneracy_;
+  void pub_degeneracy();
 
   /// odom 重置计数（单调，绝不清零）及其发布通道
   std::atomic<uint32_t> odom_reset_counter_{0};

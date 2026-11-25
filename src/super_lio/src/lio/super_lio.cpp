@@ -9,6 +9,12 @@
 #include <algorithm>
 
 #include <Eigen/Eigenvalues>
+#include <omp.h>
+// GICP 采用用户仓库 ypat999/ndt_omp_ros2 的 pclomp 实现（header-only，已 vendor 到
+// include/pclomp/）。相比 PCL 自带 GICP：内部固定点迭代 + BFGS，且显式实例化了
+// PointXYZI，正好用于当前帧去畸变云对冻结 Anchor 的配准。
+#include "pclomp/gicp_omp.h"
+#include "pclomp/gicp_omp_impl.hpp"
 
 
 using namespace BASIC;
@@ -41,9 +47,112 @@ inline void transformPointCloudRt(const pcl::PointCloud<pcl::PointXYZI>& src,
   dst.is_dense = src.is_dense;
 }
 
+/// 目标点云某点的法向（邻域 PCA 最小特征向量）。
+/// 只对 GICP 内点按需计算，用于构建点到面 Hessian 检查六自由度可观测性。
+inline bool estimatePointNormal(const BASIC::CloudPtr& cloud,
+                                pcl::KdTreeFLANN<BASIC::PointType>& kdtree,
+                                int idx, int k, BASIC::V3& n) {
+  std::vector<int> ids;
+  std::vector<float> d2;
+  if (idx < 0 || idx >= static_cast<int>(cloud->size())) return false;
+  if (kdtree.nearestKSearch(idx, k, ids, d2) < 3) return false;
+  Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+  for (int id : ids) mean += cloud->points[id].getVector3fMap().cast<double>();
+  mean /= static_cast<double>(ids.size());
+  Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
+  for (int id : ids) {
+    const Eigen::Vector3d d = cloud->points[id].getVector3fMap().cast<double>() - mean;
+    cov += d * d.transpose();
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(cov);
+  n = es.eigenvectors().col(0).cast<BASIC::scalar>();
+  return true;
+}
+
 /// 实验：观测噪声模型 σ²(r)=dept²+(beam·r)² 的标定距离（m）。
 /// 在该距离上有效噪声等于 g_obs_weight 对应的基准噪声，即权重在此处不放大不衰减。
 constexpr double kBeamRefDist = 5.0;
+
+/// 清图重锚后地图新点比例门的豁免时长（s）：此时地图为空，指标恒接近 1。
+constexpr double kNoveltyGraceS = 10.0;
+
+/// 新点比例抑制被放弃后的冷却时长（s）：避免"放弃 → 下一帧立刻再抑制"的抖动。
+constexpr double kNoveltyCooldownS = 5.0;
+
+/// "保图放行"的短时重复判据：window 内达到 max 次即判为持续发散，升级硬重锚。
+/// 正常新覆盖只会偶发放行一次；错误匹配则会按"放行-冷却-再命中"的节奏反复出现。
+constexpr double kNoveltyReleaseWinS = 20.0;
+constexpr int    kNoveltyReleaseMax  = 2;
+
+/// 清图重锚允许使用种子位姿的最大龄期（s）。接管/交还后种子可能已陈旧几十秒，
+/// 此时以旧种子重锚等于把位姿弹回几十秒前的位置（gicp_ad 实测 21:28:48 用
+/// 79 s 前的种子，重锚后 1.5 s 速度即被泵到 5 m/s，最终漂到 53 m）。
+/// 超过该龄期改用冻结时刻的可信位姿。
+constexpr double kNoveltySeedMaxAgeS = 5.0;
+
+/// 交还 Voxmap 时的地图覆盖门（新点比例上限）。
+/// 新点比例是"当前扫描有多少点落进空白粗体素"的直接度量，0.15 以内说明扫描
+/// 确实落在已建图区域。gicp_ac 19:53:11 与 gicp_ag 00:34:47 两次错误交还的
+/// novelty 分别为 0.17~0.21 与 0.35~0.40，交还后 2~3 s 位姿即被拖走 8~12 m
+/// （cond_yk 1e3~1e19：观测"自信但错误"），是两次发散的共同起点。
+constexpr double kHandbackNoveltyMax = 0.15;
+
+/// 交还 Voxmap 后的观察期时长（s）。交还门只看"交还瞬间自洽"，挡不住
+/// "地图段被早先漂移污染、但局部自洽"的情形：gicp_ah 47:35 交还后 2 s 状态速度
+/// 即 5.1 m/s，4 s 沿 -y 拖走 9 m。观察期内一旦速度与偏离同时抬头就撤销交还，
+/// 把偏差限制在 GICP 仍能重新锁定的量级（实测 >10 m 后 inlier 掉到 0.34）。
+constexpr double kHandbackProbationS = 4.0;
+
+/// 观察期内撤销交还的速度门（m/s）：本 bag 实飞 ≤1.3 m/s，取 2.0 留余量。
+constexpr double kHandbackProbationVelMax = 2.0;
+
+/// 观察期内撤销交还的最小偏离（m）：滤掉单帧速度尖峰，避免把正常机动误判为拖拽。
+constexpr double kHandbackProbationDevMin = 0.30;
+
+/// 新点比例判据成立时，若地图仍有足够有效点（说明位姿在"偏离已有地图"，
+/// 而不是单纯飞进未建图区域），直接以当前 IMU 位姿为基准清图重建的最小
+/// 有效点数门槛。低于该值视为正常的新覆盖区域，不触发重置。
+constexpr int kNoveltyResetMinEffectPts = 100;
+
+/// 新点比例抑制期的"绝对一致性"放行门：用冻结 Anchor 的 GICP 绝对位姿与
+/// Voxmap 结果比较。两者只差几厘米/几度 ⇒ Voxmap 并没有把位姿拖走，
+/// 新点比例高只是因为飞进了尚未建图的区域（home3 115 s 实测 new=0.41、
+/// GICP 修正仅 0.085 m/1.18°，旧逻辑因 inlier 0.227<0.5 一律判拒，
+/// 3 s 后清图重锚，连续重锚 48 次）。
+/// 与"保图放行"不同：该路径的 GICP 是独立绝对观测（目标图来自冻结 Anchor），
+/// 残差随累计拖拽线性增长，因此能同时挡住"局部自洽的错误匹配"。
+constexpr double kNoveltyVerifyMaxDpos = 0.30;    // m
+constexpr double kNoveltyVerifyMaxDrot = 5.0;     // deg
+constexpr int    kNoveltyVerifyMinInliers = 50;   // 低于此数不采信 GICP 绝对位姿
+
+/// 平移锯齿早检：单帧位移隐含速度门（m/s）。本条 bag 实飞 ≤1.3 m/s，
+/// 取 2.0 留 1.5 倍余量；正常转弯/起降的单帧尖峰偶尔会越门，靠"计数"滤掉。
+constexpr double kSawImpliedSpeed = 2.0;
+
+/// 最近 SuperLIO::kSawWin 帧里至少这么多帧超过速度门才判"平移锯齿"成立。
+constexpr int kSawMinHits = 3;
+
+/// 稠密云体素降采样 + 点数封顶。
+/// 全量去畸变云（数万点）直接喂 GICP 会退化成秒级；这里按 leaf0 起滤，点数超过
+/// max_pts 就逐步放大体素重滤，既保留比抽稀云稠密得多的几何，又守住单帧耗时。
+inline void voxelDownsampleCapped(const BASIC::CloudPtr& in, BASIC::CloudPtr& out,
+                                  double leaf0, int max_pts) {
+  if (!out) out.reset(new PointCloudType());
+  out->clear();
+  if (!in || in->empty()) return;
+  pcl::VoxelGrid<pcl::PointXYZI> vg;
+  double leaf = std::max(1e-3, leaf0);
+  const int max_iter = 8;
+  for (int k = 0; k < max_iter; ++k) {
+    vg.setLeafSize(static_cast<float>(leaf), static_cast<float>(leaf),
+                   static_cast<float>(leaf));
+    vg.setInputCloud(in);
+    out->clear();
+    vg.filter(*out);
+    if (max_pts <= 0 || static_cast<int>(out->size()) <= max_pts) return;
+    leaf *= 1.25;
+  }
+}
 
 } // anonymous namespace
 
@@ -630,6 +739,18 @@ void SuperLIO::stateProcess(){
     }
   }
 
+  // bag 相对时间基准：无条件在首帧建立，供 B（SUSPECT 武装时间）与冻结实验共用。
+  // 注意不能只在 g_map_freeze_after_s>0 时初始化 —— 否则 B 的 bag_rel_t 恒为 0，
+  // 武装门永远打不开（gicp_f 实测：净速率超阈值但一直打印"bag 相对时间 0 s"）。
+  if(first_lidar_end_time_ < 0.0) first_lidar_end_time_ = measures_.lidar.end_time;
+
+  // 建图写图门：LOST 期间不写（除非 g_lost_map_en）；SUSPECT 帧不写；
+  // 冻结实验：bag 相对时间超过 g_map_freeze_after_s 后只读旧地图、停止写图。
+  // 必须等 checkPoseTrust 之后再计算 —— 它可能刚刚退出 LOST（超时放行/重锚），
+  // 否则放行帧仍不写图、Anchor 又被冻结，新地图段起不来。
+  map_pause_frame_ = false;   // 本帧默认写图，checkPoseTrust 可置位
+  bool map_write = false;
+
   if(frame_trusted){
     // 保存 IMU 先验：信任域否决时据此回滚，撤销本次激光修正
     const SysState      sys_pred = kf_->GetSysState();
@@ -643,20 +764,37 @@ void SuperLIO::stateProcess(){
 
     checkPoseTrust(sys_pred, cov_pred);
 
+    // SUSPECT 帧的决定在本帧内生效：checkPoseTrust 里已置 map_pause_frame_
+    map_write = (!lost_ || g_lost_map_en) && !map_pause_frame_;
+    if(map_write && g_map_freeze_after_s > 0.0){
+      map_write = (measures_.lidar.end_time - first_lidar_end_time_) <= g_map_freeze_after_s;
+    }
+
+    // 可信 Anchor：一旦出现异常帧，立即作废未提交窗口并冻结，保证 Anchor 干净。
+    // GICP 接管期间除外：接管帧失败只是"这一帧没配准上"，属正常抖动，
+    // 若按 SUSPECT 冻结 Anchor，则接管期第一次失败就把唯一的绝对参考永久
+    // 锁死（gicp_v 实测 275.5 s 首次接受后 0.08 s 的一帧失败即冻结，之后
+    // committed 不再增长、目标图停止刷新，20 s 后 inlier 衰减退出接管，
+    // 再过 40 s committed 被窗口裁空，彻底失去重定位能力）。
+    if((map_pause_frame_ || lost_) && !gicp_active_){
+      freezeTrustedAnchor(map_pause_frame_ ? "suspect" : "lost");
+    }
+
     // 外部传感器约束注入（默认空实现，未 override 时零影响）
     ExternalObserve();
 
     if(g_time_eva){
       time_record_.Evaluate([this]() { ApplyDeltaCorrection(); },"[DeltaCorrect]");
-      if(!lost_ || g_lost_map_en){
-        time_record_.Evaluate([this]() { UpdateMap(); },         "[UpdateMap]");
+      if(map_write){
+        time_record_.Evaluate([this]() { UpdateMap(true); },         "[UpdateMap]");
+      }else{
+        UpdateMap(false);   // 仍统计地图新点比例（漂移早期指标），只是不写图
       }
     }else{
       ApplyDeltaCorrection();
-      if(!lost_ || g_lost_map_en){
-        UpdateMap();
-      }
+      UpdateMap(map_write);
     }
+    updateTrustedAnchor(map_write);
     Output();                // world cloud via queue (high precision)
     enqueueDense();          // 全量点异步去畸变/变换（错峰，dense 话题 + pcd 来源）
     last_ok_frame_wall_ = std::chrono::steady_clock::now();   // 看门狗心跳
@@ -819,6 +957,7 @@ void SuperLIO::enqueueDense(){
   }
   data.start_time = measures_.lidar.start_time;
   data.timestamp = kf_->GetNavState().timestamp;
+  data.lidar_end_time = measures_.lidar.end_time;
   data.T_pred = T_predicted_end_;
   data.T_corrected = kf_->GetSE3();          // 配准后位姿
 
@@ -862,6 +1001,26 @@ void SuperLIO::DenseThread(){
     CloudPtr dense_body(new PointCloudType());
     undistortCloud(data.pc_full, data.propagate_states, data.imu_gyr,
                    data.start_time, data.T_pred, dense_body);
+
+    // 1b. 顺带产出可信 Anchor 的稠密机体系帧（与旧 gicp_scan_dense_ 语义一致：
+    //     预测位姿去畸变、未做 delta 修正），交给主线程在安全点收编。
+    //     这样主线程不必每帧再对 pc_full 重复做一次全量去畸变。
+    if(g_anchor_delay_commit_s > 0.0 && g_anchor_gicp_en && !dense_body->empty()){
+      auto ta = std::chrono::high_resolution_clock::now();
+      AnchorFrame af;
+      af.t = data.lidar_end_time;
+      af.pose = data.T_corrected;
+      voxelDownsampleCapped(dense_body, af.body, g_gicp_target_voxel,
+                            g_gicp_anchor_body_max_pts);
+      std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+      anchor_dense_inbox_.push_back(std::move(af));   // 主线程按帧序消费
+      if(anchor_dense_inbox_.size() > 8) anchor_dense_inbox_.pop_front();
+      if(data_wrapper_){
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - ta).count();
+        data_wrapper_->recordLatency("[Dense]AnchorBody", ms);
+      }
+    }
 
     // 2. delta correction：T_corrected vs T_pred 的修正应用到全量 body 点
     const M3 dR = data.T_corrected.R_.transpose() * data.T_pred.R_;
@@ -1307,6 +1466,13 @@ void SuperLIO::Propagation_Undistort(){
   undistortCloud(measures_.lidar.pc, propagate_states_, imu_gyr,
                  measures_.lidar.start_time, T_end, scan_undistort_full_,
                  g_delta_interp_en ? &scan_offsets_full_ : nullptr);
+
+  frame_imu_gyr_ = imu_gyr;
+
+  // 稠密去畸变云不再在主线程每帧预生成：DenseThread 本来就要对同一份 pc_full
+  // 做全量去畸变，Anchor 帧直接复用其结果（见 DenseThread → anchor_dense_inbox_）；
+  // GICP 真正要配准时再用 ensureGicpDense() 现场补算（仅异常/接管帧，开销可忽略）。
+  gicp_dense_valid_ = false;
 }
 
 /// 通用去畸变：对 raw_pc 按 IMU 传播轨迹(propagate_states)去畸变到 out_pc。
@@ -1426,6 +1592,19 @@ void SuperLIO::undistortCloud(const pcl::PointCloud<PointXTZIT>::Ptr& raw_pc,
   out_pc->resize(write_idx);
 }
 
+/// 按需生成当前帧的全量稠密去畸变云（GICP 源云用）。
+/// 只在确实要跑 GICP 配准（异常判定/接管期）时调用，主线程不再每帧预生成。
+void SuperLIO::ensureGicpDense(){
+  if(gicp_dense_valid_) return;
+  if(!g_anchor_gicp_en || !g_gicp_dense_en) return;
+  if(!measures_.lidar.pc_full || measures_.lidar.pc_full->empty()) return;
+  if(propagate_states_.size() < 2) return;
+  if(!gicp_scan_dense_) gicp_scan_dense_.reset(new PointCloudType());
+  undistortCloud(measures_.lidar.pc_full, propagate_states_, frame_imu_gyr_,
+                 measures_.lidar.start_time, T_predicted_end_, gicp_scan_dense_, nullptr);
+  gicp_dense_valid_ = !gicp_scan_dense_->empty();
+}
+
 
 /// 位姿信任域：Observe() 之后的裁决。
 /// 判据是「相对最近可信位姿的单帧跳变」——正常帧只有帧间运动（10Hz、2m/s 约 0.2m），
@@ -1439,13 +1618,788 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
   if(!g_trust_guard_en){ return; }
 
   constexpr double kRad2Deg = 57.29577951308232;
-  const BASIC::SE3 T_post = kf_->GetSE3();
+  BASIC::SE3 T_post = kf_->GetSE3();
   const BASIC::SE3& T_pred = T_predicted_end_;   // 本帧 IMU 先验
 
-  const double corr_p = (T_post.t_ - T_pred.t_).norm();
-  const double corr_r = BASIC::SO3(T_post.R_.transpose() * T_pred.R_).log_vee().norm() * kRad2Deg;
+  double corr_p = (T_post.t_ - T_pred.t_).norm();
+  double corr_r = BASIC::SO3(T_post.R_.transpose() * T_pred.R_).log_vee().norm() * kRad2Deg;
+
+  // 拒绝激光修正时同时抑制速度。发散段的 IMU 速度是被错误姿态外推出来的
+  // （姿态拖拽 → 重力错位 → ~2 m/s² 虚假水平加速度），实测 272 s 后升到
+  // 19.6 m/s。若原样回滚，下一帧 Propagation_Undistort 会按这个速度把整帧
+  // 点云沿运动方向剪切 2 m（帧内 skew），GICP 对应关系彻底失效，形成
+  // "速度飞→点云变形→GICP 配不准→速度更飞"的正反馈。此处阻尼并封顶。
+  constexpr double kRejectVelDamp = 0.5;
+  constexpr double kRejectVelMax  = 3.0;   // m/s：drone 真实速度 < 1.5 m/s
+  auto rollback_damped = [&](const SysState& base, const ESKF::COV& cov){
+    SysState s = base;
+    s.v *= kRejectVelDamp;
+    const double vn = s.v.norm();
+    if (vn > kRejectVelMax) s.v *= kRejectVelMax / vn;
+    kf_->RollbackToState(s, cov);
+  };
+  // 清图重锚时用：位姿保留 IMU 先验，速度直接清零。实测（gicp_s）只做
+  // ×0.5 + 3 m/s 封顶时，错误姿态造成的 ~2 m/s² 虚假加速度会在 1 s 内
+  // 把速度重新泵到 5.2 m/s，随即撞速度硬门进 LOST。清零后由 IMU 重新
+  // 观测真实运动（<1.5 m/s），不会再被旧速度外推拖出帧内剪切。
+  auto rollback_zero_vel = [&](const SysState& base, const ESKF::COV& cov){
+    SysState s = base;
+    s.v.setZero();
+    kf_->RollbackToState(s, cov);
+  };
+
+  // ===== 交还 Voxmap 后的观察期 =====
+  // 交还门（corr≈0、与上次可信 GICP 一致、novelty≤0.15）只证明"交还瞬间两者自洽"，
+  // 不证明地图段没被更早的漂移污染：污染段是局部自洽的，交还后观测会把位姿沿
+  // 固定方向持续拖拽（gicp_ah 47:35 交还时 corr_p=0.027 m 全过门，2 s 后状态速度
+  // 5.1 m/s，4 s 沿 -y 拖走 9 m、novelty 0.78；等 GICP 再看到时 dpos 已 11.4 m、
+  // inlier 0.34，回正解全部被拒）。因此在观察期内一旦"速度抬头 + 已有偏离"，立即
+  // 撤销交还：位姿回滚到交还瞬间，速度清零，重新交给 GICP 接管。
+  if (handback_probation_until_t_ > 0.0) {
+    if (measures_.lidar.end_time > handback_probation_until_t_ || !handback_ref_valid_) {
+      handback_probation_until_t_ = -1.0;
+      handback_ref_valid_ = false;
+    } else {
+      const double dev_p = (T_post.t_ - handback_ref_pose_.t_).norm();
+      const double vn = sys_pred.v.norm();
+      if (vn > kHandbackProbationVelMax && dev_p > kHandbackProbationDevMin) {
+        SysState s_ref = kf_->GetSysState();
+        s_ref.R = handback_ref_pose_.R_;
+        s_ref.p = handback_ref_pose_.t_;
+        s_ref.v.setZero();
+        kf_->RollbackToState(s_ref, cov_pred);
+        gicp_active_ = true;
+        gicp_ok_streak_ = 0;
+        gicp_fail_streak_ = 0;
+        gicp_handback_streak_ = 0;
+        gicp_frame_counter_ = 0;
+        gicp_pos_hist_.clear();
+        gicp_last_pose_valid_ = false;
+        gicp_last_raw_valid_ = false;
+        gicp_hold_cycles_ = 0;
+        gicp_target_ready_ = false;   // 用最新 Anchor 重建目标图
+        gicp_target_.reset();
+        gicp_target_kdtree_.reset();
+        gicp_seed_pose_ = handback_ref_pose_;
+        gicp_seed_t_ = measures_.lidar.end_time;
+        gicp_seed_state_ = s_ref;
+        gicp_seed_valid_ = true;
+        novelty_hold_ = false;
+        lost_ = false;
+        stable_pose_ = kf_->GetSE3();
+        stable_pose_valid_ = true;
+        map_pause_frame_ = true;       // 接管期暂停写图，避免污染 Anchor/地图
+        delta_passthrough_frame_ = false;
+        handback_probation_until_t_ = -1.0;
+        handback_ref_valid_ = false;
+        LOG(WARNING) << "[GICP] 交还观察期撤销交还：偏离交还位姿 " << dev_p
+                     << " m、状态速度 " << vn << " m/s，回滚位姿并重新接管";
+        return;
+      }
+    }
+  }
+
+  // ===== 超时兜底放行前的残差门 =====
+  // 观测与当前位姿差过大时不能"强制接受"：实测（gicp_f 376 s）把 24.4 m 的
+  // 单帧跳变直接吃进 ESKF 后速度升到 125 m/s、轨迹彻底发散。大残差说明 Voxmap
+  // 已属于另一条轨迹（地图段失效），此时应放弃旧图、以当前 IMU 位姿重锚新建
+  // 地图段，而不是接受一个错误观测。
+  auto force_accept_or_reanchor = [&](const std::string& why, const std::string& detail){
+    const double res_p = (T_post.t_ - sys_pred.p).norm();
+    const double res_r = BASIC::SO3(T_post.R_.transpose() * sys_pred.R.R()).log_vee().norm() * kRad2Deg;
+    // 观测缺失时 T_post 与 IMU 先验逐位相同，残差恒为 0，残差门会把"无观测"
+    // 误判成"零残差可信"而空放行（gicp_g 6 次 LOST 超时全是这种现象）。
+    // 必须要求本帧确有足够有效平面点，否则一律走清图重锚。
+    const bool obs_valid = last_n_effect_ >= g_lost_min_effect_pts;
+    last_trust_log_wall_ = std::chrono::steady_clock::now();
+    if(obs_valid && res_p <= g_trust_force_accept_max_p && res_r <= g_trust_force_accept_max_r){
+      lost_ = false;
+      lost_recover_streak_ = 0;
+      lost_run_dt_ = 0.0;
+      gicp_lost_src_.reset();
+      gicp_lost_src_valid_ = false;
+      rot_corr_hist_.clear();
+      suspect_hold_dt_ = 0.0;
+      suspect_run_dt_ = 0.0;
+      map_novelty_streak_ = 0;
+      map_novelty_run_dt_ = 0.0;
+      novelty_hold_ = false;
+      stable_pose_ = T_post;
+      stable_pose_valid_ = true;
+      map_pause_frame_ = false;
+      LOG(WARNING) << "[Trust] " << why << "，强制接受 Voxmap 观测并恢复建图"
+                   << "（残差 " << res_p << " m / " << res_r << " deg, effect_pts="
+                   << last_n_effect_ << "，" << detail
+                   << "，累计否决 " << trust_reject_total_ << " 次）";
+      return;
+    }
+    // 大残差：回滚到带阻尼的 IMU 先验，清空旧地图段并以它为基准重锚。
+    rollback_damped(sys_pred, cov_pred);
+    const BASIC::SE3 T_keep = kf_->GetSE3();
+    if(ivox_) ivox_->clear();
+    anchor_committed_.clear();
+    anchor_pending_.clear();
+    {
+      std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+      anchor_dense_inbox_.clear();
+    }
+    anchor_frozen_ = false;
+    anchor_last_log_t_ = -1.0;
+    gicp_active_ = false;
+    gicp_ok_streak_ = 0;
+    gicp_fail_streak_ = 0;
+    gicp_handback_streak_ = 0;
+    gicp_frame_counter_ = 0;
+    gicp_pos_hist_.clear();
+    gicp_last_pose_valid_ = false;
+    gicp_last_raw_valid_ = false;
+    gicp_target_ready_ = false;
+    gicp_target_.reset();
+    gicp_target_kdtree_.reset();
+    lost_ = false;
+    lost_recover_streak_ = 0;
+    lost_run_dt_ = 0.0;
+    gicp_lost_src_.reset();
+    gicp_lost_src_valid_ = false;
+    rot_corr_hist_.clear();
+    suspect_hold_dt_ = 0.0;
+    suspect_run_dt_ = 0.0;
+    // 清图后整帧点云都落在空白区域，novelty 必然接近 1：先豁免一段时间，
+    // 等地图重新积累出覆盖后再继续用该指标判罚。
+    map_novelty_streak_ = 0;
+    map_novelty_run_dt_ = 0.0;
+    novelty_hold_ = false;
+    map_novelty_skip_until_t_ = measures_.lidar.end_time + kNoveltyGraceS;
+    stable_pose_ = T_keep;
+    stable_pose_valid_ = true;
+    map_pause_frame_ = false;
+    ++reanchor_total_;
+    LOG(WARNING) << "[Trust] " << why << "：观测残差 " << res_p << " m / " << res_r
+                 << " deg (effect_pts=" << last_n_effect_ << ") 超过门限或观测缺失，"
+                 << "拒绝接受并清空地图段重锚"
+                 << "（" << detail << "，累计重锚 " << reanchor_total_ << " 次）";
+  };
+
+  // ===== 平移锯齿（位置震荡）早检 =====
+  // 只依赖位姿自身：逐帧记录接受后的位置增量，换算隐含速度 |Δp|/dt。
+  // 平移震荡时相邻帧会被观测来回拽（一帧推开、下一帧拽回），隐含速度成倍
+  // 超过平台真实速度；正常飞行/转弯不会连续多帧越门。LOST/接管期状态不是
+  // 正常观测链，直接作废历史，避免释放后误触发。
+  bool saw_hit = false;
+  {
+    const double dp_dt = (cur_lidar_gap_ > 1e-3) ? cur_lidar_gap_ : 0.1;
+    if(lost_ || gicp_active_ || !saw_last_valid_){
+      saw_fill_ = 0;
+      saw_idx_ = 0;
+    }else{
+      const double dx = T_post.t_(0) - saw_last_p_[0];
+      const double dy = T_post.t_(1) - saw_last_p_[1];
+      const double dz = T_post.t_(2) - saw_last_p_[2];
+      saw_vimp_[saw_idx_] = std::sqrt(dx * dx + dy * dy + dz * dz) / dp_dt;
+      saw_idx_ = (saw_idx_ + 1) % kSawWin;
+      if(saw_fill_ < kSawWin) ++saw_fill_;
+      int hits = 0;
+      for(int i = 0; i < saw_fill_; ++i){
+        if(saw_vimp_[i] > kSawImpliedSpeed) ++hits;
+      }
+      saw_hit = (hits >= kSawMinHits);
+    }
+    saw_last_p_[0] = T_post.t_(0);
+    saw_last_p_[1] = T_post.t_(1);
+    saw_last_p_[2] = T_post.t_(2);
+    saw_last_valid_ = true;
+  }
+
+  // ===== 地图新点比例门（错误匹配的最早信号，先于所有分支评估）=====
+  // 位姿发散往往先表现为小幅震荡，随后错误匹配把整帧点云塞进"尚无粗体素"的
+  // 空白区域——本指标就是该比例。正常回访时地图已覆盖、比例很低
+  // （gicp_j/gicp_k 实测 0-290 s：mean 1-5%，p99 ≤20%，max ≤29.7%）。
+  // 判据用"自 streak 起点以来的累计位移/转角"而非单帧修正量：错误匹配的拖拽
+  // 每帧往往只有几厘米（gicp_k 实测 0.065 m/帧），单帧门永不成立，而累计 0.3 s
+  // 就到 0.4 m（gicp_k 实测 streak 涨到 66 帧却一次没拦住）。
+  // 成立时只做 SUSPECT：撤销本帧观测 + 暂停建图，下一帧自动重评。
+  // LOST 期不评估：那一阶段地图本就不完整，另有重定位逻辑。
+  if(g_map_novelty_max > 0.0 && !lost_ && !gicp_active_){
+    const double nov_t = measures_.lidar.end_time;
+    const double frame_dt = (cur_lidar_gap_ > 1e-3) ? cur_lidar_gap_ : 0.1;
+
+    // —— 已进入持续抑制：每帧拒绝 Voxmap 观测、暂停写图，并重试冻结 Anchor 的 GICP ——
+    // 只抑制"判据命中帧"不够：中间帧照常接受观测会被错误匹配继续拖走
+    // （gicp_t 实测 275.4 s 首次命中后 3 s 内被拖到 3.9 m/s，GICP 修正量
+    //  38.7 deg 超出单帧阈值，之后即使再跑也拉不回来）。
+    if(novelty_hold_){
+      if(g_anchor_gicp_en && !anchor_committed_.empty()){
+        bool gicp_ran = false;
+        if(tryGicpRelocalize(sys_pred, cov_pred, corr_p, corr_r, "novelty_hold", &gicp_ran)){
+          novelty_hold_ = false;
+          map_pause_frame_ = false;
+          // 接管期保持 Anchor 冻结：冻结的已提交帧是"漂移发生前"的干净绝对参考，
+          // 解冻后只有通过质量门的接受帧才提交新帧，而 updateTrustedAnchor 的窗口
+          // 裁剪以 t_now 前进为准 —— 接受帧一稀疏，旧干净帧就被成批裁掉
+          // （gicp_am 实测 committed 350→242→50→37→0，目标图固定 8 帧，inlier
+          // 0.90→0.30，最后目标图无法构建、位姿永久钉死）。冻结后不提交也不裁剪，
+          // 目标图始终是触发时刻前 10 s 的干净基准。
+          anchor_pending_.clear();
+          map_novelty_streak_ = 0;
+          map_novelty_run_dt_ = 0.0;
+          novelty_ref_valid_ = false;
+          novelty_release_cnt_ = 0;
+          novelty_release_last_t_ = -1.0;
+          LOG(WARNING) << "[Trust] 持续抑制期 GICP 重定位成功（new="
+                       << map_novelty_ratio_ << ", effect_pts=" << last_n_effect_
+                       << "）：位姿已拉回可信地图并解冻 Anchor，恢复建图";
+          return;
+        }
+        // 新覆盖放行：GICP（目标图来自触发前 10 s 的干净 Anchor）给出的绝对位姿
+        // 与 Voxmap 结果只差几厘米/几度 ⇒ 位姿并没有被拖走，新点比例高只是因为
+        // 飞进了尚未建图的区域。这是 inlier 门（≥0.5）挡不住的合法情形：场景
+        // 新覆盖时源云与旧目标图的共同可见部分本来就少。
+        // home3 实测 115 s 首次命中即属此类（new=0.41、GICP 修正 0.085 m/1.18°、
+        // inlier 0.227、rmse 0.166 m、cond 113），旧逻辑一律判拒 → 3 s 后清图重锚，
+        // 之后 novelty 恒 0.88+（建图已被暂停，指标本身失去意义）→ 连续重锚 48 次，
+        // 地图在 8k~38k 点之间震荡，最终纯 IMU 漂到 -1327 m。
+        // 与"保图放行"的区别：这里本帧观测是可信的，直接接受、不回滚不清速度。
+        if(gicp_ran && gicp_check_valid_ && gicp_check_converged_ &&
+           gicp_check_n_in_ >= kNoveltyVerifyMinInliers &&
+           gicp_check_rmse_ <= g_gicp_max_rmse){
+          const double dp_post = (gicp_check_pose_.t_ - T_post.t_).norm();
+          const double dr_post =
+              BASIC::SO3(gicp_check_pose_.R_.transpose() * T_post.R_).log_vee().norm() *
+              kRad2Deg;
+          if(dp_post <= kNoveltyVerifyMaxDpos && dr_post <= kNoveltyVerifyMaxDrot){
+            novelty_hold_ = false;
+            map_pause_frame_ = false;
+            map_novelty_streak_ = 0;
+            map_novelty_run_dt_ = 0.0;
+            novelty_ref_valid_ = false;
+            map_novelty_skip_until_t_ = nov_t + kNoveltyCooldownS;
+            // 必须同时解冻 Anchor 并作废旧目标图：放行只说明"本帧位姿与冻结
+            // Anchor 一致"，若继续冻结，committed 会永远停在触发时刻。home3_try2
+            // 实测 115 s 放行后 Anchor 未解冻，252 s 再次触发时目标图仍是 115 s
+            // 的旧区域，而飞行器已飞到 y≈70 m 的新区域 → GICP conv=0、
+            // inlier=0/1115 → 误判发散，随后清图重锚级联（z 漂到 -578 m）。
+            // 冻结期到达的异步稠密帧携带的是被钉住的位姿，一并作废。
+            anchor_pending_.clear();
+            {
+              std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+              anchor_dense_inbox_.clear();
+            }
+            anchor_frozen_ = false;
+            gicp_target_ready_ = false;
+            gicp_target_.reset();
+            gicp_target_kdtree_.reset();
+            ++novelty_verified_release_cnt_;
+            // 限频：新区域可能连续跨越几十秒，逐次打印会淹没日志
+            if(novelty_verified_release_cnt_ <= 10 || novelty_verified_release_cnt_ % 10 == 0){
+              LOG(WARNING) << "[Trust] 新覆盖放行（new=" << map_novelty_ratio_
+                           << ", GICP-Voxmap dp=" << dp_post << " m/" << dr_post
+                           << " deg, inlier=" << gicp_check_n_in_ << "/" << gicp_source_->size()
+                           << ", rmse=" << gicp_check_rmse_
+                           << " m）：位姿与冻结 Anchor 一致，保留地图继续建图"
+                           << "（累计 " << novelty_verified_release_cnt_ << " 次）";
+            }
+            return;
+          }
+        }
+      }
+      // 抑制期位姿必须钉死在判据成立时刻：回滚到冻结状态，而不是"保留 IMU
+      // 外推再把速度清零"。后者每帧仍按残余速度推进位置（实测约 1 m/s），
+      // 10 s 就把位姿推出地图覆盖（gicp_w 378 s 段 effect_pts 303→9），GICP
+      // 初值随之出界、inlier 恒为 0，最终只能在错误位姿清图重锚。
+      // home3 复测（取消钉死后）：抑制 2.4 s 内 |v| 从 0.81→3.91 m/s、
+      // effect_pts 369→14，方向随姿态误差泄漏的重力加速度单调累积；
+      // 钉死是必要的，恢复可恢复性交给下面的"出覆盖放行"。
+      kf_->RollbackToState(novelty_hold_state_, novelty_hold_cov_);
+      stable_pose_ = kf_->GetSE3();
+      stable_pose_valid_ = true;
+      map_pause_frame_ = true;
+      ++trust_reject_total_;
+      map_novelty_run_dt_ += frame_dt;
+      // 兜底：持续抑制 g_trust_suspect_max_s 仍无法重定位 ⇒ 清图重锚。
+      // 清图时速度必须清零：错误姿态造成的假加速度会在 1 s 内把封顶后的
+      // 速度重新泵到 5 m/s（gicp_s 实测），随即撞速度硬门进 LOST。
+      // 这里不能再要求 effect_pts 足够：位姿一旦出界，Voxmap 在当前位姿下
+      // 可能一个有效点都没有（effect_pts=0），若仍以 effect>=100 为前置条件，
+      // 兜底永远进不去，持续抑制变成死锁（gicp_u 实测 300→420 s 纯 IMU 漂到
+      // 119 m）。出界本身就说明必须重锚，与有效点数无关。
+      if(g_trust_suspect_max_s > 0.0 && map_novelty_run_dt_ >= g_trust_suspect_max_s){
+        // 保图放行：地图仍覆盖当前区域（本轮抑制期间 effect_pts 仍有 100+）说明
+        // 位姿并没有离开已建图区域，novelty 高更可能是短时的错配/新覆盖；此时
+        // 清图会把此前几十秒的准确地图一起毁掉，重锚位姿还带着抑制期累积误差。
+        // 先以 IMU 位姿（速度清零）放行、保留地图，下一帧照常接受 Voxmap 观测。
+        // 移动中 / 已出覆盖：此时硬重锚会把位姿钉在数秒前的位置，而飞机仍在
+        // 前飞，随后只能由 IMU 外推补偿，等于人为制造漂移（home3 0.25 实测
+        // 557 s 重锚后 25 s 内速度持续 5~6 m/s 被钳、z 单调下沉）。
+        // GICP 判据：内点极少或残差极大 ⇒ 失败原因是"扫描已跑出冻结图覆盖"，
+        // 而不是位姿被拖走，重锚没有意义。
+        const bool coverage_limited = gicp_check_valid_ &&
+            (gicp_check_n_in_ < 10 || gicp_check_rmse_ > 1.0);
+        const bool moving_release = (sys_pred.v.norm() > 1.5) || coverage_limited;
+        if(last_n_effect_ >= kNoveltyResetMinEffectPts || moving_release){
+          // 短时内反复放行 = 持续发散，不是偶发的新覆盖：正常飞行只会遇到一次，
+          // 错误匹配却会按"放行-冷却-再命中"的节奏每 9 s 左右复发一次。
+          // gicp_ac 实测：19:53:19 起连续 5 次放行，位姿被每次 5 s 的冷却窗口
+          // 推走 1-2 m，25 m 后彻底拉不回。故第 2 次直接跳过放行、走硬重锚。
+          // 移动中/出覆盖的放行例外：重锚代价更大，允许连续 4 次。
+          const bool rel_recent = (novelty_release_last_t_ > 0.0) &&
+                                  (nov_t - novelty_release_last_t_ <= kNoveltyReleaseWinS);
+          const int  rel_cnt = rel_recent ? (novelty_release_cnt_ + 1) : 1;
+          const int  rel_max = moving_release ? 4 : kNoveltyReleaseMax;
+          if(rel_cnt < rel_max){
+            // 放行位姿取冻结时刻的可信状态，零偏恢复种子值：抑制期若沿用跑飞的
+            // ba/bg 继续外推，放行后速度会被假加速度持续泵高（gicp_ac 实测
+            // 19:53:16 触发瞬间 |v|=2.18 m/s，而真实位移只有厘米级）。
+            if(moving_release){
+              // 移动中放行：保留当前预测位姿（仅清速度），不弹回冻结时刻。
+              rollback_zero_vel(sys_pred, cov_pred);
+            }else{
+              SysState s_rel = novelty_hold_state_;
+              if(gicp_seed_valid_){
+                s_rel.bg = gicp_seed_state_.bg;
+                s_rel.ba = gicp_seed_state_.ba;
+              }
+              s_rel.v.setZero();
+              kf_->RollbackToState(s_rel, novelty_hold_cov_);
+            }
+            novelty_release_cnt_ = rel_cnt;
+            novelty_release_last_t_ = nov_t;
+            stable_pose_ = kf_->GetSE3();
+            stable_pose_valid_ = true;
+            map_pause_frame_ = false;
+            map_novelty_streak_ = 0;
+            map_novelty_run_dt_ = 0.0;
+            novelty_ref_valid_ = false;
+            novelty_hold_ = false;
+            map_novelty_skip_until_t_ = nov_t + kNoveltyCooldownS;
+            const auto now = std::chrono::steady_clock::now();
+            last_trust_log_wall_ = now;
+            LOG(WARNING) << "[Trust] 持续抑制 " << g_trust_suspect_max_s
+                         << " s 未重定位"
+                         << (moving_release
+                                 ? (coverage_limited ? "（扫描已出冻结图覆盖）" : "（仍在移动）")
+                                 : "")
+                         << "，effect_pts=" << last_n_effect_
+                         << "（new=" << map_novelty_ratio_
+                         << "）：保留地图、恢复 Voxmap 观测（冷却 "
+                         << kNoveltyCooldownS << " s，第 " << rel_cnt << " 次放行）";
+            return;
+          }
+          LOG(WARNING) << "[Trust] " << kNoveltyReleaseWinS << " s 内第 " << rel_cnt
+                       << " 次保图放行（间隔 "
+                       << (nov_t - novelty_release_last_t_) << " s）：判为持续发散，改为硬重锚";
+        }
+        // 重锚位姿：优先用最后一次可信 GICP 位姿，且连同零偏/重力一起恢复。
+        // 抑制期内 IMU 一直在错误零偏下外推，若以当前（已漂移的）IMU 位姿清图，
+        // 新地图整体偏移、后续再无绝对参考（gicp_ab 19:36:52 即此：位姿从
+        // (-1.7,-2.0,4.2) 被抬到 (4.6,5.9,0) 方向，随后单调漂到 15 m 外）。
+        // 种子位姿必须"新鲜"才能用来重锚：接管/交还后种子可能已陈旧几十秒，
+        // 以旧种子清图会把位姿直接弹回几十秒前的位置（gicp_ad 实测 21:28:48
+        // 用 79 s 前的种子重锚，1.5 s 后速度被泵到 5 m/s，最终漂到 53 m）。
+        const bool seed_fresh = gicp_seed_valid_ && gicp_seed_t_ > 0.0 &&
+            (measures_.lidar.end_time - gicp_seed_t_) <= kNoveltySeedMaxAgeS;
+        if(seed_fresh){
+          SysState s_keep = gicp_seed_state_;
+          s_keep.R = gicp_seed_pose_.R_;
+          s_keep.p = gicp_seed_pose_.t_;
+          s_keep.v.setZero();
+          kf_->RollbackToState(s_keep, cov_pred);
+        }else{
+          rollback_zero_vel(sys_pred, cov_pred);
+        }
+        const BASIC::SE3 T_keep = kf_->GetSE3();
+        if(ivox_) ivox_->clear();
+        anchor_committed_.clear();
+        anchor_pending_.clear();
+        {
+          std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+          anchor_dense_inbox_.clear();
+        }
+        anchor_frozen_ = false;
+        anchor_last_log_t_ = -1.0;
+        gicp_active_ = false;
+        gicp_ok_streak_ = 0;
+        gicp_fail_streak_ = 0;
+        gicp_handback_streak_ = 0;
+        gicp_frame_counter_ = 0;
+        gicp_pos_hist_.clear();
+        gicp_last_pose_valid_ = false;
+        gicp_last_raw_valid_ = false;
+        gicp_seed_valid_ = false;
+        gicp_hold_cycles_ = 0;
+        gicp_target_ready_ = false;
+        gicp_target_.reset();
+        gicp_target_kdtree_.reset();
+        gicp_lost_src_.reset();
+        gicp_lost_src_valid_ = false;
+        rot_corr_hist_.clear();
+        suspect_hold_dt_ = 0.0;
+        suspect_run_dt_ = 0.0;
+        map_novelty_streak_ = 0;
+        map_novelty_run_dt_ = 0.0;
+        novelty_ref_valid_ = false;
+        novelty_hold_ = false;
+        novelty_release_cnt_ = 0;
+        novelty_release_last_t_ = -1.0;
+        map_novelty_skip_until_t_ = nov_t + kNoveltyGraceS + kNoveltyCooldownS;
+        stable_pose_ = T_keep;
+        stable_pose_valid_ = true;
+        map_pause_frame_ = false;
+        ++reanchor_total_;
+        LOG(WARNING) << "[Trust] 持续抑制 " << g_trust_suspect_max_s
+                     << " s 仍未能重定位（new=" << map_novelty_ratio_
+                     << "）：清空地图段并以"
+                     << (seed_fresh ? "新鲜种子位姿" : "冻结时刻可信位姿")
+                     << "继续建图（速度清零，豁免 "
+                     << kNoveltyGraceS << " s，累计重锚 " << reanchor_total_ << " 次）";
+        return;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 1.0){
+        last_trust_log_wall_ = now;
+        LOG(WARNING) << "[Trust] 持续抑制中 " << map_novelty_run_dt_ << " s（new="
+                     << map_novelty_ratio_ << ", |v|=" << sys_pred.v.norm()
+                     << " m/s, effect_pts=" << last_n_effect_
+                     << "）：继续拒绝 Voxmap 观测并重试 GICP";
+      }
+      return;
+    }
+
+    // —— 未进入抑制：逐帧评估判据 ——
+    const bool nov_grace = (nov_t < map_novelty_skip_until_t_);
+    // 早期漂移前兆：新点比例与 IMU 预测速度同时抬头（任一阈值 <=0 则关闭）。
+    // gicp_o 逐帧统计：健康段两者从不同时成立（40-60 s 新点比例 >0.20 连续
+    // 13 帧，但速度低；60-180 s 速度峰值 1.2 m/s，但新点比例低）；275.3 s
+    // 发散前 0.207 / 1.79 m/s 首次同时成立，比 0.25+3 帧判据早约 1 s。
+    const bool early_on = (g_map_novelty_early > 0.0 && g_trust_vel_early > 0.0);
+    const double vn_pred = sys_pred.v.norm();
+    const bool early_hit = early_on && map_novelty_ratio_ > g_map_novelty_early &&
+                           vn_pred > g_trust_vel_early;
+    // 开阔区门控：本帧扫描尺度超门（无结构的大空间）时，新点比例与平移锯齿
+    // 判据不评估。此时地图上没有对应结构，novelty 天然偏高；冻结 Anchor 的
+    // 目标图与新区域零重叠，GICP 无法做绝对校验，判据一旦成立只能硬重锚，
+    // 而重锚会把位姿钉在数秒前、随后由 IMU 外推补偿，反而制造漂移
+    // （home3 0.25 实测：430 s 触发 → 476 s |v|>2 → 497 s 下沉）。
+    const bool open_space =
+        (g_open_guard_max_range > 0.0 && scan_max_range_ > g_open_guard_max_range) ||
+        (g_open_guard_z_span > 0.0 && scan_z_span_ > g_open_guard_z_span);
+    if(open_space && !nov_grace &&
+       (map_novelty_ratio_ > g_map_novelty_max || early_hit || saw_hit)){
+      const auto now = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 2.0){
+        last_trust_log_wall_ = now;
+        LOG(WARNING) << "[Trust] 开阔区门控：跳过新点比例/平移锯齿判据（new="
+                     << map_novelty_ratio_ << ", rmax=" << scan_max_range_
+                     << " m, z_span=" << scan_z_span_ << " m）";
+      }
+      map_novelty_streak_ = 0;
+      map_novelty_run_dt_ = 0.0;
+      novelty_ref_valid_ = false;
+    }else if(nov_grace || (map_novelty_ratio_ <= g_map_novelty_max && !early_hit && !saw_hit)){
+      map_novelty_streak_ = 0;
+      map_novelty_run_dt_ = 0.0;
+      novelty_ref_valid_ = false;
+    }else{
+      if(!novelty_ref_valid_){
+        novelty_ref_pose_ = T_post;
+        novelty_ref_valid_ = true;
+      }
+      ++map_novelty_streak_;
+      const double cum_p = (T_post.t_ - novelty_ref_pose_.t_).norm();
+      const double cum_r = BASIC::SO3(novelty_ref_pose_.R_.transpose() * T_post.R_)
+                               .log_vee().norm() * kRad2Deg;
+      const bool late_hit = map_novelty_streak_ >= g_map_novelty_streak &&
+          (cum_p > g_map_novelty_jump_min || cum_r > g_map_novelty_jump_min_rot);
+      const bool early_trigger = early_on && early_hit &&
+          map_novelty_streak_ >= std::max(1, g_novelty_early_streak) &&
+          last_n_effect_ >= kNoveltyResetMinEffectPts;
+      const bool saw_trigger = saw_hit && last_n_effect_ >= kNoveltyResetMinEffectPts;
+      if(late_hit || early_trigger || saw_trigger){
+        const int streak_now = map_novelty_streak_;
+        const char* gate_name = saw_trigger ? "平移锯齿(位置震荡)"
+                              : (early_trigger ? "早期前兆(新点比例+速度)" : "地图新点比例");
+        if(last_n_effect_ < kNoveltyResetMinEffectPts){
+          // 地图有效点很少 ⇒ 更可能是"飞进未建图区域"而不是错误匹配：
+          // 轻量抑制，超时后放弃并接受观测（清图重锚反而会把正常的新覆盖毁掉）。
+          map_novelty_run_dt_ += frame_dt;
+          if(g_trust_suspect_max_s > 0.0 && map_novelty_run_dt_ >= g_trust_suspect_max_s){
+            map_novelty_streak_ = 0;
+            map_novelty_run_dt_ = 0.0;
+            novelty_ref_valid_ = false;
+            map_novelty_skip_until_t_ = nov_t + kNoveltyCooldownS;
+            LOG(WARNING) << "[Trust] " << gate_name << " 抑制已持续 "
+                         << g_trust_suspect_max_s << " s，但地图有效点仅 "
+                         << last_n_effect_ << " 个（疑似新覆盖区域）：放弃抑制、"
+                         << "接受本帧观测（冷却 " << kNoveltyCooldownS << " s）";
+            return;
+          }
+          rollback_damped(sys_pred, cov_pred);
+          stable_pose_ = kf_->GetSE3();
+          stable_pose_valid_ = true;
+          map_pause_frame_ = true;
+          ++trust_reject_total_;
+          const auto now = std::chrono::steady_clock::now();
+          if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 2.0){
+            last_trust_log_wall_ = now;
+            LOG(WARNING) << "[Trust] " << gate_name << " 判据成立（new="
+                         << map_novelty_ratio_ << ", 连续 " << streak_now
+                         << " 帧），但地图有效点仅 " << last_n_effect_
+                         << " 个（疑似新覆盖区域）：撤销本帧观测、暂停建图";
+          }
+          return;
+        }
+        // 地图仍有足够有效点 ⇒ 位姿在偏离已有地图，正在形成错误匹配。
+        // 本帧先撤销观测，随后进入持续抑制：后续帧一律拒绝 Voxmap 观测，
+        // 优先用冻结 Anchor 的 GICP 把位姿拉回可信 world 坐标；
+        // 无 Anchor 或持续 g_trust_suspect_max_s 未收敛才清图重锚。
+        rollback_damped(sys_pred, cov_pred);
+        stable_pose_ = kf_->GetSE3();
+        stable_pose_valid_ = true;
+        map_pause_frame_ = true;
+        ++trust_reject_total_;
+        novelty_hold_ = true;
+        // 冻结位姿：抑制期每帧回滚到这里，GICP 的初值始终是判据成立时刻的位姿。
+        novelty_hold_state_ = kf_->GetSysState();
+        novelty_hold_cov_   = kf_->GetCov();
+        map_novelty_run_dt_ += frame_dt;
+        LOG(WARNING) << "[Trust] " << gate_name << " 判据成立（new="
+                     << map_novelty_ratio_ << ", |v|=" << vn_pred
+                     << " m/s, 连续 " << streak_now << " 帧, 累计修正 "
+                     << cum_p << " m / " << cum_r << " deg, effect_pts="
+                     << last_n_effect_ << "）：撤销本帧观测并进入持续抑制，"
+                     << "逐帧重试冻结 Anchor 的 GICP 绝对重定位";
+        return;
+      }
+    }
+  }
+
+  // ===== GICP 接管：用冻结可信 Anchor 产生第二套 LiDAR 位姿观测 =====
+  // 已接管（gicp_active_）时 GICP 是唯一可信观测：失败就退回 IMU 预测并暂停建图，
+  // 绝不能让可疑的 Voxmap 观测把位姿再次拖走（否则会像实验里一样再也拉不回来）。
+  // 已 LOST 时每帧尝试，成功即恢复；首次 SUSPECT 在速率门内尝试。
+  if(gicp_active_){
+    // 降频：单帧 GICP 实测 200~800 ms，每帧都跑会让节点越落越远（实测末尾滞后
+    // 约 60 s），且 GICP 的慢变误差在帧间由 IMU 传播已能覆盖。接管期每
+    // g_gicp_frame_interval 帧做一次绝对观测，其余帧按拟合速度限幅外推，
+    // 且这些外推帧不写图、不提交 Anchor（见下方 map_pause_frame_）。
+    ++gicp_frame_counter_;
+    const int interval = std::max(1, g_gicp_frame_interval);
+    const bool run_gicp = (interval <= 1) || ((gicp_frame_counter_ - 1) % interval == 0);
+    if(run_gicp && tryGicpRelocalize(sys_pred, cov_pred, corr_p, corr_r, "active")){
+      map_pause_frame_ = false;
+      return;
+    }
+    if(gicp_active_){   // 未退出接管：本帧不用 Voxmap 修正
+      // 累积本帧 IMU 旋转增量（相对被钉住的上一可信姿态），供接受帧的 bg 估计。
+      if(gicp_last_pose_valid_){
+        gicp_imu_rot_acc_ +=
+            BASIC::SO3(gicp_last_pose_.R_.transpose() * sys_pred.R.R()).log_vee();
+      } else {
+        gicp_imu_rot_acc_.setZero();
+      }
+      if(run_gicp){
+        // GICP 失败帧：位姿钉在上一帧"已接受的 GICP 解"上、速度清零（hold）。
+        // 不能用带速度的 IMU 外推：GICP 降频后两帧之间隔 N×0.1 s，外推误差
+        // 逐帧累积，一旦初值离 target 超过 0.5 m 粗对应半径就再也找不到对应，
+        // GICP 会永久返回 conv=0/dpos=0（实测 11:23:3x 起的死锁）。
+        SysState s = sys_pred;
+        if(gicp_last_pose_valid_){
+          s.R = gicp_last_pose_.R_;
+          s.p = gicp_last_pose_.t_;
+        }
+        s.v.setZero();
+        kf_->RollbackToState(s, cov_pred);
+        map_pause_frame_ = true;
+      }else{
+        // 降频帧：**不能按 IMU 外推**。实测（gicp_h 270~320 s）每次 GICP 接受后
+        // 拟合速度只有 0.06 m/s，随后 6 帧纯 IMU 传播就把速度泵到 3.4 m/s
+        // （≈5.5 m/s² 的虚假加速度，来自姿态/零偏误差的重力泄漏）：位姿每 0.6 s
+        // 冲出 1.5~2 m，GICP 对应关系随之劣化，一旦连续失败退出接管，位姿再也
+        // 拉不回来（最终 |p| 达 3.9 km）。这里改为以"上一帧已接受的 GICP 位姿"
+        // 为基准、用拟合速度做限幅外推：真实低频运动保留，IMU 速度自积分被切断。
+        SysState s = sys_pred;
+        V3 v_fit = fitGicpVelocity();
+        const double vn_fit = v_fit.norm();
+        if (vn_fit > kRejectVelMax) v_fit *= kRejectVelMax / vn_fit;
+        if(gicp_last_pose_valid_){
+          const double t_lidar_end = measures_.lidar.end_time;
+          double dt_g = (t_lidar_end > gicp_last_t_) ? (t_lidar_end - gicp_last_t_) : 0.0;
+          if (dt_g > 0.5) dt_g = 0.5;
+          V3 dp = v_fit * dt_g;
+          const double dpn = dp.norm();
+          constexpr double kGicpHoldMaxStep = 0.30;   // m/帧，超限说明速度不可信
+          if (dpn > kGicpHoldMaxStep) dp *= kGicpHoldMaxStep / dpn;
+          s.R = gicp_last_pose_.R_;
+          s.p = gicp_last_pose_.t_ + dp;
+        }
+        s.v = v_fit;
+        kf_->RollbackToState(s, cov_pred);
+        // 降频帧不写图、不进 Anchor。外推位姿只有拟合速度支撑，一旦累积偏差，
+        // 这些帧会以漂移位姿写 IVox 并提交 Anchor，随后 updateTrustedAnchor 用
+        // t_now 把窗口内干净的旧帧裁掉（gicp_al 实测 committed 136→122→…→10，
+        // 目标图固定 3 帧 / 5093 点，inlier 0.60→0.11）。接管期只有已通过质量门
+        // 的 GICP 接受帧才允许写图与提交 Anchor。
+        map_pause_frame_ = true;
+      }
+      return;
+    }
+  }
+  if(lost_ && tryGicpRelocalize(sys_pred, cov_pred, corr_p, corr_r, "lost")){
+    map_pause_frame_ = false;
+    return;
+  }
 
   if(!lost_){
+    // ===== 单帧姿态修正限幅（抗"渐进拖歪"）=====
+    // 实测：健康段每帧 LiDAR 姿态修正 0.2~0.4 deg；发散前 272~280 s 升到 1.0~3.0 deg，
+    // 且修正方向与速度同向（deg_dir_v≈0.97）。单帧跳变门（默认 25 deg）永远拦不住，
+    // 但 10~20 deg/s 的持续拖拽会把姿态与重力错开，产生 ~2 m/s² 的虚假水平加速度，
+    // 速度自积分到数百 m/s。此处把每帧姿态修正量限幅，平移修正照常接受。
+    if(g_trust_rot_clamp_deg > 0.0 && corr_r > g_trust_rot_clamp_deg && corr_r > 1e-9){
+      V3 dr = BASIC::SO3(T_pred.R_.transpose() * T_post.R_).log_vee();
+      dr *= (g_trust_rot_clamp_deg / corr_r);
+      SysState sys_fix = sys_pred;
+      sys_fix.p = T_post.t_;                        // 平移修正保持
+      sys_fix.R = sys_pred.R * BASIC::SO3::Exp(dr); // 姿态修正限幅
+      kf_->RollbackToState(sys_fix, cov_pred);
+      T_post = kf_->GetSE3();
+      corr_p = (T_post.t_ - T_pred.t_).norm();
+      corr_r = BASIC::SO3(T_post.R_.transpose() * T_pred.R_).log_vee().norm() * kRad2Deg;
+      ++rot_clamp_total_;
+      const auto now = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+        last_trust_log_wall_ = now;
+        LOG(WARNING) << "[Trust] 姿态修正限幅: 本帧 " << corr_r << " deg 被压到 "
+                     << g_trust_rot_clamp_deg << " deg（累计 " << rot_clamp_total_ << " 次）";
+      }
+    }
+
+    // ===== 武装门（B）=====
+    // bag 相对时间未到之前，速率门与跳变门都只记录、不改状态机。
+    // 依据：起飞/手持上机段存在合法大修正（gicp_e 41 s 3.15 deg/s、gicp_f 2.4 s
+    // 10.6 deg/s + 1.03 m 跳变），它们会把信任状态机点着并永久冻结空 Anchor。
+    const double bag_rel_t = (first_lidar_end_time_ > 0.0)
+        ? (measures_.lidar.end_time - first_lidar_end_time_) : 0.0;
+    const bool suspect_armed =
+        (g_trust_suspect_after_s <= 0.0) || (bag_rel_t >= g_trust_suspect_after_s);
+
+    // ===== 姿态修正净速率门（SUSPECT / LOST 分级）=====
+    // 判据用"净速率" |Σdr|/Σdt（不是 |dr| 之和）：健康段修正方向来回摆动、净速率
+    // 小（实测 2 s 窗 mean 0.7~1.1 deg/s，p90 1.9）；拖歪时每帧修正方向一致
+    // （deg_dir_v≈0.97），净速率直接到 5~10 deg/s，分离度约 4 倍。
+    // 再叠加方向一致性 C_θ = |Σdr| / (Σ|dr|+ε)：只有"同向持续拖拽"才触发，
+    // 排除正常转弯时来回摆动造成的偏高净速率。
+    if(g_trust_corr_rate_max > 0.0){
+      const double dt_f = (cur_lidar_gap_ > 1e-3) ? cur_lidar_gap_ : 0.1;
+      const V3 dr_vec = BASIC::SO3(T_pred.R_.transpose() * T_post.R_).log_vee();
+      rot_corr_hist_.emplace_back(dt_f, dr_vec);
+      const int win = std::max(4, g_trust_corr_rate_window);
+      while(static_cast<int>(rot_corr_hist_.size()) > win) rot_corr_hist_.pop_front();
+      double sum_dt = 0.0, sum_abs = 0.0;
+      V3 sum_dr = V3::Zero();
+      for(const auto& e : rot_corr_hist_){
+        sum_dt += e.first;
+        sum_dr += e.second;
+        sum_abs += e.second.norm();
+      }
+      const double rate = (sum_dt > 1e-6) ? (sum_dr.norm() * kRad2Deg / sum_dt) : 0.0;
+      const double coh  = (sum_abs > 1e-9) ? (sum_dr.norm() / sum_abs) : 0.0;
+      // B：实验门 —— 只在该 bag 相对时间之后才允许判 SUSPECT。
+      // 起飞/手持上机段的合法大修正不应把状态机点着（gicp_e 41 s 假触发即此类）。
+      const bool over_rate = rate > g_trust_corr_rate_max && coh >= g_trust_corr_coh_min &&
+          static_cast<int>(rot_corr_hist_.size()) >= std::max(4, win / 2);
+
+      if(over_rate && !suspect_armed){
+        const auto now = std::chrono::steady_clock::now();
+        if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+          last_trust_log_wall_ = now;
+          LOG(WARNING) << "[Trust] 姿态修正净速率 " << rate << " deg/s (C=" << coh
+                       << ") 超阈值，但 bag 相对时间 " << bag_rel_t << " s < "
+                       << g_trust_suspect_after_s
+                       << " s，暂不判 SUSPECT（保留 Voxmap 观测）";
+        }
+      }
+
+      if(over_rate && suspect_armed){
+        // 先尝试用冻结可信 Anchor 的 GICP 位姿替代这次可疑的 Voxmap 观测。
+        // 与"撤销修正"不同：这是换成另一套独立配准观测，滤波器不会失去 LiDAR 约束。
+        bool gicp_ran = false;
+        if(tryGicpRelocalize(sys_pred, cov_pred, corr_p, corr_r, "rate", &gicp_ran)){
+          map_pause_frame_ = false;
+          suspect_run_dt_ = 0.0;
+          return;
+        }
+        // C：GICP 被全局节流（本帧没跑）时无法独立复核，不单凭速率门判 SUSPECT，
+        // 保留本帧 Voxmap 观测继续建图；等下一个真正的复核帧再判。
+        const bool can_judge = gicp_ran || !g_anchor_gicp_en;
+        // SUSPECT 连续时长按帧间隔累计（含被节流帧），D 的超时才是真实墙钟时长。
+        suspect_run_dt_ += dt_f;
+        // D：SUSPECT 连续超时兜底 —— 长时间无法恢复时强制接受 Voxmap 观测并恢复建图，
+        // 避免像 gicp_e 那样 3.5 min 纯 IMU 裸飞、Anchor 覆盖彻底丢失。
+        if(g_trust_suspect_max_s > 0.0 && suspect_run_dt_ >= g_trust_suspect_max_s){
+          const std::string detail = "净速率 " + std::to_string(rate) + " deg/s, C=" +
+                                     std::to_string(coh);
+          force_accept_or_reanchor("SUSPECT 已持续超过 " +
+                                   std::to_string(g_trust_suspect_max_s) + " s", detail);
+          return;
+        }
+        if(!can_judge){
+          const auto now = std::chrono::steady_clock::now();
+          if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+            last_trust_log_wall_ = now;
+            LOG(WARNING) << "[Trust] 净速率 " << rate << " deg/s (C=" << coh
+                         << ") 超阈值，但本帧 GICP 被节流未复核，保留 Voxmap 观测"
+                         << "（SUSPECT 累计 " << suspect_run_dt_ << " s）";
+          }
+        }else{
+          // 本帧激光修正被判不可信：撤销，保留 IMU 传播（不进 LOST 也能自恢复）
+          rollback_damped(sys_pred, cov_pred);
+          T_post = kf_->GetSE3();
+          corr_p = (T_post.t_ - T_pred.t_).norm();
+          corr_r = BASIC::SO3(T_post.R_.transpose() * T_pred.R_).log_vee().norm() * kRad2Deg;
+          ++trust_reject_total_;
+          // 拒绝后当前状态即 IMU 推断，是现有最佳估计，刷新可信位姿锁存，
+          // 避免长时间 SUSPECT 后 IMU 慢漂把跳变门误触成 LOST。
+          stable_pose_ = T_post;
+          stable_pose_valid_ = true;
+          map_pause_frame_ = true;   // 本帧不写图（防止把拖歪的点云写进配准地图）
+
+          // 分级：只有"更快 + 持续"才升级 LOST，其余仅 SUSPECT（下一帧自动重评）
+          bool escalate = false;
+          if(g_trust_corr_rate_lost > 0.0 && rate > g_trust_corr_rate_lost){
+            suspect_hold_dt_ += dt_f;
+            escalate = suspect_hold_dt_ >= g_trust_corr_lost_hold_s;
+          }else{
+            suspect_hold_dt_ = 0.0;
+          }
+
+          const auto now = std::chrono::steady_clock::now();
+          if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+            last_trust_log_wall_ = now;
+            LOG(WARNING) << "[Trust] 姿态修正净速率 " << rate << " deg/s (C=" << coh
+                         << ") 超阈值(" << g_trust_corr_rate_max << " deg/s, 窗 " << win
+                         << " 帧)，撤销本帧激光修正、暂停建图"
+                         << (escalate ? "，升级 LOST" : "（SUSPECT，不进 LOST）")
+                         << "（累计否决 " << trust_reject_total_ << " 次）";
+          }
+          if(!escalate){
+            return;   // SUSPECT：保持正常态，下一帧继续评估
+          }
+          lost_ = true;
+          lost_recover_streak_ = 0;
+          lost_run_dt_ = 0.0;
+          gicp_lost_src_.reset();
+          gicp_lost_src_valid_ = false;
+          rot_corr_hist_.clear();
+          suspect_hold_dt_ = 0.0;
+          suspect_run_dt_ = 0.0;
+          return;
+        }
+      }
+    }else{
+      suspect_hold_dt_ = 0.0;   // 本帧正常：清空 SUSPECT 持续计时
+      suspect_run_dt_ = 0.0;
+    }
+
     if(!stable_pose_valid_){
       stable_pose_ = T_post;
       stable_pose_valid_ = true;
@@ -1454,15 +2408,94 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
     const double jump_p = (T_post.t_ - stable_pose_.t_).norm();
     const double jump_r = BASIC::SO3(T_post.R_.transpose() * stable_pose_.R_).log_vee().norm() * kRad2Deg;
 
-    if(jump_p > g_trust_jump_max || jump_r > g_trust_jump_rot_max){
-      kf_->RollbackToState(sys_pred, cov_pred);
+    // 阈值按帧间隔缩放：掉帧/断档时 cur_lidar_gap_ 明显大于标称 0.1 s，
+    // 单帧修正量本来就更大（IMU 先验覆盖更长时段）。不缩放会把"因掉帧变大
+    // 的正常修正"误判为跳变并回滚 —— 实测一次 0.5 s 掉帧 + 快速自转产生
+    // 31.6° 修正被回滚，位姿直接丢 30°，随后同向恢复修正又把 SUSPECT 门
+    // 永久点着（exp_susp 在 39 s 就是这样崩的）。
+    const double gap_scale = std::max(1.0, cur_lidar_gap_ / 0.1);
+    const double jump_p_max = g_trust_jump_max * gap_scale;
+    const double jump_r_max = g_trust_jump_rot_max * gap_scale;
+
+    // ===== 状态速度硬门 =====
+    // 单帧跳变门只看"单帧位移"，挡不住"每帧 <1 m 的持续拖拽"：gicp_i 298 s 起
+    // 状态速度 1.1 → 10 m/s（≈6 m/s²，姿态/零偏误差的重力泄漏叠加被放行的错误
+    // 观测），py 在 1.5 s 内从 1.4 m 冲到 10 m，而每帧位移都低于 1 m 门限，
+    // 于是一路放行，最终飞到 327 m、pz −246 m。drone 本 bag 实飞速度 ≤1.3 m/s。
+    // 速度超门时把状态速度钳回"真实运动量级"；但不再整帧否决/进 LOST ——
+    // 那样会丢掉唯一能修正姿态的观测（见下方注释与 gicp_w 末段实测）。
+    const double vn_pred = sys_pred.v.norm();
+    if(g_trust_vel_max > 0.0 && suspect_armed && vn_pred > g_trust_vel_max){
+      // 超速几乎总是姿态/零偏误差造成的重力泄漏（本 bag 实飞 ≤1.3 m/s）。
+      // 原策略"撤销本帧激光修正 + 进 LOST"会同时停掉建图与全部观测：LOST 期
+      // lost_map_en=false，纯 IMU 在 4~5 m/s 状态下继续积分，实测 gicp_w 末段
+      // 30 s 冲出 46 m，z 掉到 −23 m，且 LOST↔退出 LOST 反复振荡。
+      // 改为：保留本帧观测（它同时修正姿态与速度），仅把状态速度钳到
+      // lost_vel_max；位姿仍有 Voxmap 约束，地图继续累积。
+      SysState s_vel = kf_->GetSysState();
+      const double vn_post = s_vel.v.norm();
+      if(vn_post > g_lost_vel_max && vn_post > 1e-9){
+        s_vel.v *= (g_lost_vel_max / vn_post);
+        kf_->RollbackToState(s_vel, cov_pred);
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 1.0){
+        last_trust_log_wall_ = now;
+        LOG(WARNING) << "[Trust] 状态速度 " << vn_pred << " m/s 超门限("
+                     << g_trust_vel_max << " m/s)：保留本帧观测、姿态参与修正，"
+                     << "状态速度钳到 " << g_lost_vel_max << " m/s（不进 LOST）";
+      }
+      return;
+    }
+
+    if((jump_p > jump_p_max || jump_r > jump_r_max) && !suspect_armed){
+      // B：未武装段的合法大修正（起飞/上机）只记录，不升级 LOST
+      const auto now = std::chrono::steady_clock::now();
+      if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+        last_trust_log_wall_ = now;
+        LOG(WARNING) << "[Trust] 单帧跳变 " << jump_p << " m / " << jump_r
+                     << " deg 超阈值，但 bag 相对时间 " << bag_rel_t << " s < "
+                     << g_trust_suspect_after_s << " s，暂不升级（保留 Voxmap 观测）";
+      }
+    }
+    if((jump_p > jump_p_max || jump_r > jump_r_max) && suspect_armed){
+      // 单帧跳变也先尝试 GICP 独立观测，避免直接进入 LOST
+      bool jump_gicp_ran = false;
+      if(tryGicpRelocalize(sys_pred, cov_pred, corr_p, corr_r, "jump", &jump_gicp_ran)){
+        map_pause_frame_ = false;
+        return;
+      }
+      // C：本帧被全局节流时没有独立复核，不升级 LOST——只撤销本帧观测并保持
+      // 非 LOST 态，等下一个复核帧（≤1.5 s）再判定。否则 1.06 m 的正常大修正
+      // 会抢在速率门/GICP 之前把状态机打进 LOST（gicp_f 225 s 即如此）。
+      if(!jump_gicp_ran && g_anchor_gicp_en){
+        rollback_damped(sys_pred, cov_pred);
+        stable_pose_ = kf_->GetSE3();
+        stable_pose_valid_ = true;
+        map_pause_frame_ = true;
+        const auto now = std::chrono::steady_clock::now();
+        if(std::chrono::duration<double>(now - last_trust_log_wall_).count() > 5.0){
+          last_trust_log_wall_ = now;
+          LOG(WARNING) << "[Trust] 单帧跳变 " << jump_p << " m / " << jump_r
+                       << " deg 超阈值，但本帧 GICP 被节流未复核："
+                       << "仅撤销本帧观测、暂不升级 LOST（下一复核帧再判）";
+        }
+        return;
+      }
+      rollback_damped(sys_pred, cov_pred);
       lost_ = true;
       lost_recover_streak_ = 0;
+      lost_run_dt_ = 0.0;
+      gicp_lost_src_.reset();
+      gicp_lost_src_valid_ = false;
+      rot_corr_hist_.clear();
+      suspect_hold_dt_ = 0.0;
       ++trust_reject_total_;
       last_trust_log_wall_ = std::chrono::steady_clock::now();
       LOG(WARNING) << "[Trust] 单帧跳变 " << jump_p << " m / " << jump_r
-                   << " deg 超阈值(" << g_trust_jump_max << " m / "
-                   << g_trust_jump_rot_max << " deg)，撤销本次激光修正、进入 LOST："
+                   << " deg 超阈值(" << jump_p_max << " m / "
+                   << jump_r_max << " deg @" << cur_lidar_gap_ << " s gap)，"
+                   << "撤销本次激光修正、进入 LOST："
                    << "暂停建图，位姿/TF/点云继续全量输出（累计否决 "
                    << trust_reject_total_ << " 次）";
       return;
@@ -1477,12 +2510,22 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
   //   - 完全否决配准结果 → 位姿永久停在断档前的位置，永远回不到真实位姿。
   // 折中策略：把「先验 → 配准结果」的修正量按每帧最大平移/旋转切成小步，
   // 逐帧把状态拉回配准结果（配准结果与冻结前的局部地图是一致的，因此是可信锚点）。
-  const bool converged = (corr_p <= g_trust_corr_max && corr_r <= g_trust_corr_rot_max);
+  // n_effect==0（无任何有效平面残差）时 corr_p 必然为 0，但这不是"收敛"而是
+  // "无信息"：drone bag 275 s 后正是靠这一点每 5 帧假收敛退出 LOST，随后
+  // 纯 IMU 自由积分把速度推到 700 m/s。此处要求本帧确实有足够观测。
+  const bool obs_valid = last_n_effect_ >= g_lost_min_effect_pts;
+  const bool converged = obs_valid &&
+      (corr_p <= g_trust_corr_max && corr_r <= g_trust_corr_rot_max);
   lost_recover_streak_ = converged ? (lost_recover_streak_ + 1) : 0;
 
   if(converged && lost_recover_streak_ >= g_lost_recover_frames){
     lost_ = false;
     lost_recover_streak_ = 0;
+    lost_run_dt_ = 0.0;
+    gicp_lost_src_.reset();
+    gicp_lost_src_valid_ = false;
+    rot_corr_hist_.clear();
+    suspect_hold_dt_ = 0.0;
     stable_pose_ = T_post;
     stable_pose_valid_ = true;
     LOG(WARNING) << "[Trust] 连续 " << g_lost_recover_frames
@@ -1491,9 +2534,23 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
     return;
   }
 
-  // 限速接近：p / R 各走一步，剩余残差留到下一帧继续收敛
+  // ===== LOST 超时兜底 =====
+  // 与 SUSPECT 的 D 对应：GICP 长期无法恢复（conv=0 / 源云与目标无重叠）时，
+  // 不能让系统永久挂在 LOST 不建图。超时后强制接受本帧 Voxmap 观测并恢复建图。
+  lost_run_dt_ += (cur_lidar_gap_ > 1e-3) ? cur_lidar_gap_ : 0.1;
+  if(g_trust_lost_max_s > 0.0 && lost_run_dt_ >= g_trust_lost_max_s){
+    const std::string detail = "LOST 保持 " + std::to_string(lost_run_dt_) + " s";
+    force_accept_or_reanchor("LOST 已持续超过 " +
+                             std::to_string(g_trust_lost_max_s) + " s", detail);
+    return;
+  }
+
+  // 限速接近：p / R 各走一步，剩余残差留到下一帧继续收敛。
+  // 但只有观测本身有效（有效点数足够）时才允许朝配准结果靠拢；配准无有效点时
+  // 返回的位姿基本等于 IMU 先验，此时按 0.1 m/帧 slew 反而会持续"漏"位姿
+  // （实测 LOST 期间位置以 ~0.5~1 m/s 匀速漂走，正是该机制）。
   SysState sys_fix = sys_pred;
-  {
+  if(obs_valid){
     V3 dp = T_post.t_ - sys_pred.p;
     const double dp_n = dp.norm();
     if(dp_n > g_lost_slew_p && dp_n > 1e-9){
@@ -1508,6 +2565,15 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
     }
     sys_fix.R = sys_pred.R * BASIC::SO3::Exp(dr);
   }
+  // LOST 期间观测不可信，先验速度不应无条件继续积分（1.0 = 不衰减）。
+  // 阻尼 + 硬封顶同时生效：姿态误差造成的重力泄漏约 5 m/s²，仅按 0.5 衰减
+  // 仍会在每帧 IMU 传播后反弹（gicp_h 实测 6 帧从 0.06 泵到 3.4 m/s），
+  // 因此再用 g_lost_vel_max 把 LOST 期速度钉在"drone 真实速度量级"内。
+  if(g_lost_vel_damp < 1.0) sys_fix.v = sys_pred.v * g_lost_vel_damp;
+  if(g_lost_vel_max > 0.0){
+    const double vn_lost = sys_fix.v.norm();
+    if(vn_lost > g_lost_vel_max) sys_fix.v *= (g_lost_vel_max / vn_lost);
+  }
   kf_->RollbackToState(sys_fix, cov_pred);
   ++trust_reject_total_;
 
@@ -1516,7 +2582,8 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
     last_trust_log_wall_ = now;
     LOG(WARNING) << "[Trust] LOST 保持: corr=" << corr_p << " m / " << corr_r
                  << " deg, streak=" << lost_recover_streak_ << "/"
-                 << g_lost_recover_frames << "，本帧限速修正 "
+                 << g_lost_recover_frames << ", 已持续 " << lost_run_dt_ << " s"
+                 << "，本帧限速修正 "
                  << g_lost_slew_p << " m / " << g_lost_slew_r
                  << " deg，建图暂停，位姿输出不中断";
   }
@@ -1529,6 +2596,12 @@ void SuperLIO::checkPoseTrust(const SysState& sys_pred, const ESKF::COV& cov_pre
 /// corrected body frame, making them self-consistent with the corrected pose.
 /// Also updates points_body_v3_ so UpdateMap() uses the corrected points.
 void SuperLIO::ApplyDeltaCorrection() {
+  // GICP 接管帧：点云仍是真实机体系，按修正后的位姿直接投放 world 才是正确几何。
+  // 若再做 delta 修正，世界系位置反而会被"抵消"回 IMU 预测轨迹（见 T_pred=const 推导）。
+  if (delta_passthrough_frame_) {
+    delta_passthrough_frame_ = false;   // 只影响本帧
+    return;
+  }
   const SE3 T_corrected = kf_->GetSE3();
   const SE3 T_pred = T_predicted_end_;
 
@@ -1736,6 +2809,17 @@ void SuperLIO::Observe(){
     const auto& point_body_pcl = ds_undistort_->points[i];
     points_body_v3_[i] = V3(point_body_pcl.x, point_body_pcl.y, point_body_pcl.z);
     _lengths[i] = points_body_v3_[i].norm();
+  }
+  // 开阔区门控所需的扫描尺度（复用上面的循环结果，O(n) 一次极值统计）
+  {
+    double rmax = 0.0, zmin = 1e9, zmax = -1e9;
+    for (size_t i = 0; i < ptsize; ++i) {
+      rmax = std::max(rmax, static_cast<double>(_lengths[i]));
+      zmin = std::min(zmin, static_cast<double>(points_body_v3_[i].z()));
+      zmax = std::max(zmax, static_cast<double>(points_body_v3_[i].z()));
+    }
+    scan_max_range_ = rmax;
+    scan_z_span_ = (ptsize > 0) ? (zmax - zmin) : 0.0;
   }
 
   // 2.A：世界系 up（ESKF 的重力反向），用于地面/天花板点的对齐软约束
@@ -2033,6 +3117,50 @@ void SuperLIO::Observe(){
       }
     }
 
+    // M.33 退化"响应"之三：沿**运动方向**截断。
+    // 动机（drone bag 275 s）：漂移期间 deg_dir_v 0.90~1.00、平移块 cond_t 只有 3~6，
+    // 6 维 cond 仅 10~45，既有 threshold=100 判据全程不触发 ⇒ 观测在"走的那个方向"
+    // 上其实已经不可信，却仍以满权重参与更新，把位姿推着跑。
+    // 判据：λ_v / λ_max(H_tt) < ratio（λ_v = v̂ᵀH_tt v̂，v̂ 为世界系速度方向）。
+    if (g_degen_motion_dir_en) {
+      const auto mds = kf_->GetDynamicState();
+      V3d u = mds.v.cast<double>();
+      const double vnorm = u.norm();
+      if (vnorm > g_degen_motion_dir_vmin) {
+        u /= vnorm;
+        const Eigen::Matrix3d Htt = sum_HTVH.block<3, 3>(3, 3);
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es_tt(Htt);
+        if (es_tt.info() == Eigen::Success) {
+          const double lmax = std::max(es_tt.eigenvalues()(2), 1e-12);
+          const double ratio = u.dot(Htt * u) / lmax;
+          if (ratio < g_degen_motion_dir_ratio) {
+            M6d Pm = M6d::Identity();
+            Pm.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() - u * u.transpose();
+            const double tik = g_tikhonov_lambda * sum_HTVH.trace() / 6.0;
+            sum_HTVH = Pm * sum_HTVH * Pm.transpose() + tik * M6d::Identity();
+            sum_HTVr = Pm * sum_HTVr;
+            static auto last_mt_log = std::chrono::steady_clock::now();
+            const auto now_mt = std::chrono::steady_clock::now();
+            if (debug && std::chrono::duration<double>(now_mt - last_mt_log).count() > 2.0) {
+              LOG(WARNING) << "[MotionTrunc] ratio=" << std::fixed << std::setprecision(3)
+                           << ratio << " |v|=" << vnorm;
+              last_mt_log = now_mt;
+            }
+          }
+        }
+      }
+    }
+
+    // 旋转通道放权：只缩放 Hessian 的旋转块（等价于把旋转观测的 σ 缩小
+    // sqrt(g_obs_rot_weight) 倍），平移通道不变。H 与 r 同步缩放，保证解不变号。
+    if(g_obs_rot_weight > 0.0 && std::abs(g_obs_rot_weight - 1.0) > 1e-6){
+      const double s = std::sqrt(g_obs_rot_weight);
+      V6d S = V6d::Ones();
+      S(0) = S(1) = S(2) = s;
+      sum_HTVH = S.asDiagonal() * sum_HTVH * S.asDiagonal();
+      sum_HTVr = S.cwiseProduct(sum_HTVr);
+    }
+
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
@@ -2124,6 +3252,10 @@ void SuperLIO::Observe(){
     }
   }
 
+  // 供 Trust 判据使用：本帧有效平面残差点数。n_effect==0 时"修正量为 0"只是
+  // 因为没有任何约束参与，不能当成收敛（drone bag 275 s 后即因此假收敛退出 LOST）。
+  last_n_effect_ = n_effect;
+
   if (g_degeneracy_detect_en) {
     static auto last_degen_log = std::chrono::steady_clock::now();
     auto now_degen = std::chrono::steady_clock::now();
@@ -2168,7 +3300,9 @@ void SuperLIO::Observe(){
                     "htvh_ev_min,htvh_ev_max,px,py,pz,vx,vy,vz,rvx,rvy,rvz,imu_scale,"
                     "rvx_pred,rvy_pred,rvz_pred,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz,dt_imu_end,frame_dt,deg_cond,deg_axes,"
                     // M.30 场景判别：平移块最弱方向的三项对齐度（见下方计算处注释）
-                    "deg_cond_t,deg_evt_min,deg_dir_v,deg_dir_g,deg_dir_z\n";
+                    "deg_cond_t,deg_evt_min,deg_dir_v,deg_dir_g,deg_dir_z,"
+                    // 地图新点比例：错误匹配的早期指标（上一帧 UpdateMap 统计）
+                    "map_novelty_ratio,map_novelty_streak\n";
     }
     double fit_mean = 0.0, fit_p95 = 0.0;
     if (!fit_res_vec_.empty()) {
@@ -2248,7 +3382,10 @@ void SuperLIO::Observe(){
                << (measures_.lidar.end_time - measures_.lidar.start_time) << ','
                << degeneracy_cond_ << ',' << degeneracy_axes_ << ','
                << deg_cond_t << ',' << deg_evt_min << ','
-               << deg_dir_v << ',' << deg_dir_g << ',' << deg_dir_z << '\n';
+               << deg_dir_v << ',' << deg_dir_g << ',' << deg_dir_z << ','
+               // 地图新点比例（上一帧 UpdateMap 统计）：错误匹配的早期指标。
+               // 注意 debug 行在本帧 UpdateMap 之前写出，故这里是上一帧的值。
+               << map_novelty_ratio_ << ',' << map_novelty_streak_ << '\n';
     debug_csv_.flush();
   }
 
@@ -2336,7 +3473,7 @@ void SuperLIO::finalizeTimeDelayCalib(double frame_omega_norm) {
 /// 更新 IVox 地图：将去畸变后的点云添加到地图中
 /// 分段计时：g_time_eva 时分别统计世界系变换 [MapTransform] 与地图插入 [MapInsert]。
 /// 实测 [UpdateMap] 峰值 ~17.8 ms，是整条链路最大的单帧尖峰，需要定位是变换还是插入。
-void SuperLIO::UpdateMap() {
+void SuperLIO::UpdateMap(bool write) {
   // 实验 C：冻结地图更新，配准只用载入的先验地图（用于隔离地图反馈）
   if (g_map_freeze) return;
 
@@ -2355,15 +3492,939 @@ void SuperLIO::UpdateMap() {
       points_world_v3_[i] = R * pt + t;
     }
   };
+  // 本帧点云按当前位姿投影后，落在"尚无粗体素"的点占比。
+  // 这是错误匹配的早期指标：正常回访时地图已覆盖（比例低），
+  // 而错误匹配会把整帧塞进空白区域（比例飙升）。写入暂停的帧也照常统计，
+  // 否则 SUSPECT 期间指标会因"没有新点"而假性归零、无法持续判据。
+  auto update_novelty = [&]() {
+    const std::size_t n_new = ivox_ ? ivox_->countNewCells(points_world_v3_) : 0;
+    map_novelty_ratio_ = (ptsize > 0)
+        ? static_cast<double>(n_new) / static_cast<double>(ptsize) : 0.0;
+  };
   auto insert_into_map = [this]() { ivox_->insert(points_world_v3_); };
 
   if (g_time_eva) {
     time_record_.Evaluate(transform_body_to_world, "[MapTransform]");
-    time_record_.Evaluate(insert_into_map,       "[MapInsert]");
+    update_novelty();
+    if (write) time_record_.Evaluate(insert_into_map, "[MapInsert]");
   } else {
     transform_body_to_world();
-    insert_into_map();
+    update_novelty();
+    if (write) insert_into_map();
   }
+}
+
+/// 可信 Anchor 延迟提交。
+/// 本帧点云先进入可撤销队列，只有"距离当前时刻超过 g_anchor_delay_commit_s
+/// 且期间没有触发 SUSPECT/LOST"的帧才允许提交；提交后按 g_anchor_window_s 裁剪。
+/// 这样即使渐进漂移已经持续数秒才被检测器发现，漂移期的点云也不会进入 Anchor。
+void SuperLIO::updateTrustedAnchor(bool map_write) {
+  if (g_anchor_delay_commit_s <= 0.0) return;          // 特性关闭：零开销
+  // 冻结期不提交、不裁剪：接管期由 GICP 负责绝对参考，Anchor 保持冻结时刻的状态。
+  if (anchor_frozen_) return;
+  if (!map_write) {
+    // 接管期的"暂停帧"（GICP 单帧失败）只是本帧不入队，不是信任异常，
+    // 不能据此冻结 Anchor；否则接管期一次抖动就永久锁死绝对参考。
+    if (!gicp_active_) freezeTrustedAnchor("map_write=false");
+    return;
+  }
+
+  const double t_now = measures_.lidar.end_time;
+
+  // GICP 需要足够的几何约束：沿 ds_undistort_（约 300 点）无法锁住平移，
+  // 因此 Anchor 存稠密去畸变云按 g_gicp_target_voxel 降采样后的副本。
+  if (g_anchor_gicp_en) {
+    auto t0 = std::chrono::high_resolution_clock::now();
+    // 稠密帧由 DenseThread 顺带产出（同一份 pc_full 的全量去畸变）后异步汇入，
+    // 主线程不再每帧重复算一遍；仅当异步链路断流（拥塞/dense 暂停 >1 s）才补算。
+    bool drained = false;
+    {
+      std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+      while (!anchor_dense_inbox_.empty()) {
+        AnchorFrame fr = std::move(anchor_dense_inbox_.front());
+        anchor_dense_inbox_.pop_front();
+        // 活跃度判据用"到达"而非"收编"：被判重复说明异步链路是通的，不能因此补算。
+        anchor_last_inbox_t_ = std::max(anchor_last_inbox_t_, fr.t);
+        ++anchor_inbox_seen_;
+        // 保序：补算路径可能已把同一帧入队，跳过时间戳不前进的异步帧
+        if (!anchor_pending_.empty() && fr.t <= anchor_pending_.back().t) continue;
+        anchor_pending_.push_back(std::move(fr));
+        ++anchor_inbox_used_;
+        drained = true;
+      }
+    }
+    if (!drained) {
+      // DenseThread 对同一帧的处理必然晚于本函数（enqueueDense 在本函数之后调用），
+      // 所以"本帧 inbox 为空"是常态，不能据此在主线程补算：补算帧会让下一帧到达的
+      // 异步帧被判为重复而丢弃，形成"永远 fallback"的自锁（实测 fallback=1166、
+      // inbox=0）。只有 inbox 断流超过 1 s（DenseThread 卡住/暂停）才现场补算保底。
+      ++anchor_missed_;
+      const bool starved = (t_now - anchor_last_inbox_t_ > 1.0);
+      if (starved) {
+        ++anchor_fallback_hits_;
+        ensureGicpDense();
+        if (gicp_dense_valid_ && gicp_scan_dense_ && !gicp_scan_dense_->empty() &&
+            (anchor_pending_.empty() || t_now > anchor_pending_.back().t)) {
+          AnchorFrame f;
+          f.t = t_now;
+          f.pose = kf_->GetSE3();
+          f.body.reset(new PointCloudType());
+          voxelDownsampleCapped(gicp_scan_dense_, f.body, g_gicp_target_voxel,
+                                g_gicp_anchor_body_max_pts);
+          anchor_pending_.push_back(std::move(f));
+        }
+      }
+    }
+    if (data_wrapper_) {
+      const double ms = std::chrono::duration<double, std::milli>(
+          std::chrono::high_resolution_clock::now() - t0).count();
+      data_wrapper_->recordLatency("[Anchor]Update", ms);
+    }
+  } else {
+    if (!ds_undistort_ || ds_undistort_->empty()) return;
+    AnchorFrame f;
+    f.t = t_now;
+    f.pose = kf_->GetSE3();
+    f.body.reset(new PointCloudType(*ds_undistort_));
+    anchor_pending_.push_back(std::move(f));
+  }
+
+  // 超过确认窗口 → 提交
+  const double cut = t_now - g_anchor_delay_commit_s;
+  while (!anchor_pending_.empty() && anchor_pending_.front().t <= cut) {
+    anchor_committed_.push_back(std::move(anchor_pending_.front()));
+    anchor_pending_.pop_front();
+    ++anchor_commit_total_;
+  }
+
+  // 保留窗口裁剪
+  if (g_anchor_window_s > 0.0) {
+    while (!anchor_committed_.empty() &&
+           t_now - anchor_committed_.front().t > g_anchor_window_s) {
+      anchor_committed_.pop_front();
+    }
+  }
+
+  if (anchor_last_log_t_ < 0.0 || t_now - anchor_last_log_t_ > 5.0) {
+    anchor_last_log_t_ = t_now;
+    LOG(INFO) << "[Anchor] t=" << t_now << " committed=" << anchor_committed_.size()
+              << " pending=" << anchor_pending_.size()
+              << " (total_commit=" << anchor_commit_total_
+              << ", dropped=" << anchor_drop_total_
+              << ", inbox=" << anchor_inbox_used_
+              << "/" << anchor_inbox_seen_
+              << ", missed=" << anchor_missed_
+              << ", fallback=" << anchor_fallback_hits_ << ")";
+  }
+}
+
+/// 冻结可信 Anchor：作废所有未提交帧。冻结后不再接收新帧，
+/// 直到重定位/切换逻辑显式解冻（后续阶段实现）。
+void SuperLIO::freezeTrustedAnchor(const char* why) {
+  if (anchor_frozen_) return;
+  // 已提交不足 5 帧时冻结没有意义：buildGicpTarget() 本来就会拒绝构图，
+  // 而冻结后不再接收新帧，等于把异常期唯一的绝对观测通道永久废掉。
+  // 实测（gicp_h 末段）重锚清空 Anchor 后立刻再入 SUSPECT，freeze 把
+  // committed=0 锁死，之后每次重锚都重复同一死局、GICP 再也建不起目标图。
+  // 这里只丢弃过期 pending，保持 Anchor 可继续积累。
+  if (anchor_committed_.size() < 5) {
+    const long n_drop = static_cast<long>(anchor_pending_.size());
+    anchor_drop_total_ += n_drop;
+    anchor_pending_.clear();
+    {
+      std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+      anchor_dense_inbox_.clear();
+    }
+    if (n_drop > 0) {
+      LOG(WARNING) << "[Anchor] 推迟冻结 (" << why << ")：已提交仅 "
+                   << anchor_committed_.size() << " 帧，丢弃 pending=" << n_drop;
+    }
+    return;
+  }
+  anchor_frozen_ = true;
+  const long n_drop = static_cast<long>(anchor_pending_.size());
+  anchor_drop_total_ += n_drop;
+  anchor_pending_.clear();
+  {   // 冻结后到达的异步稠密帧一律作废，避免解冻时混入冻结前的旧帧
+    std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+    anchor_dense_inbox_.clear();
+  }
+  LOG(WARNING) << "[Anchor] FROZEN (" << why << ") at lidar_end="
+               << measures_.lidar.end_time << " s: dropped_pending=" << n_drop
+               << ", committed=" << anchor_committed_.size()
+               << ", total_dropped=" << anchor_drop_total_;
+}
+
+/// 惰性构建 GICP 目标地图：把 Anchor 已提交帧按各自可信位姿投到 world，
+/// 以最近已提交帧为中心裁剪半径，再体素降采样 + 建 KdTree。
+/// 仅在首次异常帧调用一次；之后目标冻结不变（Anchor 冻结后也不再增长）。
+bool SuperLIO::buildGicpTarget() {
+  if (gicp_target_ready_) return true;
+  if (!g_anchor_gicp_en) return false;
+  if (anchor_committed_.size() < 5) {
+    LOG(WARNING) << "[GICP] 已提交 Anchor 帧不足 (" << anchor_committed_.size()
+                 << ")，暂无法构建目标地图";
+    return false;
+  }
+
+  const V3 center = anchor_committed_.back().pose.t_;
+  const double r2 = g_gicp_target_radius * g_gicp_target_radius;
+
+  // 基准帧抽稀：只取最近 window_s 内的已提交帧，并按 keyframe_dt（约 1 s）
+  // 取稠密帧。不抽帧时 10 Hz×40 s≈350 帧全拼，raw 点数十万、KdTree 与
+  // GICP 内部协方差计算都被拖慢；1 Hz×10 s≈10 帧已足够覆盖局部几何。
+  const double t_latest = anchor_committed_.back().t;
+  pcl::PointCloud<pcl::PointXYZI> raw;
+  raw.reserve(static_cast<size_t>(std::max(1, g_gicp_target_max_pts)));
+  int n_sel = 0;
+  double last_sel_t = 1e18;
+  for (auto it = anchor_committed_.rbegin(); it != anchor_committed_.rend(); ++it) {
+    const AnchorFrame& f = *it;
+    if (g_gicp_target_window_s > 0.0 && t_latest - f.t > g_gicp_target_window_s) break;
+    if (!f.body || f.body->empty()) continue;
+    if (g_gicp_target_keyframe_dt > 0.0 && last_sel_t - f.t < g_gicp_target_keyframe_dt) continue;
+    last_sel_t = f.t;
+    ++n_sel;
+    const M3 R = f.pose.R_.matrix();
+    const V3 t = f.pose.t_;
+    for (const auto& p : f.body->points) {
+      const V3 q = R * V3(p.x, p.y, p.z) + t;
+      if ((q - center).squaredNorm() > r2) continue;
+      pcl::PointXYZI o;
+      o.x = q.x(); o.y = q.y(); o.z = q.z(); o.intensity = p.intensity;
+      raw.push_back(o);
+    }
+  }
+  if (n_sel <= 0 || raw.size() < 1000) {
+    LOG(WARNING) << "[GICP] Anchor 目标点不足 (frames=" << n_sel
+                 << " raw=" << raw.size() << ")，放弃";
+    return false;
+  }
+
+  gicp_target_.reset(new PointCloudType());
+  // 拼接后点数按 g_gicp_target_max_pts 封顶（超限时自动放大体素），
+  // 控制 KdTree 规模与单帧查询开销（目标只建一次，但仍要保证 GICP 单帧可实时）。
+  pcl::PointCloud<pcl::PointXYZI>::Ptr raw_ptr = raw.makeShared();
+  voxelDownsampleCapped(raw_ptr, gicp_target_, g_gicp_target_voxel,
+                        g_gicp_target_max_pts);
+
+  gicp_target_kdtree_.reset(new pcl::KdTreeFLANN<pcl::PointXYZI>());
+  gicp_target_kdtree_->setInputCloud(gicp_target_);
+  gicp_target_ready_ = true;
+  gicp_target_build_t_ = measures_.lidar.end_time;
+  LOG(INFO) << "[GICP] 可信 Anchor 目标地图建立: committed=" << anchor_committed_.size()
+            << " selected=" << n_sel << " raw=" << raw.size()
+            << " target=" << gicp_target_->size()
+            << " (voxel=" << g_gicp_target_voxel << " m, radius="
+            << g_gicp_target_radius << " m, window=" << g_gicp_target_window_s
+            << " s/" << g_gicp_target_keyframe_dt << " s dt, center="
+            << center.transpose() << ")";
+  return true;
+}
+
+/// 最近 3~5 帧 GICP 位置对时间做加权最小二乘拟合（等权）：
+///   v = Σ (t_i-t̄)(p_i-p̄) / Σ (t_i-t̄)²
+/// 不足 3 帧时退回零速（配合协方差膨胀，让后续观测快速纠正）。
+BASIC::V3 SuperLIO::fitGicpVelocity() const {
+  const int n = static_cast<int>(gicp_pos_hist_.size());
+  if (n < 3) return V3::Zero();
+  double t_mean = 0.0;
+  V3 p_mean = V3::Zero();
+  for (const auto& e : gicp_pos_hist_) { t_mean += e.first; p_mean += e.second; }
+  t_mean /= n;
+  p_mean /= n;
+  V3 num = V3::Zero();
+  double den = 0.0;
+  for (const auto& e : gicp_pos_hist_) {
+    const double dt = e.first - t_mean;
+    num += dt * (e.second - p_mean);
+    den += dt * dt;
+  }
+  if (den < 1e-6) return V3::Zero();
+  return num / den;
+}
+
+/// 接管期 → 交还 Voxmap。
+/// Observe() 已算完本帧 Voxmap 修正（ESKF 当前状态就是 T_post），这里用三条
+/// 独立证据判断"退化已结束"：
+///   ① 观测有效：有效平面残差点数足够（n_effect==0 时 corr 恒 0，会伪装成健康）
+///   ② 修正量小：Voxmap 相对 IMU 先验的修正 < 阈值（拖歪期实测 1~2 m / 5~15 deg）
+///   ③ 与 GICP 一致：本帧 GICP 原始解与 Voxmap 解位姿差 < 阈值（两套独立观测交叉校验）
+/// ①②③ 同时成立才计数，连续 g_gicp_handback_frames 次即交还：清空接管状态、
+/// 解冻 Anchor、恢复 delta 修正与正常建图。只靠"连续失败才退出"会把 GICP
+/// 一直挂着跑，既费时又得不到 Voxmap 的全局约束。
+bool SuperLIO::tryHandbackToVoxmap(double corr_p, double corr_r) {
+  if (!gicp_active_ || g_gicp_handback_frames <= 0) return false;
+  if (!gicp_last_raw_valid_) return false;
+
+  const BASIC::SE3 T_vox = kf_->GetSE3();
+  const bool obs_ok   = last_n_effect_ >= g_lost_min_effect_pts;
+  const bool corr_ok  = corr_p <= g_gicp_handback_corr_p &&
+                        corr_r <= g_gicp_handback_corr_r;
+  const double agree_p = (gicp_last_raw_pose_.t_ - T_vox.t_).norm();
+  const double agree_r = BASIC::SO3(
+      gicp_last_raw_pose_.R_.transpose() * T_vox.R_).log_vee().norm() * 57.29577951308232;
+  const bool agree_ok = agree_p <= g_gicp_handback_agree_p &&
+                        agree_r <= g_gicp_handback_agree_r;
+  // ④ 地图覆盖：新点比例低说明当前扫描确实落在已建图区域（见 kHandbackNoveltyMax）。
+  const bool nov_ok = map_novelty_ratio_ <= kHandbackNoveltyMax;
+
+  if (obs_ok && corr_ok && agree_ok && nov_ok) {
+    ++gicp_handback_streak_;
+  } else {
+    gicp_handback_streak_ = 0;
+  }
+  if (gicp_handback_streak_ < g_gicp_handback_frames) return false;
+
+  // ===== 交还：本帧按 Voxmap 结果继续（ESKF 已处于 T_post，无需回滚）=====
+  gicp_active_ = false;
+  gicp_ok_streak_ = 0;
+  gicp_fail_streak_ = 0;
+  gicp_handback_streak_ = 0;
+  gicp_frame_counter_ = 0;
+  gicp_pos_hist_.clear();
+  gicp_last_pose_valid_ = false;
+  gicp_last_raw_valid_ = false;
+  gicp_hold_cycles_ = 0;
+  // 刚完成一次健康交还，重新起算"保图放行"计数：下一次偶发放行不应被旧的
+  // 放行记录误升级为硬重锚。
+  novelty_release_cnt_ = 0;
+  novelty_release_last_t_ = -1.0;
+  // 种子保留：下一次异常冻结 Anchor 时仍可用它做初值重试
+  // 旧目标仍被复用的 GICP 对象持有（shared_ptr 保活），新分配地址必然不同，
+  // 不会触发"指针相同→跳过 setInputTarget"的误判。
+  gicp_target_ready_ = false;
+  gicp_target_.reset();
+  gicp_target_kdtree_.reset();
+  // Anchor 恢复流动：已提交帧都是冻结前的可信帧，保留；从本帧起重新积累。
+  anchor_pending_.clear();
+  {
+    std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+    anchor_dense_inbox_.clear();
+  }
+  anchor_frozen_ = false;
+  // 本帧按 Voxmap 结果写图（delta 修正照常执行）
+  delta_passthrough_frame_ = false;
+  stable_pose_ = T_vox;
+  stable_pose_valid_ = true;
+  rot_corr_hist_.clear();
+  suspect_hold_dt_ = 0.0;
+  lost_ = false;
+  // 起算交还观察期（见 handback_probation_until_t_ 注释）
+  handback_probation_until_t_ = measures_.lidar.end_time + kHandbackProbationS;
+  handback_ref_pose_ = T_vox;
+  handback_ref_valid_ = true;
+
+  LOG(WARNING) << "[GICP] 交还 Voxmap：连续 " << g_gicp_handback_frames
+               << " 次观测健康且与 GICP 一致 (corr_p=" << corr_p
+               << " m corr_r=" << corr_r << " deg agree_p=" << agree_p
+               << " m agree_r=" << agree_r << " deg effect=" << last_n_effect_
+               << ")，恢复 Voxmap 观测与建图";
+  return true;
+}
+
+/// 用冻结的可信 Anchor 做 GICP，得到独立的 world<-body 位姿观测并覆盖 ESKF 状态。
+/// 与"拒绝 LiDAR 修正"不同：这里是把不再可信的 Voxmap 观测换成另一套配准观测。
+/// 通过质量门才接受；否则返回 false，由调用方走原有回滚/SUSPECT 路径。
+bool SuperLIO::tryGicpRelocalize(const SysState& sys_pred, const ESKF::COV& cov_pred,
+                                 double vox_corr_p, double vox_corr_r,
+                                 const char* why, bool* ran) {
+  if (ran) *ran = false;
+  gicp_check_valid_ = false;   // 本次复核未走到质量评估前，快照一律作废
+  if (!g_anchor_gicp_en) return false;
+  if (!anchor_frozen_ && anchor_committed_.empty()) {
+    // 接管期 Anchor 被掏空 ⇒ 目标图再也建不出来，GICP 永远不会再成功。继续留在
+    // 接管里只会把位姿永久钉死（gicp_am 实测 314 s 起冻结 130 s：位姿完全不动、
+    // 新点比例 0.29→0.80、cond_yk 1e9、降频帧与拒绝帧都不写图）。这里退出接管、
+    // 交回 Voxmap，至少保留一条观测通路。
+    if (gicp_active_) {
+      LOG(WARNING) << "[GICP] 接管期 Anchor 已空，无法构建目标图：退出接管，交回 Voxmap";
+      gicp_active_ = false;
+      gicp_pos_hist_.clear();
+      gicp_last_pose_valid_ = false;
+      gicp_last_raw_valid_ = false;
+      gicp_fail_streak_ = 0;
+      gicp_ok_streak_ = 0;
+      gicp_hold_cycles_ = 0;
+      gicp_target_ready_ = false;
+      gicp_target_.reset();
+      gicp_target_kdtree_.reset();
+      anchor_pending_.clear();
+      map_pause_frame_ = false;
+    }
+    return false;
+  }
+
+  // ===== 全局节流（rate / jump / lost / active 四条路径共用）=====
+  // 降本后单帧 GICP 实测 66~99 ms（源云 ≤800、目标 ≤40k，BFGS 内层 3 次），
+  // 已可在 10 Hz 下每 2 帧跑一次。此前 1.5 s 的墙钟下限是 0.3~0.7 s 时代的
+  // 遗留值：它把接管期的绝对观测稀到每 1.5 s 一次，帧间只能靠 IMU 外推，
+  // 而 IMU 速度在姿态/零偏误差下会自积分发散（gicp_h 实测 6 帧泵到 3.4 m/s）。
+  // 被节流跳过的帧只返回 false，**不累计 fail_streak**。
+  constexpr double kGicpMinWallIntervalS = 0.2;
+  {
+    const int min_frames = std::max(1, g_gicp_frame_interval);
+    if (frame_num_ - gicp_last_run_frame_ < min_frames) return false;
+    const auto t_wall_gate = std::chrono::steady_clock::now();
+    if (gicp_last_run_wall_valid_ &&
+        std::chrono::duration<double>(t_wall_gate - gicp_last_run_wall_).count() <
+            kGicpMinWallIntervalS) {
+      return false;
+    }
+    gicp_last_run_frame_ = frame_num_;
+    gicp_last_run_wall_ = t_wall_gate;
+    gicp_last_run_wall_valid_ = true;
+    if (ran) *ran = true;   // 本帧确实做了（或即将做）一次独立配准复核
+  }
+
+  if (!scan_undistort_full_ || scan_undistort_full_->empty()) return false;
+  if (!buildGicpTarget()) return false;
+
+  // 配准源用稠密全量去畸变云：沿 ds_undistort_（约 300 点）在弱几何场景里
+  // 对应关系不足以约束平移，GICP 解会被 IMU 预测位姿拖着走（实测 274~278 s
+  // 平移被放大 6~20 倍仍未纠正）。gicp_scan_dense_ 是本帧 pc_full 的去畸变结果
+  // （数万点），按 g_gicp_target_voxel 降采样并封顶 g_gicp_source_max_pts。
+  // LOST 期间冻结源云：此时速度被错误外推，每帧去畸变都把点云沿运动方向剪切成
+  // 非刚体，体素重滤后点数持续膨胀（实测 1270→4621），对应关系越来越差，
+  // 最终 conv=0 死循环。这里固定用进入 LOST 时的首帧快照配准，退出 LOST 时释放。
+  if (lost_ && gicp_lost_src_valid_ && gicp_lost_src_ && !gicp_lost_src_->empty()) {
+    gicp_source_ = gicp_lost_src_;
+  } else {
+    ensureGicpDense();   // 主线程不再每帧预生成全量去畸变云，这里按需补算
+    BASIC::CloudPtr src_raw = (g_gicp_dense_en && gicp_dense_valid_)
+        ? gicp_scan_dense_ : scan_undistort_full_;
+    if (!src_raw || src_raw->empty()) return false;
+    if (!gicp_source_) gicp_source_.reset(new PointCloudType());
+    voxelDownsampleCapped(src_raw, gicp_source_, g_gicp_target_voxel,
+                          g_gicp_source_max_pts);
+    if (gicp_source_->size() < 50) return false;
+    if (lost_) {
+      gicp_lost_src_.reset(new PointCloudType(*gicp_source_));
+      gicp_lost_src_valid_ = true;
+    }
+  }
+
+  const double t_now = measures_.lidar.end_time;
+  const auto t_wall = std::chrono::steady_clock::now();
+  const bool do_log =
+      std::chrono::duration<double>(t_wall - last_gicp_log_wall_).count() > 1.0;
+
+  // 初值 = IMU 预测位姿。此刻 ds_undistort_ 仍在预测机体系（delta 修正尚未执行），
+  // 因此 GICP 输出即 world<-body，可直接注入滤波器。
+  Eigen::Matrix4f guess = Eigen::Matrix4f::Identity();
+  guess.block<3, 3>(0, 0) = T_predicted_end_.R_.matrix().cast<float>();
+  guess.block<3, 1>(0, 3) = T_predicted_end_.t_.cast<float>();
+
+  // 退出接管后的重试：此时 IMU 位姿可能已被错误 Voxmap 拖离 Anchor 数米，
+  // 直接当 GICP 初值会让 1.5 m 粗配半径内一个对应都找不到（conv=0、1~5 ms）。
+  // Anchor 仍冻结说明绝对参考没有移动，用最后一次可信 GICP 位姿作初值，
+  // 才能把位姿拉回 Anchor 所在位置（"回正常位姿继续建图"）。
+  constexpr double kGicpSeedMaxAgeS = 30.0;
+  bool seed_guess_used = false;
+  if (anchor_frozen_ && gicp_seed_valid_ && !gicp_active_ &&
+      (t_now - gicp_seed_t_) <= kGicpSeedMaxAgeS) {
+    const double dp_seed = (gicp_seed_pose_.t_ - T_predicted_end_.t_).norm();
+    const double dr_seed =
+        BASIC::SO3(gicp_seed_pose_.R_.transpose() * T_predicted_end_.R_)
+            .log_vee().norm() * 57.29577951308232;
+    if (dp_seed > 0.30 || dr_seed > 5.0) {
+      guess.block<3, 3>(0, 0) = gicp_seed_pose_.R_.matrix().cast<float>();
+      guess.block<3, 1>(0, 3) = gicp_seed_pose_.t_.cast<float>();
+      seed_guess_used = true;
+      LOG(WARNING) << "[GICP] 初值改用上次可信位姿（种子）：与 IMU 预测差 "
+                   << dp_seed << " m / " << dr_seed << " deg（锚龄 "
+                   << (t_now - gicp_seed_t_) << " s）";
+    }
+  }
+
+  // 复用一个 GICP 对象：target 协方差只算一次；setInputSource 每帧都会重置
+  // source 协方差并重算，不能省略。
+  static pclomp::GeneralizedIterativeClosestPoint<BASIC::PointType, BASIC::PointType> gicp;
+  static const void* gicp_target_set = nullptr;
+  if (gicp_target_set != static_cast<const void*>(gicp_target_.get())) {
+    gicp.setInputTarget(gicp_target_);
+    gicp_target_set = static_cast<const void*>(gicp_target_.get());
+  }
+  gicp.setInputSource(gicp_source_);
+  // 初值来自 IMU 预测（误差通常 < 0.3 m / 5 deg），不需要 PCL 默认的 14×20
+  // 次迭代；实测 14×20 单帧 200~1800 ms，节点滞后 30~60 s。目标图改为
+  // 10 s/1 Hz 抽帧后进一步降到 4×3，配合源云 ≤800 点把单次压到 300 ms 内。
+  gicp.setMaximumIterations(4);
+  gicp.setMaximumOptimizerIterations(3);
+  gicp.setCorrespondenceRandomness(20);
+
+  // 两级对应距离：1.5 m 粗配 → 0.2 m 精配。
+  // 粗配半径必须覆盖"进入本通道时的先验误差"：速率门/跳变门触发的那一刻，
+  // IMU 先验与真值的差已经接近门限（跳变门 1.0 m、实测 1.06 m），若粗配半径
+  // 只有 0.5 m，则内部一个对应都找不到 → final_transformation 保持初值 →
+  // 日志呈现 conv=0 inlier=0/1312 dpos=0（gicp_f 从 225 s 起 50 次全如此）。
+  const auto t_align0 = std::chrono::steady_clock::now();
+  bool converged = false;
+  Eigen::Matrix4f T = guess;
+  pcl::PointCloud<BASIC::PointType> aligned;
+  const float kStageCorr[2] = {1.5f, 0.2f};
+  for (int stage = 0; stage < 2; ++stage) {
+    gicp.setMaxCorrespondenceDistance(kStageCorr[stage]);
+    aligned.clear();
+    gicp.align(aligned, T);
+    converged = gicp.hasConverged();
+    T = gicp.getFinalTransformation();
+    if (!converged) break;
+  }
+  const double align_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_align0)
+          .count();
+
+  // ===== 一次性诊断：GICP 首次 conv=0 时定位根因 =====
+  // 用 guess 变换源点后直接查目标 KdTree（不经过 GICP 内部协方差/BFGS）：
+  //   - 最近邻分布整体 ≫ 粗配半径 ⇒ 源/目标不在同一坐标系或初值错位；
+  //   - 距离很小却 conv=0     ⇒ 内部协方差/优化器数值失效（NaN/退化）。
+  {
+    static bool gicp_diag_done = false;
+    if (!gicp_diag_done && !converged) {
+      gicp_diag_done = true;
+      auto finite_bbox = [](const BASIC::CloudPtr& c, int& nf,
+                            Eigen::Vector3d& lo, Eigen::Vector3d& hi) {
+        nf = 0;
+        lo.setConstant(1e9);
+        hi.setConstant(-1e9);
+        for (const auto& p : c->points) {
+          if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
+          ++nf;
+          lo = lo.cwiseMin(p.getVector3fMap().cast<double>());
+          hi = hi.cwiseMax(p.getVector3fMap().cast<double>());
+        }
+      };
+      int nfs = 0, nft = 0;
+      Eigen::Vector3d slo, shi, tlo, thi;
+      finite_bbox(gicp_source_, nfs, slo, shi);
+      finite_bbox(gicp_target_, nft, tlo, thi);
+      std::vector<float> nd;
+      nd.reserve(gicp_source_->size());
+      int n15 = 0, n03 = 0, n01 = 0;
+      Eigen::Vector3d wlo = Eigen::Vector3d::Constant(1e9);
+      Eigen::Vector3d whi = Eigen::Vector3d::Constant(-1e9);
+      std::vector<int> id(1);
+      std::vector<float> d2(1);
+      for (const auto& p : gicp_source_->points) {
+        const Eigen::Vector4f q = guess * Eigen::Vector4f(p.x, p.y, p.z, 1.0f);
+        BASIC::PointType qp;
+        qp.x = q.x(); qp.y = q.y(); qp.z = q.z();
+        wlo = wlo.cwiseMin(Eigen::Vector3d(q.x(), q.y(), q.z()));
+        whi = whi.cwiseMax(Eigen::Vector3d(q.x(), q.y(), q.z()));
+        if (gicp_target_kdtree_->nearestKSearch(qp, 1, id, d2) < 1) continue;
+        const float d = std::sqrt(d2[0]);
+        nd.push_back(d);
+        if (d < 1.5f) ++n15;
+        if (d < 0.3f) ++n03;
+        if (d < 0.1f) ++n01;
+      }
+      std::sort(nd.begin(), nd.end());
+      auto pct = [&](double q) {
+        return nd.empty() ? -1.0
+                          : static_cast<double>(nd[std::min(nd.size() - 1,
+                                                            static_cast<size_t>(q * (nd.size() - 1)))]);
+      };
+      LOG(WARNING) << "[GICP][DIAG] 首次 conv=0: src=" << gicp_source_->size()
+                   << " finite=" << nfs << " bbox=[" << slo.transpose() << "]..["
+                   << shi.transpose() << "] | tgt=" << gicp_target_->size()
+                   << " finite=" << nft << " bbox=[" << tlo.transpose() << "]..["
+                   << thi.transpose() << "] | guess_t=" << T_predicted_end_.t_.transpose()
+                   << " | src_w(guess) bbox=[" << wlo.transpose() << "]..[" << whi.transpose()
+                   << "] | NN(guess源→目标) n=" << nd.size() << " p50=" << pct(0.5)
+                   << " p95=" << pct(0.95) << " max=" << pct(1.0) << " <1.5m=" << n15
+                   << " <0.3m=" << n03 << " <0.1m=" << n01
+                   << " | dense_valid=" << gicp_dense_valid_ << " dense="
+                   << (gicp_scan_dense_ ? gicp_scan_dense_->size() : 0UL)
+                   << " undistort_full="
+                   << (scan_undistort_full_ ? scan_undistort_full_->size() : 0UL);
+    }
+  }
+
+  // ===== 质量指标：内点比例 / 米制 RMSE / 点到面 Hessian 特征值 =====
+  const double inlier_d2 = 0.3 * 0.3;
+  std::vector<int> nn_idx(1);
+  std::vector<float> nn_d2(1);
+  int n_in = 0;
+  double sum_d2 = 0.0;
+  Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
+  for (const auto& p : aligned.points) {
+    if (gicp_target_kdtree_->nearestKSearch(p, 1, nn_idx, nn_d2) < 1) continue;
+    if (nn_d2[0] > inlier_d2) continue;
+    ++n_in;
+    sum_d2 += nn_d2[0];
+    BASIC::V3 nrm;
+    if (!estimatePointNormal(gicp_target_, *gicp_target_kdtree_, nn_idx[0], 10, nrm)) continue;
+    // 点到面残差 e = nᵀ(T p - q) 的雅可比 [ (p_w × n)ᵀ, nᵀ ]；
+    // 旋转列按 5 m 尺度归一化，使 cond 只反映几何退化而非单位差异。
+    const Eigen::Vector3d pw(p.x, p.y, p.z);
+    const Eigen::Vector3d n = nrm.cast<double>();
+    Eigen::Matrix<double, 1, 6> J;
+    J.head<3>() = (pw.cross(n) / 5.0).transpose();
+    J.tail<3>() = n.transpose();
+    H += J.transpose() * J;
+  }
+  double eig_min = 0.0, cond = 0.0;
+  if (n_in >= 6) {
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> es(H);
+    eig_min = es.eigenvalues()(0);
+    const double eig_max = es.eigenvalues()(5);
+    cond = eig_max / std::max(eig_min, 1e-9);
+  }
+
+  // ===== 与 IMU 预测的修正量 =====
+  const Eigen::Matrix3f Rg = T.block<3, 3>(0, 0);
+  const Eigen::Vector3f tg = T.block<3, 1>(0, 3);
+  const double dpos = (tg - T_predicted_end_.t_.cast<float>()).norm();
+  const Eigen::Matrix3f dR = Rg.transpose() * T_predicted_end_.R_.matrix().cast<float>();
+  const double drot_deg =
+      std::abs(Eigen::AngleAxisf(dR).angle()) * 180.0 / static_cast<double>(M_PI);
+
+  // ===== 连续帧一致性：相邻两次接受的 GICP 位姿变化不能超过物理可能 =====
+  double inst_speed = 0.0, inst_rate = 0.0;
+  if (gicp_last_pose_valid_) {
+    const double dt = std::max(1e-3, t_now - gicp_last_t_);
+    inst_speed = (tg - gicp_last_pose_.t_.cast<float>()).norm() / dt;
+    const Eigen::Matrix3f dRl =
+        Rg.transpose() * gicp_last_pose_.R_.matrix().cast<float>();
+    inst_rate = std::abs(Eigen::AngleAxisf(dRl).angle()) * 180.0 /
+                static_cast<double>(M_PI) / dt;
+  }
+
+  const double inlier_ratio =
+      static_cast<double>(n_in) / static_cast<double>(gicp_source_->size());
+  const double rmse = (n_in > 0) ? std::sqrt(sum_d2 / n_in) : 1e9;
+
+  bool dpos_ok = dpos <= g_gicp_max_dpos;
+  bool drot_ok = drot_deg <= g_gicp_max_drot;
+  if (seed_guess_used) {
+    // 用种子作初值 ⇒ IMU 预测本身已被错误 Voxmap 拖离 Anchor（gicp_ac 8.75 m、
+    // gicp_ag 12.19 m），此时"与预测差"大正是"把位姿拉回可信地图"的证据，
+    // 不能当拒绝理由（否则每次重定位都被否掉，最终落到清图重锚死循环）。
+    // 真正该守的是：解不能离种子太远，否则说明匹配到了别的地方。
+    const double dp_res = (tg - gicp_seed_pose_.t_.cast<float>()).norm();
+    const Eigen::Matrix3f dRr = Rg.transpose() * gicp_seed_pose_.R_.matrix().cast<float>();
+    const double dr_res =
+        std::abs(Eigen::AngleAxisf(dRr).angle()) * 180.0 / static_cast<double>(M_PI);
+    dpos_ok = dpos_ok || dp_res <= 2.0;
+    drot_ok = drot_ok || dr_res <= 20.0;
+  }
+
+  bool ok = converged && n_in >= 200 &&
+            inlier_ratio >= g_gicp_min_inlier_ratio &&
+            rmse <= g_gicp_max_rmse &&
+            dpos_ok && drot_ok;
+  if (gicp_last_pose_valid_) {
+    ok = ok && inst_speed <= 10.0 && inst_rate <= 180.0;
+  }
+
+  // 本次复核的质量快照：即使最终判拒，也把"配准解本身"留给信任守护判断
+  // "位姿是否真的被 Voxmap 拖走"（inlier 低可能只是场景新覆盖，见 novelty_hold）。
+  gicp_check_valid_ = true;
+  gicp_check_converged_ = converged;
+  gicp_check_n_in_ = n_in;
+  gicp_check_rmse_ = rmse;
+  gicp_check_dpos_ = dpos;
+  gicp_check_drot_ = drot_deg;
+  gicp_check_pose_ = BASIC::SE3(BASIC::SO3(Rg.cast<BASIC::scalar>()),
+                                V3(tg.x(), tg.y(), tg.z()));
+
+  if (!ok) {
+    ++gicp_fail_streak_;
+    gicp_ok_streak_ = 0;
+    // 接管期的拒绝帧既不写实时地图、也不进可信 Anchor：本帧位姿只是 IMU 外推/
+    // 回滚值（没有可信观测背书），按它写图会污染两套地图；更致命的是
+    // updateTrustedAnchor 的窗口裁剪以 t_now 前进为准，拒绝帧一路把"旧的干净帧"
+    // 裁掉、却不产生新的可信帧 —— gicp_aj 实测接管 20 s 内 committed 181→90、
+    // 目标图只剩 8 帧 5093 点，inlier 从 0.45 单调掉到 0.12，此后 GICP 永远接不
+    // 上，位姿退化为纯 IMU（0.25 m/s 平滑漂移，末端 25 m）。
+    if (gicp_active_) map_pause_frame_ = true;
+    if (do_log || (gicp_active_ && gicp_fail_streak_ >= g_gicp_fail_max)) {
+      last_gicp_log_wall_ = t_wall;
+      LOG(WARNING) << "[GICP] 拒绝(" << why << "): conv=" << converged
+                   << " inlier=" << n_in << "/" << gicp_source_->size()
+                   << " (" << inlier_ratio << ") rmse=" << rmse
+                   << " m dpos=" << dpos << " m drot=" << drot_deg
+                   << " deg eig_min=" << eig_min << " cond=" << cond
+                   << " inst_v=" << inst_speed << " m/s fail_streak="
+                   << gicp_fail_streak_ << " ms=" << align_ms;
+    }
+    if (gicp_active_ && gicp_fail_streak_ >= g_gicp_fail_max) {
+      const int n_fail = gicp_fail_streak_;
+      // 是否交还 Voxmap：effect_pts 只说明"在当前地图里找得到平面"，地图自身
+      // 被错误位姿污染时它仍然很大（自洽但错误）。必须再叠加"Voxmap 相对 IMU
+      // 先验修正小"与"与上一次可信 GICP 位姿一致"两条。gicp_z 19:02:24 正是
+      // 仅凭 effect_pts=304 交还，随后 5 s 被拖走 4 m，Anchor 一并被污染，
+      // 之后每次 GICP 都 conv=0，彻底失去恢复能力。
+      const BASIC::SE3 T_vox_exit = kf_->GetSE3();
+      const double agree_p_exit = gicp_seed_valid_
+          ? (gicp_seed_pose_.t_ - T_vox_exit.t_).norm() : 1e9;
+      const bool voxmap_trusted = last_n_effect_ >= g_lost_min_effect_pts &&
+                                  vox_corr_p <= 0.10 && vox_corr_r <= 1.0 &&
+                                  agree_p_exit <= 0.20 &&
+                                  map_novelty_ratio_ <= kHandbackNoveltyMax;
+      // 保持接管的轮数上限。原实现 3 轮后一律"清图重锚"放行，但重锚会丢掉
+      // 唯一可用的绝对参考（Anchor），新图段从"钉住时的状态"重建：gicp_ai 实测
+      // 01:06:28 第 3 轮触发重锚，5 s 后状态速度即 5.1 m/s、末段漂到 28 m。
+      // 而 gicp_af（接管永不退出、从不重锚）同段只有 2.09 m。故这里把上限抬到
+      // 实际不可达：只要 Voxmap 一直不可信就持续钉住并重试 GICP，绝不重锚。
+      constexpr int kGicpHoldMaxCycles = 1000000;
+      if (voxmap_trusted || gicp_hold_cycles_ >= kGicpHoldMaxCycles) {
+        const bool hard_reanchor = !voxmap_trusted;
+        gicp_active_ = false;
+        gicp_pos_hist_.clear();
+        gicp_last_pose_valid_ = false;
+        // 目标图是基于"冻结时的 Anchor"构建的，接管期间 Anchor 若已解冻并积累
+        // 新帧，旧目标会逐渐落后于当前区域（gicp_u 275→297 s 正是这样失败）。
+        // 退出接管时作废，下次异常按最新 Anchor 帧重建。
+        gicp_target_ready_ = false;
+        gicp_target_.reset();
+        gicp_target_kdtree_.reset();
+        gicp_hold_cycles_ = 0;
+        anchor_pending_.clear();
+        {
+          std::lock_guard<std::mutex> lock(anchor_inbox_mutex_);
+          anchor_dense_inbox_.clear();
+        }
+        anchor_frozen_ = false;
+        novelty_hold_ = false;
+        map_pause_frame_ = false;
+        map_novelty_streak_ = 0;
+        map_novelty_run_dt_ = 0.0;
+        novelty_ref_valid_ = false;
+        novelty_release_cnt_ = 0;
+        novelty_release_last_t_ = -1.0;
+        if (hard_reanchor) {
+          // Voxmap 不可信：以最后一次可信 GICP 位姿清图重锚，绝不接受当前
+          // （已被拖离的）IMU 位姿，否则新地图整体偏移、后续再无绝对参考。
+          // 种子必须新鲜（≤kNoveltySeedMaxAgeS）：陈旧种子会把位姿弹回几十秒前。
+          const bool seed_fresh = gicp_seed_valid_ && gicp_seed_t_ > 0.0 &&
+              (measures_.lidar.end_time - gicp_seed_t_) <= kNoveltySeedMaxAgeS;
+          SysState s_anchor = seed_fresh ? gicp_seed_state_ : kf_->GetSysState();
+          if (seed_fresh) {
+            s_anchor.R = gicp_seed_pose_.R_;
+            s_anchor.p = gicp_seed_pose_.t_;
+          }
+          s_anchor.v.setZero();
+          kf_->RollbackToState(s_anchor, cov_pred);
+          if (ivox_) ivox_->clear();
+          anchor_committed_.clear();
+          anchor_last_log_t_ = -1.0;
+          gicp_seed_valid_ = false;
+          gicp_handback_streak_ = 0;
+          gicp_ok_streak_ = 0;
+          gicp_fail_streak_ = 0;
+          gicp_frame_counter_ = 0;
+          gicp_last_raw_valid_ = false;
+          gicp_lost_src_.reset();
+          gicp_lost_src_valid_ = false;
+          rot_corr_hist_.clear();
+          suspect_hold_dt_ = 0.0;
+          suspect_run_dt_ = 0.0;
+          map_novelty_skip_until_t_ =
+              measures_.lidar.end_time + kNoveltyGraceS + kNoveltyCooldownS;
+          stable_pose_ = kf_->GetSE3();
+          stable_pose_valid_ = true;
+          ++reanchor_total_;
+          LOG(WARNING) << "[GICP] 连续 " << n_fail
+                       << " 帧失败且 Voxmap 不可信（effect_pts=" << last_n_effect_
+                       << ", corr_p=" << vox_corr_p << " m, corr_r=" << vox_corr_r
+                       << " deg, 与上次可信位姿差 " << agree_p_exit
+                       << " m）：以最后一次可信 GICP 位姿清图重锚（累计 "
+                       << reanchor_total_ << " 次）";
+        } else {
+          // 交还 Voxmap
+          map_novelty_skip_until_t_ = measures_.lidar.end_time + kNoveltyCooldownS;
+          // 种子保留（30 s 龄期内）：若后续新点比例/锯齿再次触发并冻结 Anchor，
+          // 仍可从最后一次可信 GICP 位姿重试，而不是拿已被拖偏的 IMU 位姿当初值。
+          // 交还瞬间必须清速度：接管期位姿由 GICP 直接写状态，速度来自拟合外推，
+          // 与 Voxmap 观测的差值会被 ESKF 更新放大（gicp_v 实测交还后 2 s
+          // |v|=5.37 m/s 撞速度硬门进 LOST，随后 Anchor 被冻结、committed 被
+          // 窗口裁空，彻底失去恢复能力）。保留位姿、速度归零，运动由 IMU 重建。
+          SysState s_hand = kf_->GetSysState();
+          s_hand.v.setZero();
+          kf_->RollbackToState(s_hand, cov_pred);
+          stable_pose_ = kf_->GetSE3();
+          stable_pose_valid_ = true;
+          // 同 tryHandbackToVoxmap：起算交还观察期。注意本路径是"GICP 连续失败
+          // 后被动交还"，独立性比 10 帧健康交还更弱（gicp_ah 47:35 即走此路径
+          // 交还后立刻被拖走 9 m），观察期同样必须生效。
+          handback_probation_until_t_ = measures_.lidar.end_time + kHandbackProbationS;
+          handback_ref_pose_ = kf_->GetSE3();
+          handback_ref_valid_ = true;
+          LOG(WARNING) << "[GICP] 连续 " << n_fail
+                       << " 帧失败，退出接管：Voxmap 观测可信（effect_pts="
+                       << last_n_effect_ << ", corr_p=" << vox_corr_p
+                       << " m, corr_r=" << vox_corr_r << " deg），解冻 Anchor "
+                       << "并继续按 Voxmap 建图";
+        }
+      } else {
+        // 保持接管：GICP 失败只是"源云暂时对不上 Anchor"，而 Voxmap 已被
+        // 拖离（修正大/与最后一次可信位姿不一致）。此时把位姿钉在上一次可信
+        // GICP 位姿、速度清零，并冻结 Anchor 防止错误位姿继续污染它；
+        // 下一帧用该位姿作初值重试。
+        gicp_fail_streak_ = 0;
+        ++gicp_hold_cycles_;
+        // 不冻结 Anchor：接管期写图已被 map_pause_frame_ 暂停，Anchor 不会被
+        // 本次错误位姿污染；而冻结的代价是目标图停止 1.5 s 周期重建（重建只在
+        // GICP 成功帧里触发），过期目标继续失败，形成
+        // "冻结 → 目标过期 → 持续失败 → committed 老化清空" 死局：
+        // gicp_ac 实测 19:51:57 冻结后 committed 350→0，19:53:11 交还时
+        // Anchor 已空，随后被 Voxmap 沿退化方向拖走 25 m。
+        // 这里只作废未提交窗口，保持 Anchor 继续积累，并强制下次重建目标图。
+        const long n_drop = static_cast<long>(anchor_pending_.size());
+        anchor_drop_total_ += n_drop;
+        anchor_pending_.clear();
+        gicp_target_ready_ = false;
+        // 完整恢复种子状态（含零偏/重力）：只钉 R/p 而沿用当前跑飞的零偏时，
+        // IMU 预积分仍会持续给出错误加速度（gicp_ab 实测 ba_z→0.73 m/s²，
+        // 90 s 后 z 掉到 -78 m；ba_y→0.4）。
+        SysState s_hold = gicp_seed_valid_ ? gicp_seed_state_ : kf_->GetSysState();
+        if (gicp_seed_valid_) {
+          s_hold.R = gicp_seed_pose_.R_;
+          s_hold.p = gicp_seed_pose_.t_;
+        }
+        s_hold.v.setZero();
+        kf_->RollbackToState(s_hold, cov_pred);
+        stable_pose_ = kf_->GetSE3();
+        stable_pose_valid_ = true;
+        map_pause_frame_ = true;
+        LOG(WARNING) << "[GICP] 连续 " << n_fail
+                     << " 帧失败但 Voxmap 不可信（effect_pts=" << last_n_effect_
+                     << ", corr_p=" << vox_corr_p << " m, corr_r=" << vox_corr_r
+                     << " deg, 与上次可信位姿差 " << agree_p_exit
+                     << " m）：保持接管、钉住位姿、作废未提交 Anchor 帧（丢弃 "
+                     << n_drop << " 帧，第 " << gicp_hold_cycles_ << " 轮）";
+      }
+    }
+    return false;
+  }
+
+  // ===== 接受：覆盖 ESKF 的 R/p/v =====
+  // 抖动抑制：GICP 单帧输出实测有 0.1~0.4 m / 5~15 deg 抖动。直接把它注入
+  // ESKF，下一帧就会按带抖动的速度去畸变，帧内点云被剪切成非刚体，反过来
+  // 破坏 GICP 对应关系（正反馈）。这里只对"相对上一帧已接受位姿"的增量做
+  // 限幅：真实低频运动保留，高频抖动压掉。降频后两次接受之间隔了 N 帧
+  // （约 N×0.1 s），限幅量按帧间隔同比放大，否则会把真实运动当抖动削掉。
+  constexpr double kGicpStepPos = 0.15;                        // m/(N 帧)
+  // 姿态限幅 2° → 0.75°（interval=2 时实际 1.5°/帧）。实测接管期被接受的 GICP
+  // 解 drot 达 3~15°/帧，按 2°/帧×2 放行后等效 20°/s 持续注入，ESKF 只能把它
+  // 解释成陀螺零偏（gicp_am/an 的 bg 均为 0.09 rad/s ≈5°/s），姿态被虚假旋转
+  // 拖走 → drot 越来越大，正反馈。真实低频运动（≤1.3 m/s、≤30°/s）仍能跟住。
+  constexpr double kGicpStepRot = 0.75 * M_PI / 180.0;          // rad/(N 帧)
+  // 限幅按帧间隔放大，但封顶 3 帧：interval 拉到 10 时若同比放大到 1.5 m，
+  // 单次误配就能直接跨过质量门（max_dpos 2.0 m）把位姿拽走。
+  const double step_scale = static_cast<double>(std::min(std::max(1, g_gicp_frame_interval), 3));
+  const BASIC::SE3 T_gicp(BASIC::SO3(Rg.cast<BASIC::scalar>()), V3(tg.x(), tg.y(), tg.z()));
+  gicp_last_raw_pose_ = T_gicp;
+  gicp_last_raw_valid_ = true;
+
+  // ===== 退化结束 → 主动交还 Voxmap =====
+  // 三条证据见 tryHandbackToVoxmap 注释。满足即不注入 GICP，ESKF 保留本帧
+  // Voxmap 结果（当前状态就是 T_post），delta 修正与建图照常进行。
+  if (gicp_active_ && tryHandbackToVoxmap(vox_corr_p, vox_corr_r)) {
+    return true;
+  }
+
+  // 种子初值下的"回正"解：位姿已被错误 Voxmap 拖走 8~12 m，这里要一次性把
+  // 位姿拉回可信地图，不能按抖动限幅一刀刀切（0.15 m/帧 ⇒ 十几米要 8 s，
+  // 期间位姿停在半路，反而是最危险的状态）。
+  const bool snap_back = seed_guess_used && dpos > g_gicp_max_dpos;
+  BASIC::SE3 T_apply = T_gicp;
+  if (gicp_last_pose_valid_ && !snap_back) {
+    V3 dp = T_gicp.t_ - gicp_last_pose_.t_;
+    const double dpn = dp.norm();
+    if (dpn > kGicpStepPos * step_scale) dp *= (kGicpStepPos * step_scale) / dpn;
+    V3 dr = BASIC::SO3(gicp_last_pose_.R_.transpose() * T_gicp.R_).log_vee();
+    const double drn = dr.norm();
+    if (drn > kGicpStepRot * step_scale) dr *= (kGicpStepRot * step_scale) / drn;
+    T_apply = BASIC::SE3(
+        BASIC::SO3(gicp_last_pose_.R_.matrix() * BASIC::SO3::Exp(dr).matrix()),
+        gicp_last_pose_.t_ + dp);
+  }
+
+  // 速度用"限幅后"的位置序列拟合（9 帧 ≈ 0.9 s），抖动已被压掉，
+  // 避免 5 帧窗口里 0.3 m 抖动直接变成 3 m/s 的速度噪声。
+  gicp_pos_hist_.emplace_back(t_now, T_apply.t_);
+  while (gicp_pos_hist_.size() > 9) gicp_pos_hist_.pop_front();
+  V3 v_fit = fitGicpVelocity();
+  const double v_sp = v_fit.norm();
+  if (v_sp > 2.0) v_fit *= 2.0 / v_sp;
+
+  SysState sys = sys_pred;
+  sys.R = T_apply.R_;
+  sys.p = T_apply.t_;
+  sys.v = v_fit;
+  // 接管期 Voxmap 观测暂停 ⇒ bg 没有任何观测源。漂移段被污染的 bg（gicp_ap
+  // debug：正常段 bgx≈0.065/bgy≈-0.022，接管入口 0.072/-0.059）让 IMU 预测姿态
+  // 持续空转，drot 随钉住时长线性增长，越过 10° 门后整段被拒（gicp_ao 300~320 s
+  // 拒绝帧 drot=15~37°）。GICP 是绝对姿态观测：自上次接受以来
+  //   r_obs(GICP 实测旋转) − imu_acc(IMU 积分旋转) ≈ (bg_est − bg_true)·dt，
+  // 可直接估计零偏误差。注意接管期每个失败/降频帧都把姿态钉回 gicp_last_pose_，
+  // sys_pred 只前进一帧，必须用逐帧累积的 gicp_imu_rot_acc_ 而非单帧预测
+  // （gicp_ap 第一版用单帧预测，把 −0.5·ω_true 积进 bg：bgx 0.065→0.127 发散）。
+  if (gicp_last_pose_valid_) {
+    const double dt_acc = t_now - gicp_last_t_;
+    if (dt_acc > 0.5 && dt_acc < 30.0) {
+      const V3 r_obs = BASIC::SO3(gicp_last_pose_.R_.transpose() * T_gicp.R_).log_vee();
+      const V3 imu_acc =
+          gicp_imu_rot_acc_ +
+          BASIC::SO3(gicp_last_pose_.R_.transpose() * sys_pred.R.R()).log_vee();
+      const V3 bg_err = (r_obs - imu_acc) / dt_acc;
+      sys.bg -= 0.5 * bg_err.cwiseMin(0.02).cwiseMax(-0.02);
+    }
+  }
+  gicp_imu_rot_acc_.setZero();
+  kf_->SetMainState(sys);
+
+  // 旧协方差是围绕 IMU 预测建立的，GICP 是独立绝对观测：重开 p/v/bg
+  // （零偏不视为可信，交给后续观测纠正）。
+  ESKF::COV cov = cov_pred;
+  for (int i = 3; i < 6; ++i) cov(i, i) += 0.25;        // 0.5 m
+  for (int i = 6; i < 9; ++i) cov(i, i) += 1.0;         // 1.0 m/s
+  for (int i = 9; i < 12; ++i) cov(i, i) += 1e-4;       // 0.01 rad/s
+  kf_->SetCov(cov);
+
+  const bool was_active = gicp_active_;
+  delta_passthrough_frame_ = true;   // 本帧点云按修正后位姿投放，不做 delta 修正
+  stable_pose_ = kf_->GetSE3();
+  stable_pose_valid_ = true;
+  gicp_active_ = true;
+  gicp_ok_streak_++;
+  gicp_fail_streak_ = 0;
+  gicp_last_pose_ = T_apply;   // 记录"已应用"位姿，下一帧限幅以它为基准
+  gicp_last_t_ = t_now;
+  gicp_last_pose_valid_ = true;
+  // 本次解已通过质量门，作为退出接管后重试的初值种子保留
+  gicp_seed_pose_ = T_apply;
+  gicp_seed_t_ = t_now;
+  gicp_seed_state_ = kf_->GetSysState();
+  gicp_seed_valid_ = true;
+  gicp_hold_cycles_ = 0;
+  const bool recover = lost_;
+  lost_ = false;
+  lost_recover_streak_ = 0;
+  lost_run_dt_ = 0.0;
+  gicp_lost_src_.reset();
+  gicp_lost_src_valid_ = false;
+  suspect_hold_dt_ = 0.0;
+  rot_corr_hist_.clear();
+  // 只在"首次进入接管"时冻结 Anchor。接管期间的每一帧 GICP 成功都重新冻结，
+  // 会让 Anchor 永远停在触发时刻、目标图不随飞行更新，十几秒后源云出界，
+  // 内点比例自然跌到门限以下（gicp_u 实测 275→297 s 后 0.70→0.40 退出接管）。
+  if (!was_active && !anchor_frozen_) freezeTrustedAnchor("gicp_takeover");
+
+  last_gicp_log_wall_ = t_wall;
+  LOG(WARNING) << "[GICP] 接管" << (recover ? "(恢复 LOST)" : "") << "(" << why
+               << "): inlier=" << n_in << "/" << gicp_source_->size()
+               << " (" << inlier_ratio << ") rmse=" << rmse
+               << " m dpos=" << dpos << " m drot=" << drot_deg
+               << " deg eig_min=" << eig_min << " cond=" << cond
+               << " | t_raw=" << T_gicp.t_.transpose() << " t=" << T_apply.t_.transpose()
+               << " v=" << v_fit.transpose()
+               << " |v|=" << v_fit.norm() << " m/s bg=" << sys.bg.transpose()
+               << " ms=" << align_ms;
+  return true;
 }
 
 

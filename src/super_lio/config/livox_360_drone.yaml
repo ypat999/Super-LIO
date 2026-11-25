@@ -12,6 +12,68 @@
     # 例如: "front_" -> 保存为 front_scans_0.pcd, front_scans_1.pcd
     # 空字符串表示无前缀（默认）
     lio.map.pcd_prefix: ""
+    # 实验：bag 相对时间超过该值后停止向 IVox 写图（秒，0 = 关闭）。
+    # 只读旧地图继续配准，用于判定漂移根因是"地图自污染反馈"还是"纯匹配错误"。
+    lio.map.freeze_after_s: 0.0
+    # 可信 Anchor 延迟提交（独立于实时 IVox）：>0 时开启，建议 5.0
+    # 最近 delay_commit_s 秒的点云先进入可撤销队列，超窗未触发 SUSPECT/LOST 才提交；
+    # 触发异常时作废未提交部分并冻结 Anchor。0 = 关闭。
+    lio.anchor.delay_commit_s: 5.0
+    # 可信 Anchor 保留窗口（秒）
+    lio.anchor.window_s: 40.0
+    # 可信 Anchor GICP 重定位（第 4 步）：检测器判 SUSPECT/LOST 时，用当前帧
+    # 去畸变机体系点云对冻结 Anchor 做 GICP，得到独立的 world<-body 观测并
+    # 覆盖 ESKF 状态（而不是撤销本次激光修正）。通过质量门才接受。
+    lio.anchor.gicp_en: true
+    # 目标地图：已提交 Anchor 帧投到 world 后按 voxel 降采样，只保留距最近
+    # 已提交帧 radius 内的点。源云同样按此 voxel 从全量去畸变云降采样。
+    # 实测 ds_undistort_（约 300 点）对平移约束不足，必须用稠密全量云（约 3k 点）。
+    lio.anchor.gicp_target_voxel: 0.10
+    lio.anchor.gicp_target_radius: 40.0
+    # 目标地图基准只取最近 window_s 内的已提交帧，并按 keyframe_dt 抽帧
+    # （1 s 一帧，约 10 帧稠密基准），最终点数封顶 max_pts，控制 KdTree/配准开销。
+    lio.anchor.gicp_target_window_s: 10.0
+    lio.anchor.gicp_target_keyframe_dt: 1.0
+    lio.anchor.gicp_target_max_pts: 40000
+    # 质量门：内点比例（最近邻 < 0.3 m）、米制 RMSE、相对 IMU 预测的修正量。
+    # 稠密源/目标下可行解为 inlier>0.8 / RMSE<0.10 m；保留一定余量。
+    # ΔPos 2.0 m；ΔRot 见下。
+    lio.anchor.gicp_min_inlier_ratio: 0.5
+    lio.anchor.gicp_max_rmse: 0.30
+    lio.anchor.gicp_max_dpos: 2.0
+    # 单次重定位允许的最大姿态修正。原为 50°：gicp_t 275.4 s 新点比例前兆命中时，
+    # GICP 对漂移前 Anchor 收敛到 conv=1 / inlier 0.71 / rmse 0.166 m，但需要
+    # 38.7° 姿态修正。该场景现在由"种子初值"分支单独放行（seed_guess_used 时
+    # 允许与预测差任意、只要求离种子 ≤20°），无需再对本门放宽。
+    # 收紧到 10°：接管期实测被接受的解 drot 达 3~15°/帧，是稀疏目标图下 GICP
+    # 旋转抖动 + 目标帧被抖动姿态污染的结果，会让姿态被 20°/s 拖着转。
+    lio.anchor.gicp_max_drot: 10.0
+    # 连续多少"次 GICP 尝试"失败后退出 GICP 接管。接管期间 GICP 是唯一可信
+    # 观测，失败帧退回上一 GICP 解（速度清零）而不接受 Voxmap 修正。
+    # interval=10 时 10 次 ≈ 10 s；过长会在无观测下硬撑，交给 Voxmap 兜底。
+    lio.anchor.gicp_fail_max: 10
+    # GICP 降频：接管期每 N 个雷达帧才跑一次配准（其余帧做限幅外推）。
+    # 降本后单帧 GICP 实测 66~99 ms（源云 ≤800、目标 ≤40k、BFGS 内层 3 次），
+    # 10 Hz 下每 2 帧一次（≈50 ms/帧均摊）即可。此前 interval=10 + 1.5 s 墙钟
+    # 门让帧间只能靠 IMU 外推，而 IMU 速度在姿态/零偏误差下 6 帧就能泵到
+    # 3.4 m/s（gicp_h 实测），位姿冲出 2 m 后 GICP 连锁失败、再也拉不回来。
+    lio.anchor.gicp_frame_interval: 2
+    # 源/目标改用全量稠密去畸变云（pc_full），并按体素 0.06 降采样以贴近
+    # 离线 f2f 的精度条件（rmse 0.04 量级）。max_pts 超限时自动加大体素。
+    lio.anchor.gicp_dense_en: true
+    lio.anchor.gicp_source_max_pts: 800
+    # Anchor 稠密体副本的单帧点数上限（独立于源云上限）。目标图由 10 帧基准拼接，
+    # 每帧 800 点时目标仅 ~3.6k 点，GICP 内点比例 34s 内从 0.68 掉到 0.15 并退出接管。
+    lio.anchor.gicp_body_max_pts: 3000
+    # 接管期 → 交还 Voxmap：连续 N 次 GICP 帧同时满足
+    # ① Voxmap 观测健康（有效点足够、相对 IMU 预测修正小）
+    # ② 与 GICP 位姿一致（这是两套独立观测的交叉校验）
+    # 即退出接管，按 Voxmap 观测继续建图（Anchor 解冻重新积累）。
+    lio.anchor.gicp_handback_frames: 10
+    lio.anchor.gicp_handback_corr_p: 0.15
+    lio.anchor.gicp_handback_corr_r: 1.5
+    lio.anchor.gicp_handback_agree_p: 0.30
+    lio.anchor.gicp_handback_agree_r: 5.0
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
     lio.ros.map_save_service_topic: "/map_save"
@@ -24,7 +86,11 @@
     lio.sensor.enable_downsample: true
     lio.sensor.voxel_fliter_size: 0.25
 
-    lio.sensor.intensity_filter_en: true
+    # home3 0.25 复测结论：打开强度过滤会丢掉走廊/暗处的约束点，有效点从
+    # 787 降到 562（-29%）；515 s 起与稠密输入轨迹分离（1 m / 9° 量级），
+    # 556 s 被 Trust 前兆判据误触发后级联发散。关闭后 main 与 no-de-check
+    # 逐位一致（941 s max dpos = 0）。
+    lio.sensor.intensity_filter_en: false
     lio.sensor.intensity_min: 5.0
     # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
     lio.sensor.lidar_channels: 0
@@ -55,13 +121,14 @@
 
     lio.hash_map.hash_capacity: 2000000
     lio.hash_map.vox_resolution: 0.25
-    # M.40 参数定稿：细分 4 + 平面拟合邻域 K=8（与 no-de-check 生产分支对齐，
-    # 显式写出避免依赖代码默认值；代码里 sub_div 上限 4、K 上限 8）。
-    lio.hash_map.sub_div: 4
-    lio.hash_map.plane_knn_k: 8
+    # 子体素固定 2×2×2（sub_div 已取消可配置）：每轴细分 4 曾在本 bag 上把漂移
+    # 放大（细体素让平面拟合更容易跨面混合，产生系统性错误匹配），故固定为 2。
+    # 平面拟合邻域 K=5 与之配对。
+    lio.hash_map.plane_knn_k: 5
 
     lio.kf.kf_type: 0
-    lio.kf.kf_max_iterations: 4
+    # 迭代 ESKF 最大迭代次数：4 → 8，配合 2×2×2 子体素/K=5 提高非线性收敛度。
+    lio.kf.kf_max_iterations: 8
     lio.kf.kf_align_gravity: true
     lio.kf.kf_quit_eps: 0.001
 
@@ -122,6 +189,11 @@
     # na=0.3 时该开关在 1f 上三个轴 |Δ|≤0.13 m（几乎无效）。
     lio.observe.normal_weight_en: false
     lio.observe.normal_sigma: 0.05
+    # 旋转通道观测放权（1.0 = 原行为）：只放大 Hessian 的旋转 3x3 块。
+    # home3 实测 rot_weight=4.0 反而更差（发散点 557 s → 510 s，530 s 位置差
+    # 已达 14 m），说明这段的旋转观测本身是"错但自信"，加重权重等于放大错误。
+    # 故保持 1.0，参数保留供后续按场景调。
+    lio.observe.rot_weight: 1.0
 
     # ======================== 坏帧护栏 ========================
     # 处理停顿会让 IMU 缓冲欠载，去畸变用残缺轨迹把点云扭坏，配准一次跳变
@@ -145,15 +217,70 @@
     lio.observe.trust_guard_en: true
     # 单帧允许的位置/姿态跳变（10Hz、2m/s 正常帧间位移约 0.2m，留 5 倍余量）
     lio.observe.trust_jump_max: 1.0
-    # 姿态阈值 25deg：sub_div=4 + K=8 在楼梯边缘会把相邻面混入平面拟合，
-    # 产生 16~19deg 的单帧姿态修正（位移仅 5~8cm，修正本身正确）。
+    # 姿态阈值 25deg：细体素（曾用 sub_div=4 + K=8）在楼梯边缘会把相邻面混入
+    # 平面拟合，产生 16~19deg 的单帧姿态修正（位移仅 5~8cm，修正本身正确）。
     # drone 实测 15deg 阈值会误否决这类正确修正（闭环 4.69m），
     # 放宽到 25deg 后闭环 0.90m、yaw 1.04deg；位置阈值仍是 1m 兜底。
     lio.observe.trust_jump_rot_max: 25.0
+    # 状态速度硬门（m/s，0 = 关闭）。单帧跳变门只看单帧位移，挡不住
+    # "每帧 <1 m 的持续拖拽"：gicp_i 298 s 起速度 1.1→10 m/s（≈6 m/s²），
+    # 1.5 s 内 py 从 1.4 m 冲到 10 m，每帧位移都低于 1 m 门限被放行，
+    # 最终飞到 327 m、pz −246 m。本 bag 实飞速度 ≤1.3 m/s，取 5.0 作兜底。
+    lio.observe.trust_vel_max: 5.0
+    # 地图新点比例门（0 = 只观测不抑制）：本帧世界系点云里"落在尚无粗体素"
+    # 的点占比。正常回访时绝大多数点落进已建体素，比例低；一旦发生错误匹配，
+    # 整帧被塞进空白区域，比例随之飙升（先于大幅漂移出现）。
+    # 触发条件 = 连续 streak 帧超阈值，且本帧修正 > jump_min（位置 m / 姿态 deg），
+    # 动作 = 撤销本帧激光修正 + 暂停建图（SUSPECT 语义，下一帧可自恢复）。
+    # 注意：首次进入未探索区域时该比例天然很高，因此必须叠加修正量条件。
+    # gicp_j 实测标定（400 s，逐帧统计）：0-290 s 正常段 mean 1-5%、p99≤20%、
+    # max 29.7%，且夹在 >20% 的连续段里逐帧位移都 <0.10 m（被修正量条件滤掉）；
+    # 299.5 s 起比例 0.14→0.26→0.43→0.51 连续抬升（此时 |v| 才 2.6→4.3 m/s），
+    # 303 s 后维持 0.4-0.87 —— 比位姿真正跑飞（305 s 起 py 以米级偏离）早约 5 s。
+    # 故阈值取 0.25 + 连续 3 帧：该组参数在 gicp_j 数据上 0-290 s 零触发。
+    lio.observe.map_novelty_max: 0.25
+    lio.observe.map_novelty_jump_min: 0.10
+    lio.observe.map_novelty_jump_min_rot: 1.0
+    lio.observe.map_novelty_streak: 3
+    # 早期漂移前兆门（任一为 0 = 关闭）：不再等"新点比例单独超 0.25"，而是要求
+    # 新点比例与 IMU 预测速度"同时抬头"。依据 gicp_o 逐帧统计（0-280 s）：
+    # 健康段新点比例高（40-60 s 大量新覆盖，>0.20 连续 13 帧）时速度都低，
+    # 速度高的时段（60-180 s 峰值 1.2 m/s）新点比例都低，两者从未同时成立；
+    # 而 275.3 s 发散前 0.207/1.79 m/s 首次同时成立，比 0.25+3 帧判据早约 1 s。
+    # 触发后优先交给冻结 Anchor 的 GICP 拉回绝对位姿，无 GICP 时退化为清图重锚。
+    # home3 0.25 复测（debug.csv 逐帧）：555.5-555.9 s 走廊快速转向时状态速度
+    # 1.24→1.44 m/s、新点比例 0.19-0.21 同时成立，1.2 m/s 门把这次正常加速判成
+    # 前兆；而该帧观测本身健康（effect 417、plane_fail 0、dx_inf 1e-4）。抑制后
+    # GICP 与 Voxmap 相差 1.2 m/22° 无法绝对校验，3 s 后放行即 |v| 5 m/s 发散。
+    # 根因已定位为强度过滤造成的稀疏输入（见 lio.sensor.intensity_filter_en），
+    # 关掉过滤后 home3 全程 98 帧 |v|>1.2 但新点比例无一超过 0.18，该判据不再误触发，
+    # 故恢复 1.2，保留对 gicp_o 等 bag 的原始灵敏度。
+    lio.observe.map_novelty_early: 0.18
+    lio.observe.trust_vel_early: 1.2
+    lio.observe.novelty_early_streak: 2
+    # 开阔区门控（任一为 0 = 关闭该项）：本帧最远点距离 / 机体系 z 跨度超门时，
+    # 新点比例与平移锯齿判据不评估。无结构大空间里 novelty 天然偏高，且冻结
+    # Anchor 的目标图与新区域零重叠、GICP 无法绝对校验，判据成立只能硬重锚，
+    # 而重锚把位姿钉在数秒前、随后由 IMU 外推补偿，反而制造漂移。
+    # home3 实测：室内 rmax 4-9 m、z_span <10 m；室外/大空间段 rmax 29-105 m、
+    # z_span 68-77 m，两门都能把该段干净分开。
+    lio.observe.open_guard_max_range: 20.0
+    lio.observe.open_guard_z_span: 25.0
+    # 退化检测（只判平移）：走廊/窄通道里沿通道轴的约束天然弱，六维混判会被
+    # 旋转块稀释，先只对平移 3x3 块分解并把阈值降到 60，观察 cond 的走势。
+    # home3 555 s 复测：平移 cond 仅 2.6~4（axes=0），说明该时刻平移并不退化，
+    # 发散不是几何约束缺失导致的，因此暂不开启截断，避免在正常场景误改观测。
+    lio.observe.degeneracy_detect_en: true
+    lio.observe.degeneracy_threshold: 60.0
+    lio.observe.degen_trans_only: 1
+    lio.observe.degeneracy_hysteresis: 1.5
+    lio.observe.degeneracy_enter_frames: 10
+    lio.observe.degeneracy_exit_frames: 20
+    lio.observe.degeneracy_truncate_en: false
     # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
     lio.observe.trust_corr_max: 0.5
     lio.observe.trust_corr_rot_max: 10.0
-    lio.observe.lost_recover_frames: 5
+    lio.observe.lost_recover_frames: 10
     # LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉 0.1m / 1deg。
     # 断档后先验与真实位姿可能差米级，直接接受配准会一次跳变、完全否决又会永久停死，
     # 因此逐帧小步靠近。0.1m/帧@10Hz ≈ 1m/s 的位姿收敛速度，约 1~3s 可拉回。
@@ -161,3 +288,35 @@
     lio.observe.lost_slew_r: 1.0
     # LOST 期间是否继续向 IVox 建图（关，防止污染配准地图；PCD 片段仍照常落盘）
     lio.observe.lost_map_en: false
+    # LOST 期间速度处理：先按 damp 衰减，再用 max 硬封顶。
+    # 实测（gicp_h 270~320 s）姿态/零偏误差带来 ~5 m/s² 的重力泄漏，不衰减的
+    # 先验速度每 6 帧就从 0.06 泵到 3.4 m/s，位姿随之冲出 1.5~2 m 并连锁失锁。
+    lio.observe.lost_vel_damp: 0.5
+    lio.observe.lost_vel_max: 1.0
+    # 姿态修正净速率门（deg/s，0 = 关闭）：窗口内 |Σδθ|/Σdt 超阈值 → SUSPECT：
+    # 撤销该帧激光修正、暂停写图，但保持正常态（下一帧继续评估，可自恢复）。
+    lio.observe.trust_corr_rate_max: 0.0
+    lio.observe.trust_corr_rate_window: 20
+    # 方向一致性下限 C_θ = |Σδθ|/(Σ|δθ|+ε)（0 = 不加该条件）。
+    # 健康段修正方向来回摆动 C_θ 低，拖歪时每帧同向 C_θ≈1。
+    lio.observe.trust_corr_coh_min: 0.0
+    # 升级 LOST 的净速率阈值（deg/s，0 = 只做 SUSPECT 不升级 LOST）
+    # 与持续时长门槛一起生效：只有"更快且持续"才升级，避免正常转弯误锁死。
+    lio.observe.trust_corr_rate_lost: 0.0
+    lio.observe.trust_corr_lost_hold_s: 1.0
+    # SUSPECT 只在 bag 相对时间超过该值后才允许触发（秒，0 = 不限制）。
+    # 用于跳过起飞/手持上机段：那里的合法大修正不应把状态机点着。
+    lio.observe.trust_suspect_after_s: 0.0
+    # SUSPECT 连续超时兜底（秒，0 = 关闭）：持续超过该时长仍未恢复时按
+    # effect_pts 分流——地图仍覆盖（>=100 点）就保图放行、恢复 Voxmap 观测；
+    # 地图已不覆盖才清图重锚。抑制期位姿冻结在判据成立时刻，GICP 初值不会跑飞，
+    # 所以 3 s 足够判明"能否拉回"，再长只会让重锚位姿离真实运动越来越远。
+    lio.observe.trust_suspect_max_s: 3.0
+    # LOST 连续超时兜底（秒，0 = 关闭）：GICP 长期无法恢复时强制接受 Voxmap
+    # 观测并恢复建图，避免 conv=0 死循环把系统永久挂在 LOST（停止建图）。
+    lio.observe.trust_lost_max_s: 20.0
+    # 超时兜底放行的残差门（米/度）：观测与当前位姿差超过该值时拒绝接受，
+    # 改为清空 IVox + Anchor、以当前 IMU 位姿重锚新建地图段。
+    # 实测把 24.4m 单帧跳变直接吃进 ESKF 后速度冲到 125m/s、轨迹彻底发散。
+    lio.observe.trust_force_accept_max_p: 3.0
+    lio.observe.trust_force_accept_max_r: 20.0

@@ -102,11 +102,10 @@
 >   支持任意 N≤8（原 `N==5` 才走 QR，其它情况只用前 4 点）；`super_lio_reloc.cpp` 同名函数同步
 > - `make` 模板参数变了，**车上部署必须全量 rebuild**，只换 yaml 不生效
 >
-> `sub_div=4` 的实现要点：`kMaxSlots = 64`，`sub_bits_=2`
-> （`local_idx = dx | dy<<2 | dz<<4`），搜索走 `getTopK_sub4`（邻居粗体素全槽扫描，
-> 无子槽预计算表），早退阈值按 `hknn_thr_scale_ = (resolution_/0.5)²` 折算
-> （`orders_min_dis2` 是按 res=0.5 标定的米制常数）。sub_div=2 仍走原 `getTopK`，
-> 行为逐位不变。
+> `sub_div` 已取消可配置：固定 2×2×2 = 8 槽（`kSlots = 8`，`local_idx = dx | dy<<1 | dz<<2`），
+> 点位粒度恒为 `vox_resolution/2`。4×4×4 的 `getTopK_sub4`、`occupied_mask_`、`aabbDist2`、
+> `hknn_thr_scale_` 及每体素 64 槽的数组已删除（每体素内存降到 1/8）。上面 sub4 的复验数据
+> 对应已删除的代码路径，仅作历史记录。
 >
 > Trust 姿态阈值：`lio.observe.trust_jump_rot_max` 15 → **25 deg**。sub4+K8 在楼梯边缘会把
 > 相邻面混入平面拟合，产生 16~19 deg 的单帧姿态修正（位移仅 5~8 cm，修正本身正确），

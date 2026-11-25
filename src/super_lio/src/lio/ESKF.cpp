@@ -104,10 +104,16 @@ void ESKF::RollbackToState(const SysState& x, const COV& cov) {
   bg_ = x.bg;
   ba_ = x.ba;
   P_ = 0.5 * (cov + cov.transpose());
-  fw_R_ = R_;
-  fw_p_ = p_;
-  fw_v_ = v_;
-  forward_time_ = current_obs_time_;
+  // 只有高频前向链没有跑到本次观测时刻之后（process 线程基本跟得上）才重锚。
+  // 滞后时 current_obs_time_ 远落后于 IMU 回调已推进到的 forward_time_，
+  // 强行重锚等于把时间基准往回拽一整段滞后量，下一次 IMU 回调的 dt 立刻
+  // 变成 20~65 s，触发"前向积分时间断档"并把 TF 链每帧重锚一次。
+  if (forward_time_ < 0.0 || current_obs_time_ + 0.2 >= forward_time_) {
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+    forward_time_ = current_obs_time_;
+  }
 }
 
 
@@ -145,10 +151,13 @@ void ESKF::Update() {
     g_ = g_gravity_norm * (g_.normalized());
   }
 
-  fw_R_ = R_;
-  fw_p_ = p_;
-  fw_v_ = v_;
-  forward_time_ = current_obs_time_;
+  // 同 RollbackToState：滞后时不把高频前向链的时间基准往回拽。
+  if (forward_time_ < 0.0 || current_obs_time_ + 0.2 >= forward_time_) {
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+    forward_time_ = current_obs_time_;
+  }
 }
 
 

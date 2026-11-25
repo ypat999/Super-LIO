@@ -287,7 +287,7 @@ bool SuperLIOReLoc::kf_init(){
 }
 
 
-void SuperLIOReLoc::UpdateMap() {
+void SuperLIOReLoc::UpdateMap(bool write) {
   if(g_update_map){
     static int __update_delay = 100;
     if(__update_delay > 0){
@@ -311,7 +311,7 @@ void SuperLIOReLoc::UpdateMap() {
     points_world_v3_[i] = R * pt + t;
   }
   
-  ivox_->insert(points_world_v3_);
+  if (write) ivox_->insert(points_world_v3_);
 
 }
 

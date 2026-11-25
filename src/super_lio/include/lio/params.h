@@ -149,6 +149,12 @@ namespace LI2Sup{
   /// 低精度雷达(如 Airy):    200  (σ≈0.071m, 5m处法向偏差±0.1m)
   extern double g_obs_weight;
 
+  /// 旋转通道观测权重放大系数（1.0 = 原行为，只作用于 Hessian 的旋转 3x3 块）。
+  /// home3 0.25 实测：走廊段快速转向（陀螺峰值 156°/s）时偏航滑掉 9°，
+  /// 随后姿态误差把重力泄漏成水平加速度（拒绝观测 2.4 s 内 |v| 0.8→3.9 m/s）。
+  /// 偏航只靠两侧墙约束、权重偏低时最易滑，这里单独放大旋转信息。
+  extern double g_obs_rot_weight;
+
   /// 实验：距离自适应测量方差（对齐官方 FAST-LIO2 的 beam_err/dept_err）：
   /// σ²(r)=dept_err²+(beam_err·r)²，以 r=5m 处标定为 g_obs_weight。
   /// 远处点平面拟合误差随距离增大，常数权重会过度信任 30~150m 点导致逐帧抖动。
@@ -201,6 +207,16 @@ namespace LI2Sup{
   extern int    g_degeneracy_exit_frames;
   /// 退化"响应"之二（新）：检测到退化时把观测参数切到"退化档"，未检出则回静态基线
   extern bool   g_adaptive_param_en;
+
+  /// 退化"响应"之三（M.33）：沿**运动方向**截断。
+  /// 依据 drone bag 275 s 漂移：最弱平移方向与速度方向夹角余弦 0.90~1.00，
+  /// 但 6 维 cond 只有 10~45、平移块 cond_t 只有 3~6，永远达不到 threshold=100。
+  /// 判据改为"运动方向上的约束强度占比" λ_v/λ_max(H_tt)（λ_v = v̂ᵀH_tt v̂），
+  /// 低于 ratio 时把该方向的 LiDAR 约束投影掉，交 IMU 预积分接管。
+  /// 默认关；关时与既有行为完全一致。
+  extern bool   g_degen_motion_dir_en;
+  extern double g_degen_motion_dir_ratio;
+  extern double g_degen_motion_dir_vmin;
 
   /// ===== 坏帧护栏 =====
   /// 实测（楼梯 bag 悬停崩塌）：处理停顿会让 imu_buffer_ 欠载，一帧 100 ms 的雷达
@@ -306,7 +322,6 @@ namespace LI2Sup{
   extern bool   g_map_clamp_mu;      // 均值更新后夹回子体素包围盒
   extern int    g_map_max_points;    // 每个子体素最多融合点数
   extern double g_map_merge_dist;    // 与 μ 的合并距离门限（m）
-  extern int    g_map_sub_div;       // 子体素细分因子：2=2×2×2=8槽, 4=4×4×4=64槽(默认)
 
   /// HKNN 分组搜索显式化
   extern int    g_hknn_max_group;    // -1=全部 6 组；1..6=只搜前 N 组（有效半径递减）
@@ -344,6 +359,31 @@ namespace LI2Sup{
   /// 单帧允许的位置/姿态跳变
   extern double g_trust_jump_max;
   extern double g_trust_jump_rot_max;
+  /// 状态速度硬门（m/s，0 = 关闭）。单帧跳变门只看单帧位移，挡不住
+  /// "每帧 <1 m 的持续拖拽"（≈5 m/s 匀速拖走）；该门在速度层面兜底，
+  /// 超限直接进 LOST 由 lost_vel_damp / lost_vel_max 钉住速度。
+  extern double g_trust_vel_max;
+  /// 地图新点比例门（0 = 关闭）。本帧点云投到 world 后落在"尚无粗体素"的点
+  /// 占比超过该值、且本帧修正量超过 *_jump_min，判为错误匹配：
+  /// 撤销本帧修正 + 暂停建图（SUSPECT，下一帧自动重评）。
+  extern double g_map_novelty_max;
+  extern double g_map_novelty_jump_min;
+  extern double g_map_novelty_jump_min_rot;
+  extern int    g_map_novelty_streak;
+  /// 早期漂移前兆门（0 = 关闭）：新点比例只需超过 map_novelty_early 且
+  /// IMU 预测速度超过 trust_vel_early(m/s) 连续 novelty_early_streak 帧即判前兆。
+  /// 依据 drone bag：健康段（含 40-60 s 大量新覆盖）从未出现"新点比例高 + 速度高"
+  /// 同时成立，而 275.3 s 发散前该组合先于 novelty_max 判据约 1 s 出现。
+  extern double g_map_novelty_early;
+  extern double g_trust_vel_early;
+  extern int    g_novelty_early_streak;
+  /// 开阔区门控（0 = 关闭）：本帧最远点距离超过 open_guard_max_range (m) 或
+  /// 机体系 z 跨度超过 open_guard_z_span (m) 时，新点比例与平移锯齿两条判据
+  /// 不生效。home3 430 s 起进入大开阔区：地图无对应结构，novelty 恒高、
+  /// 冻结 Anchor 的目标图与新区域零重叠，GICP 无法做绝对校验，判据一旦成立
+  /// 就会硬重锚并把位姿钉在 3 s 前，反而制造漂移（476 s |v|>2、497 s 下沉）。
+  extern double g_open_guard_max_range;
+  extern double g_open_guard_z_span;
   /// LOST 期间重新接受观测所需的单帧修正量上限（影子配准）
   extern double g_trust_corr_max;
   extern double g_trust_corr_rot_max;
@@ -354,6 +394,97 @@ namespace LI2Sup{
   extern double g_lost_slew_r;
   /// LOST 期间是否继续向 IVox 建图（默认关，防止污染用于配准的地图）
   extern bool   g_lost_map_en;
+  /// LOST 退出必须同时满足"本帧确有观测"：有效平面残差点数下限。
+  /// 防止 n_effect==0 时 corr_p 恒为 0 被误判成收敛（假收敛）。
+  extern int    g_lost_min_effect_pts;
+  /// LOST 期间速度衰减系数（1.0 = 不衰减，<1 每帧乘一次）
+  extern double g_lost_vel_damp;
+  /// LOST 期间速度硬上限（m/s，0 = 关闭）。姿态/零偏误差下加速度计的重力泄漏
+  /// 可达 ~5 m/s²，仅靠衰减系数仍会在帧间反弹，需再用上限兜住。
+  extern double g_lost_vel_max;
+  /// 单帧 LiDAR 姿态修正上限（deg/帧，0 = 关闭）。
+  /// 针对"渐进拖歪"失效：单帧跳变门（25 deg）拦不住每帧 1~3 deg 的持续拖拽，
+  /// 而 10~20 deg/s 的姿态拖动会把重力方向拖歪、产生虚假水平加速度。
+  extern double g_trust_rot_clamp_deg;
+  /// 姿态修正净速率门（deg/s，0 = 关闭）：窗口内平均修正速率超限 → SUSPECT。
+  /// SUSPECT 只撤销该帧激光修正并暂停写图，不进入 LOST（可自恢复）。
+  extern double g_trust_corr_rate_max;
+  /// 上述速率统计窗口（帧数）
+  extern int    g_trust_corr_rate_window;
+  /// 修正方向一致性下限 C_θ = |Σδθ| / (Σ|δθ|+ε)（0 = 不加该条件）。
+  /// 健康段修正方向来回摆动 → C_θ 低；拖歪时每帧同向 → C_θ 接近 1。
+  extern double g_trust_corr_coh_min;
+  /// 升级 LOST 的净速率阈值（deg/s，0 = 只做 SUSPECT、永不升级 LOST）
+  extern double g_trust_corr_rate_lost;
+  /// 升级 LOST 需连续超阈的累计时长（秒）
+  extern double g_trust_corr_lost_hold_s;
+  /// 只在该 bag 相对时间之后才允许判 SUSPECT（秒，0 = 不限制）。
+  /// 用途：跳过起飞/手持上机段的合法大幅修正，直接验证真实漂移段的接管。
+  extern double g_trust_suspect_after_s;
+  /// SUSPECT 持续超过该时长仍未恢复，强制接受 Voxmap 观测并恢复建图（秒，0 = 关闭）。
+  /// 防止 GICP 无法接管时（锚无重叠）系统永久瘫痪。
+  extern double g_trust_suspect_max_s;
+  /// LOST 持续超过该时长仍未恢复，强制接受 Voxmap 观测并恢复建图（秒，0 = 关闭）。
+  /// 防止 GICP 长期 conv=0（源云与目标无重叠）时系统永久滞留 LOST、停止建图。
+  extern double g_trust_lost_max_s;
+  /// 超时兜底放行的残差门：观测与当前位姿差超过该值（米/度）时拒绝接受，
+  /// 改为清空 IVox + Anchor、以当前 IMU 位姿重锚新建地图段。
+  /// 依据：实测把 24.4 m 的单帧跳变直接吃进 ESKF 后速度冲到 125 m/s、轨迹发散。
+  extern double g_trust_force_accept_max_p;
+  extern double g_trust_force_accept_max_r;
+  /// 实验：bag 相对时间超过该值后停止向 IVox 写图（秒，0 = 关闭）。
+  /// 用途：判定漂移根因是"地图自污染反馈"还是"纯匹配错误"。
+  extern double g_map_freeze_after_s;
+  /// 可信 Anchor 延迟提交窗口（秒，0 = 关闭该特性）。
+  /// 每帧点云先进入可撤销队列，超过该窗口且期间未触发 SUSPECT/LOST 才提交；
+  /// 触发异常时丢弃未提交部分，保证 Anchor 不含漂移期的污染点云。
+  extern double g_anchor_delay_commit_s;
+  /// 可信 Anchor 保留窗口（秒）：只保留最近这段时间的已提交帧，控制内存。
+  extern double g_anchor_window_s;
+  /// 可信 Anchor GICP 重定位总开关（默认关）。
+  /// 开启后：检测器判 SUSPECT/LOST 时，用「当前帧去畸变机体系点云」对
+  /// 「冻结 Anchor 的可信世界系点云」做 GICP，得到独立的 world<-body 位姿观测，
+  /// 通过质量门后直接覆盖 ESKF 状态（而不是撤销本次 LiDAR 修正）。
+  /// 常态零开销：仅在异常帧才构建目标地图/运行配准。
+  extern bool   g_anchor_gicp_en;
+  /// 接受一次 GICP 位姿所需的最小内点比例（内点=最近邻距离 < 0.3 m）
+  extern double g_gicp_min_inlier_ratio;
+  /// 接受一次 GICP 位姿的最大匹配 RMSE（米制，sqrt(均方最近邻距离)）
+  extern double g_gicp_max_rmse;
+  /// 相对 IMU 预测位姿允许的最大平移/旋转修正（GICP 是绝对观测，修正量过大多半是错解）
+  extern double g_gicp_max_dpos;
+  extern double g_gicp_max_drot;
+  /// GICP 连续失败多少帧后退出接管、回到 Voxmap 观测
+  extern int    g_gicp_fail_max;
+  /// Anchor 目标地图体素降采样尺寸（米）
+  extern double g_gicp_target_voxel;
+  /// Anchor 目标地图只保留距最近已提交帧该半径内的点（米），控制目标规模
+  extern double g_gicp_target_radius;
+  /// 构建目标地图时只取最近这段时间内的已提交帧（秒），0 = 用全部保留窗口
+  extern double g_gicp_target_window_s;
+  /// 目标地图基准帧抽稀间隔（秒）：窗口内每隔该时长取一帧稠密帧，控制帧数与点数
+  extern double g_gicp_target_keyframe_dt;
+  /// 目标地图最终点数上限（体素重滤直到满足）
+  extern int    g_gicp_target_max_pts;
+  /// GICP 降频：接管期每 N 个雷达帧才跑一次配准，其余帧纯 IMU 传播。
+  /// 1 = 每帧都跑（旧行为）；实测单帧 200~800 ms，3~4 帧一次才能跟上实时。
+  extern int    g_gicp_frame_interval;
+  /// 源/目标改用全量稠密去畸变云（而非被 filter_rate 抽稀的 scan_undistort_full_）
+  extern bool   g_gicp_dense_en;
+  /// 单帧 GICP 源云点数上限：超过则自动加大体素（防止全量云把配准拖到秒级）
+  extern int    g_gicp_source_max_pts;
+  /// 单帧 Anchor 稠密体副本的点数上限（独立于源云上限）。
+  /// 目标图由约 10 帧基准帧拼接，每帧点数直接决定目标密度：
+  /// 实测每帧 800 点时目标只有 ~3.6k 点，GICP 内点比例 34 s 内从 0.68 掉到 0.15。
+  extern int    g_gicp_anchor_body_max_pts;
+  /// ===== 接管期 → 交还 Voxmap =====
+  /// 交还要求连续 N 次 GICP 帧同时满足：Voxmap 观测健康（有效点数、修正量小）
+  /// 且与本帧 GICP 位姿一致。满足即退出接管、按 Voxmap 观测继续建图。
+  extern int    g_gicp_handback_frames;
+  extern double g_gicp_handback_corr_p;    // Voxmap 相对 IMU 预测的修正量上限 (m)
+  extern double g_gicp_handback_corr_r;    // 同上，姿态 (deg)
+  extern double g_gicp_handback_agree_p;   // Voxmap 与 GICP 位姿差上限 (m)
+  extern double g_gicp_handback_agree_r;   // 同上，姿态 (deg)
 
   /// for dynamic point removal
   extern bool g_dynamic_removal_enable;
