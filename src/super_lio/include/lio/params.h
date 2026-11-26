@@ -313,6 +313,10 @@ namespace LI2Sup{
   /// 0=关闭; 1=每帧写 <save_map_dir>/debug.csv; 2=额外计算 fit_res p95 与 cond_yk
   extern int g_debug_level;
 
+  /// P0.1 可观测性诊断的特征长度 L（m）：归一化扰动 δq=[δt, Lδθ] 用，
+  /// 使信息矩阵六个特征值统一到"米"量纲。仅 level>=2 的 observability.csv 使用。
+  extern double g_debug_feature_length;
+
   /// 法向质量加权（实验 1）：按平面拟合残差 max|dist| 降权
   extern bool   g_normal_weight_en;
   extern double g_normal_sigma;

@@ -320,3 +320,10 @@
     # 实测把 24.4m 单帧跳变直接吃进 ESKF 后速度冲到 125m/s、轨迹彻底发散。
     lio.observe.trust_force_accept_max_p: 3.0
     lio.observe.trust_force_accept_max_r: 20.0
+    # ===== P0.1 可观测性诊断（仅记录，不改估计行为）=====
+    # 开启：回放时 DIAG=1 或 --ros-args -p lio.debug.level:=2。
+    #   level 1 → debug.csv；level 2 → 额外写 observability.csv
+    #   （每帧归一化信息矩阵六特征值 + 6x6 特征向量 + H_sum/H_mean + 方向覆盖）。
+    # 特征长度 L（m）：归一化扰动 δq=[δt, Lδθ]，让平移/旋转列统一到米制，
+    # 特征值才具备物理量纲。仅 level>=2 生效，可按场景调 0.5~2.0 观察稳定性。
+    lio.debug.feature_length: 1.0

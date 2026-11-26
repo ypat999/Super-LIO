@@ -2835,6 +2835,7 @@ void SuperLIO::Observe(){
   // 首轮统计（仅埋点用）
   int n_knn_fail = 0, n_plane_fail = 0, n_res_fail = 0, n_effect = 0;
   M6d last_HTVH = M6d::Zero();
+  double last_sum_w = 0.0;   // 最后一轮的平面点权重和（仅 P0.1 埋点，不参与估计）
 
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
@@ -2843,6 +2844,7 @@ void SuperLIO::Observe(){
 
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
+    double sum_obs_w = 0.0;   // 本轮平面点 Huber 后权重和（仅埋点）
     KNNHeapType top_K;
 
     if (iter_num == 0) {
@@ -2932,6 +2934,7 @@ void SuperLIO::Observe(){
         }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        sum_obs_w += static_cast<double>(w);
         // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
         if (g_ground_weight > 0.0) {
           const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
@@ -3032,6 +3035,7 @@ void SuperLIO::Observe(){
         }
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        sum_obs_w += static_cast<double>(w);
         // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
         if (g_ground_weight > 0.0) {
           const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
@@ -3058,6 +3062,7 @@ void SuperLIO::Observe(){
     }
 
     last_HTVH = sum_HTVH;   // 原始 Hessian（供埋点/退化检测，未经截断）
+    last_sum_w = sum_obs_w;
 
     // ===== 细通道（M.27）：退化帧把"平面拟合拒绝点"以 point-to-point 并入 =====
     // 触发：上一帧去抖后的 degeneracy_active_（与截断同源，避免本帧 cond 抖动开关）。
@@ -3329,6 +3334,57 @@ void SuperLIO::Observe(){
     // 更新前的预测姿态（去畸变基准），与后验一起给出每帧观测修正量
     const V3 rv_pred = SO3(T_predicted_end_.R_).log_vee();
     const auto sys_state = kf_->GetSysState();
+
+    // ===== P0.1 可观测性诊断（level>=2）：归一化信息矩阵全谱，仅记录不参与估计 =====
+    // 布局 [rot(0-2), pos(3-5)]；S=diag(L,L,L,1,1,1) 把旋转列换算到米制，
+    // 使 λ 与阈值具备统一物理量纲。H 为纯平面粗通道（不含细通道/截断）。
+    if (g_debug_level >= 2) {
+      if (!obs_csv_.is_open()) {
+        namespace fs = std::filesystem;
+        const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        obs_csv_.open(dir + "/observability.csv", std::ios::out | std::ios::trunc);
+        obs_csv_ << std::setprecision(12);
+        obs_csv_ << "t,feature_len,n_effect,sum_w,h_trace,h_mean_trace,"
+                    "lam1,lam2,lam3,lam4,lam5,lam6";
+        for (int c = 0; c < 6; ++c)
+          for (int r = 0; r < 6; ++r) obs_csv_ << ",v" << (c + 1) << "_" << r;
+        obs_csv_ << ",htt_e1,htt_e2,htt_e3,aabb_dx,aabb_dy,aabb_dz\n";
+      }
+      const double Lf = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+      V6d sc;
+      sc << Lf, Lf, Lf, 1.0, 1.0, 1.0;
+      const M6d Hn = sc.asDiagonal() * last_HTVH * sc.asDiagonal();
+      Eigen::SelfAdjointEigenSolver<M6d> eso(Hn);
+      const bool ok6 = (eso.info() == Eigen::Success);
+      Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> est3(last_HTVH.block<3, 3>(3, 3));
+      const bool ok3 = (est3.info() == Eigen::Success);
+      // 有效点世界系 AABB 跨度（空间分布）；仅遍历本帧有效点
+      double mn[3] = {1e18, 1e18, 1e18}, mx[3] = {-1e18, -1e18, -1e18};
+      const size_t n_pts = std::min<size_t>(
+          {static_cast<size_t>(ptsize), points_body_v3_.size(), 20000});
+      for (size_t i = 0; i < n_pts; ++i) {
+        if (!effect_mask_[i]) continue;
+        const V3d pw = (state.R * points_body_v3_[i]).cast<double>() + state.p.cast<double>();
+        for (int k = 0; k < 3; ++k) {
+          mn[k] = std::min(mn[k], pw(k));
+          mx[k] = std::max(mx[k], pw(k));
+        }
+      }
+      obs_csv_ << state.timestamp << ',' << Lf << ',' << n_effect << ',' << last_sum_w << ','
+               << last_HTVH.trace() << ','
+               << (last_sum_w > 1e-9 ? last_HTVH.trace() / last_sum_w : 0.0);
+      for (int i = 0; i < 6; ++i) obs_csv_ << ',' << (ok6 ? eso.eigenvalues()(i) : 0.0);
+      for (int c = 0; c < 6; ++c)
+        for (int r = 0; r < 6; ++r) obs_csv_ << ',' << (ok6 ? eso.eigenvectors()(r, c) : 0.0);
+      for (int i = 0; i < 3; ++i) obs_csv_ << ',' << (ok3 ? est3.eigenvalues()(i) : 0.0);
+      if (mx[0] > mn[0])
+        obs_csv_ << ',' << (mx[0] - mn[0]) << ',' << (mx[1] - mn[1]) << ',' << (mx[2] - mn[2]) << '\n';
+      else
+        obs_csv_ << ",0,0,0\n";
+      obs_csv_.flush();
+    }
 
     // ===== M.30 场景判别埋点：雷达 Hessian 平移块的最弱方向 =====
     // 动机：deg_cond / deg_axes 只回答"退化有多严重"，不回答"退化是否落在正在

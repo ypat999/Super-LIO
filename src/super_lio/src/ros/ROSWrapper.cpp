@@ -473,6 +473,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.debug.level", 0);
   node.get_parameter("lio.debug.level", g_debug_level);
 
+  node.declare_parameter<double>("lio.debug.feature_length", 1.0);
+  node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
+
   node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
   node.get_parameter("lio.observe.normal_weight_en", g_normal_weight_en);
 
@@ -993,6 +996,7 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.beam_err") g_beam_err = p.as_double();
         else if (name == "lio.observe.dept_err") g_dept_err = p.as_double();
         else if (name == "lio.debug.level") g_debug_level = p.as_int();
+        else if (name == "lio.debug.feature_length") g_debug_feature_length = p.as_double();
         else if (name == "lio.observe.normal_weight_en") g_normal_weight_en = p.as_bool();
         else if (name == "lio.observe.normal_sigma") g_normal_sigma = p.as_double();
         else if (name == "lio.hash_map.rep_mode") g_map_rep_mode = p.as_int();
