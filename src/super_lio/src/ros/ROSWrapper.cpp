@@ -103,6 +103,11 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.sensor.filter_rate", 1);
   node.get_parameter("lio.sensor.filter_rate", g_filter_rate);
 
+  node.declare_parameter<int>("lio.debug.level", 0);
+  node.get_parameter("lio.debug.level", g_debug_level);
+  node.declare_parameter<double>("lio.debug.feature_length", 1.0);
+  node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
+
   node.declare_parameter<bool>("lio.sensor.enable_filter_offset", true);
   node.get_parameter("lio.sensor.enable_filter_offset", g_enable_filter_offset);
 
@@ -571,6 +576,8 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.map.ds_size") g_map_ds_size = p.as_double();
         else if (name == "lio.map.save_interval") g_pcd_save_interval = p.as_int();
         else if (name == "lio.sensor.filter_rate") g_filter_rate = p.as_int();
+        else if (name == "lio.debug.level") g_debug_level = p.as_int();
+        else if (name == "lio.debug.feature_length") g_debug_feature_length = p.as_double();
         else if (name == "lio.sensor.enable_filter_offset") g_enable_filter_offset = p.as_bool();
         else if (name == "lio.sensor.enable_downsample") g_enable_downsample = p.as_bool();
         else if (name == "lio.sensor.voxel_fliter_size") g_voxel_fliter_size = p.as_double();

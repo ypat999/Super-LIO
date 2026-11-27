@@ -202,6 +202,11 @@ protected:
   float sc_pgo_rot_accum_ = 0.0f;
   bool sc_pgo_first_ = true;
   std::ofstream sc_pgo_odom_file_;
+  /// ===== 诊断（lio.debug.level>=2）：仅记录，不参与估计 =====
+  std::ofstream obs_csv_;
+  double obs_h_[36] = {0};    // 上一帧纯平面 H（行主序）
+  double obs_sum_w_ = 0.0;    // Huber 后权重和
+  int    obs_n_eff_ = 0;      // 有效平面点数
 
   std::atomic<bool> paused_{false};
 };

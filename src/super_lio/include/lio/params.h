@@ -195,6 +195,12 @@ namespace LI2Sup{
   /// LOST 期间重新接受观测所需的单帧修正量上限（影子配准）
   extern double g_trust_corr_max;
   extern double g_trust_corr_rot_max;
+
+  /// ===== 诊断（默认关闭；仅记录，不参与估计）=====
+  /// 0=关闭; 2=每帧写 observability.csv（归一化信息矩阵全谱）
+  extern int    g_debug_level;
+  /// 归一化扰动 δq=[δt, Lδθ] 的特征长度 L（m）：旋转列换算到米制
+  extern double g_debug_feature_length;
   /// LOST 退出所需的连续合格帧数
   extern int    g_lost_recover_frames;
   /// LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉多少

@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 #include <algorithm>
 
 
@@ -1488,6 +1489,8 @@ void SuperLIO::Observe(){
 
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
+    double sum_obs_w = 0.0;   // 仅诊断：Huber 后权重和
+    int    n_eff_diag = 0;    // 仅诊断：有效平面点数
     KNNHeapType top_K;
 
     if (iter_num == 0) {
@@ -1533,6 +1536,8 @@ void SuperLIO::Observe(){
         const float w = g_normal_weight_en ? w_base * _w_quality[idx] : w_base;
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        sum_obs_w += static_cast<double>(w);
+        ++n_eff_diag;
       }
 
       // Build compact index array for subsequent iterations
@@ -1584,6 +1589,8 @@ void SuperLIO::Observe(){
         const float w = g_normal_weight_en ? w_base * _w_quality[idx] : w_base;
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
+        sum_obs_w += static_cast<double>(w);
+        ++n_eff_diag;
       }
 
       if(!need_converge) {
@@ -1601,8 +1608,49 @@ void SuperLIO::Observe(){
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
 
+    // 诊断：保存本轮纯平面 H 与统计量（不参与估计）
+    for (int r = 0; r < 6; ++r)
+      for (int c = 0; c < 6; ++c) obs_h_[r * 6 + c] = sum_HTVH(r, c);
+    obs_sum_w_ = sum_obs_w;
+    obs_n_eff_ = n_eff_diag;
+
     iter_num++;
   });
+
+  // ===== 诊断：归一化信息矩阵全谱（lio.debug.level>=2），仅记录不参与估计 =====
+  // 布局 [rot(0-2), pos(3-5)]；S=diag(L,L,L,1,1,1) 把旋转列换算到米制，
+  // 使六个特征值与阈值具备统一物理量纲。H 为纯平面粗通道（不含截断）。
+  if (g_debug_level >= 2 && obs_n_eff_ > 0) {
+    if (!obs_csv_.is_open()) {
+      const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      obs_csv_.open(dir + "/observability.csv", std::ios::out | std::ios::trunc);
+      obs_csv_ << std::setprecision(12);
+      obs_csv_ << "t,feature_len,n_effect,sum_w,h_trace,h_mean_trace,"
+                  "lam1,lam2,lam3,lam4,lam5,lam6";
+      for (int c = 0; c < 6; ++c)
+        for (int r = 0; r < 6; ++r) obs_csv_ << ",v" << (c + 1) << "_" << r;
+      obs_csv_ << '\n';
+    }
+    M6d Hm;
+    for (int r = 0; r < 6; ++r)
+      for (int c = 0; c < 6; ++c) Hm(r, c) = obs_h_[r * 6 + c];
+    const double Lf = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+    V6d sc;
+    sc << Lf, Lf, Lf, 1.0, 1.0, 1.0;
+    const M6d Hn = sc.asDiagonal() * Hm * sc.asDiagonal();
+    Eigen::SelfAdjointEigenSolver<M6d> eso(Hn);
+    const bool ok = (eso.info() == Eigen::Success);
+    obs_csv_ << kf_->GetNavState().timestamp << ',' << Lf << ',' << obs_n_eff_ << ','
+             << obs_sum_w_ << ',' << Hm.trace() << ','
+             << (obs_sum_w_ > 1e-9 ? Hm.trace() / obs_sum_w_ : 0.0);
+    for (int i = 0; i < 6; ++i) obs_csv_ << ',' << (ok ? eso.eigenvalues()(i) : 0.0);
+    for (int c = 0; c < 6; ++c)
+      for (int r = 0; r < 6; ++r) obs_csv_ << ',' << (ok ? eso.eigenvectors()(r, c) : 0.0);
+    obs_csv_ << '\n';
+    obs_csv_.flush();
+  }
 
   frame_num_++;
 }

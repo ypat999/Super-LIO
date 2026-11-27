@@ -133,6 +133,9 @@ namespace LI2Sup{
   double g_trust_jump_rot_max = 15.0;
   double g_trust_corr_max = 0.5;
   double g_trust_corr_rot_max = 10.0;
+
+  int    g_debug_level = 0;
+  double g_debug_feature_length = 1.0;
   int    g_lost_recover_frames = 5;
   double g_lost_slew_p = 0.10;
   double g_lost_slew_r = 1.0;
