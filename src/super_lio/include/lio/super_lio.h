@@ -206,6 +206,7 @@ protected:
   std::ofstream obs_csv_;
   std::ofstream innov_csv_;
   std::ofstream shadow_csv_;
+  int info_gate_reject_cnt_ = 0;
   double shadow_w_prev_[6] = {0, 0, 0, 0, 0, 0};
   double shadow_v1_prev_[6] = {0, 0, 0, 0, 0, 0};
   bool   shadow_has_prev_ = false;

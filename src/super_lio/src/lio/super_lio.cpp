@@ -1453,6 +1453,7 @@ void SuperLIO::DownSampleOnly(){
 /// ESKF 观测更新：对每个点查询 IVox 邻域、拟合平面、构建雅可比，
 /// 迭代更新状态；首次迭代直接顺序访问，后续迭代使用紧凑索引
 void SuperLIO::Observe(){
+  kf_->setGravityParams(g_gravity_obs_en, g_acc_max, g_acc_lpf_tau, g_gravity_sigma);
   size_t ptsize = ds_undistort_->size();
 
   // P0-1：effect_mask_ / abcd_vec_ 等为定长数组（20000），超限会越界；宁少不越界。
@@ -1618,6 +1619,41 @@ void SuperLIO::Observe(){
       for (int c = 0; c < 6; ++c) obs_h_[r * 6 + c] = sum_HTVH(r, c);
     obs_sum_w_ = sum_obs_w;
     obs_n_eff_ = n_eff_diag;
+
+    // 重力观测调制：把激光归一化最小特征值传给 ESKF。
+    // 激光信息充足时重力观测几乎关闭，激光退化时全力接管（连续调制，无切换）。
+    if (g_gravity_obs_en) {
+      const double Lg = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+      V6d scg;
+      scg << Lg, Lg, Lg, 1.0, 1.0, 1.0;
+      const M6d Hng = scg.asDiagonal() * sum_HTVH.cast<double>() * scg.asDiagonal();
+      Eigen::SelfAdjointEigenSolver<M6d> egg(Hng);
+      kf_->setLidarInfo(egg.info() == Eigen::Success ? egg.eigenvalues()(0) : 0.0,
+                        static_cast<double>(n_eff_diag));
+    }
+
+    // 信息量门：H 近奇异时放弃本帧激光更新。只本帧不融合，不冻结位姿、
+    // 不切换观测源；IMU 正常传播，下一帧 lam1 恢复即立即正常融合。
+    if (g_info_gate_en) {
+      const double Lf = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+      V6d sc;
+      sc << Lf, Lf, Lf, 1.0, 1.0, 1.0;
+      const M6d Hn = sc.asDiagonal() * sum_HTVH.cast<double>() * sc.asDiagonal();
+      Eigen::SelfAdjointEigenSolver<M6d> eg(Hn);
+      if (eg.info() == Eigen::Success) {
+        const double l1 = eg.eigenvalues()(0);
+        const double l6 = eg.eigenvalues()(5);
+        const bool low_info = (l1 < g_lam_min) ||
+            (g_cond_max > 0.0 && l6 > g_cond_max * std::max(l1, 1e-12));
+        if (low_info) {
+          HTVH.setZero();
+          HTVr.setZero();
+          if (++info_gate_reject_cnt_ % 20 == 1)
+            LOG(WARNING) << "[InfoGate] 信息量不足 lam1=" << l1 << " lam6=" << l6
+                         << " n_eff=" << n_eff_diag << " -> 跳过本帧激光更新";
+        }
+      }
+    }
 
     iter_num++;
   });

@@ -209,6 +209,52 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 }
 
 
+void ESKF::UpdateGravity(const V3& acc_raw, double dt) {
+  if (!options_.gravity_obs_en_ || !(dt > 0.0)) return;
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // 一阶低通：压掉震动高频，避免单个尖峰帧把权重打穿
+  // 与 Predict 一致的单位换算（加速度计常以 g 输出，imu_scale_ 转为 m/s^2）
+  const V3 acc_m = imu_scale_ * acc_raw;
+  const double tau = std::max(1e-3, options_.acc_lpf_tau_);
+  const double alpha = dt / (tau + dt);
+  if (!acc_lpf_init_) {
+    acc_lpf_ = acc_m;
+    acc_lpf_init_ = true;
+    return;
+  }
+  acc_lpf_ += alpha * (acc_m - acc_lpf_);
+
+  const V3 gb = R_.R_.transpose() * g_;      // 机体系重力投影
+  const V3 res = (acc_lpf_ - ba_) + gb;      // 准静态时应为 0
+  const double amax = std::max(1e-3, options_.acc_max_);
+  const double ratio = res.norm() / amax;
+  const double wgt = 1.0 / (1.0 + ratio * ratio);
+  if (wgt < 1e-3) return;                    // 动态/震动过强，本帧不用
+
+  Eigen::Matrix<BASIC::scalar, 3, 18> H =
+      Eigen::Matrix<BASIC::scalar, 3, 18>::Zero();
+  H.template block<3, 3>(0, 0) = SO3::hat(-gb);    // d(h)/d(dtheta)
+  H.template block<3, 3>(0, 12) = M3::Identity();  // d(h)/d(ba)
+
+  // 激光信息量调制：h=1（lam1 充足）时 sigma 放大 10 倍、重力观测几乎关闭；
+  // h→0（几何退化）时全力约束姿态。只用 lam1：实测 n_eff 调制会在 home3 末端
+  // 误判（有效点少但几何良好），反而把正常轨迹拉崩。
+  const double lam_ref = std::max(1e-6, options_.lidar_lam_ref_);
+  const double h = std::min(1.0, std::max(0.0, lidar_lam1_ / lam_ref));
+  const double sigma = options_.gravity_sigma_ * (1.0 + 9.0 * h) / std::sqrt(wgt);
+  const M3 Rn = M3::Identity() * (sigma * sigma);
+
+  const auto PHt = P_ * H.transpose();             // 18x3
+  const M3 S = H * PHt + Rn;
+  const auto K = PHt * S.inverse();                // 18x3
+  dx_ = K * res;
+  dx_.template segment<3>(15).setZero();           // g 不参与，避免与姿态混叠
+  Update();
+  P_ = P_ - K * H * P_;
+  P_ = 0.5 * (P_ + P_.transpose());
+}
+
 bool ESKF::Predict(const IMUData& imu, double max_dt) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -281,6 +327,9 @@ bool ESKF::Predict(const IMUData& imu, double max_dt) {
   p_ = p_ + v_ * dt + 0.5 * global_acc_ * dt * dt;
   v_ = v_ + global_acc_ * dt;
   R_ = R_ * SO3::Exp(body_omega_, dt);
+
+  // 重力观测：在状态传播后执行，用加速度计方向约束 roll/pitch
+  UpdateGravity(imu.acc, dt);
 
   last_imu_time_ = imu.secs;
   last_imu_ = imu;

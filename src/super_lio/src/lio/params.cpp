@@ -134,6 +134,15 @@ namespace LI2Sup{
   double g_trust_corr_max = 0.5;
   double g_trust_corr_rot_max = 10.0;
 
+  bool   g_info_gate_en = false;
+  double g_lam_min = 100.0;
+  double g_cond_max = 10000.0;
+
+  bool   g_gravity_obs_en = false;
+  double g_acc_max = 2.5;
+  double g_acc_lpf_tau = 0.08;
+  double g_gravity_sigma = 0.5;
+
   int    g_debug_level = 0;
   double g_debug_feature_length = 1.0;
 

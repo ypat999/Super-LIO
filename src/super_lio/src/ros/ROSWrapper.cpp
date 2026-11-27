@@ -108,6 +108,22 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.debug.feature_length", 1.0);
   node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
 
+  node.declare_parameter<bool>("lio.observe.info_gate_en", false);
+  node.get_parameter("lio.observe.info_gate_en", g_info_gate_en);
+  node.declare_parameter<double>("lio.observe.lam_min", 1.0e3);
+  node.get_parameter("lio.observe.lam_min", g_lam_min);
+  node.declare_parameter<double>("lio.observe.cond_max", 10000.0);
+  node.get_parameter("lio.observe.cond_max", g_cond_max);
+
+  node.declare_parameter<bool>("lio.imu.gravity_obs_en", false);
+  node.get_parameter("lio.imu.gravity_obs_en", g_gravity_obs_en);
+  node.declare_parameter<double>("lio.imu.acc_max", 2.5);
+  node.get_parameter("lio.imu.acc_max", g_acc_max);
+  node.declare_parameter<double>("lio.imu.acc_lpf_tau", 0.08);
+  node.get_parameter("lio.imu.acc_lpf_tau", g_acc_lpf_tau);
+  node.declare_parameter<double>("lio.imu.gravity_sigma", 0.5);
+  node.get_parameter("lio.imu.gravity_sigma", g_gravity_sigma);
+
   node.declare_parameter<bool>("lio.shadow.enable", false);
   node.get_parameter("lio.shadow.enable", g_shadow_en);
   node.declare_parameter<double>("lio.shadow.lambda_ref", 1.0e4);
@@ -589,6 +605,13 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.sensor.filter_rate") g_filter_rate = p.as_int();
         else if (name == "lio.debug.level") g_debug_level = p.as_int();
         else if (name == "lio.debug.feature_length") g_debug_feature_length = p.as_double();
+        else if (name == "lio.observe.info_gate_en") g_info_gate_en = p.as_bool();
+        else if (name == "lio.observe.lam_min") g_lam_min = p.as_double();
+        else if (name == "lio.observe.cond_max") g_cond_max = p.as_double();
+        else if (name == "lio.imu.gravity_obs_en") g_gravity_obs_en = p.as_bool();
+        else if (name == "lio.imu.acc_max") g_acc_max = p.as_double();
+        else if (name == "lio.imu.acc_lpf_tau") g_acc_lpf_tau = p.as_double();
+        else if (name == "lio.imu.gravity_sigma") g_gravity_sigma = p.as_double();
         else if (name == "lio.shadow.enable") g_shadow_en = p.as_bool();
         else if (name == "lio.shadow.lambda_ref") g_shadow_lambda_ref = p.as_double();
         else if (name == "lio.shadow.w_min") g_shadow_w_min = p.as_double();

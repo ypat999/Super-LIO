@@ -196,6 +196,17 @@ namespace LI2Sup{
   extern double g_trust_corr_max;
   extern double g_trust_corr_rot_max;
 
+  /// ===== 信息量门：H 近奇异时放弃本帧激光更新（只不融合，不冻结位姿）=====
+  extern bool   g_info_gate_en;
+  extern double g_lam_min;    // 归一化最小特征值下限
+  extern double g_cond_max;   // 归一化条件数上限
+
+  /// ===== 重力观测（加速度计约束 roll/pitch，始终启用）=====
+  extern bool   g_gravity_obs_en;
+  extern double g_acc_max;        // 权重半衰点 m/s^2（按平台配置）
+  extern double g_acc_lpf_tau;    // 加速度低通时间常数 s
+  extern double g_gravity_sigma;  // 等效观测噪声 m/s^2
+
   /// ===== 诊断（默认关闭；仅记录，不参与估计）=====
   /// 0=关闭; 2=每帧写 observability.csv（归一化信息矩阵全谱）
   extern int    g_debug_level;

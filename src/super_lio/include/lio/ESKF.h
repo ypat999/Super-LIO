@@ -33,6 +33,13 @@ public:
     double acce_var_ = 1e-2;
     double bias_gyro_var_ = 1e-6;
     double bias_acce_var_ = 1e-4;
+
+    /// 重力观测（加速度计方向约束 roll/pitch）：始终启用，权重远低于激光
+    bool   gravity_obs_en_ = false;
+    double acc_max_ = 2.5;        // 权重半衰点 (m/s^2)，按平台配置
+    double acc_lpf_tau_ = 0.08;   // 加速度一阶低通时间常数 (s)，压震动尖峰
+    double gravity_sigma_ = 0.5;  // 等效观测噪声 (m/s^2)，激光健康时实际放大 10x
+    double lidar_lam_ref_ = 1.0e4;  // 激光 lam1 参考值（实测 home 场景最优）
   };
 
 
@@ -58,6 +65,25 @@ public:
   /// max_dt > 0 时启用断档冻结：dt 超过 max_dt 说明中间丢数据，
   /// 只对齐时间基准、不做积分（用断档期的平均加速度外推会产生米级跳变）。
   bool Predict(const IMUData& imu, double max_dt = -1.0);
+
+  /// 重力观测：用机体系加速度计方向约束 roll/pitch（yaw 不可观）。
+  /// 残差 r = (a_raw - ba) + R^T g，准静态时为 0；权重随 |r|/acc_max 单调下降，
+  /// 动态或震动尖峰时自动让位。只更新姿态与 ba，不动 g（避免与姿态混叠）。
+  void UpdateGravity(const BASIC::V3& acc_raw, double dt);
+
+  /// 运行时更新重力观测参数（ROS 参数在 ESKF 构造之后才加载）
+  void setGravityParams(bool en, double amax, double tau, double sigma) {
+    options_.gravity_obs_en_ = en;
+    options_.acc_max_ = amax;
+    options_.acc_lpf_tau_ = tau;
+    options_.gravity_sigma_ = sigma;
+  }
+
+  /// 激光信息量：归一化最小特征值 + 有效点数，用于连续调制重力观测强度
+  void setLidarInfo(double lam1, double n_eff) {
+    lidar_lam1_ = lam1;
+    lidar_n_eff_ = n_eff;
+  }
 
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
@@ -190,6 +216,11 @@ private:
   BASIC::V3 body_omega_  = BASIC::V3::Zero();
 
   STATE dx_ = STATE::Zero();
+  /// 重力观测的低通状态（仅诊断/观测用）
+  BASIC::V3 acc_lpf_ = BASIC::V3::Zero();
+  bool acc_lpf_init_ = false;
+  double lidar_lam1_ = 0.0;   // 最近一帧激光归一化最小特征值
+  double lidar_n_eff_ = 0.0;  // 最近一帧有效点数
 
   COV P_ = COV::Identity();
 

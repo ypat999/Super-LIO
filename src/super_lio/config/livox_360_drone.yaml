@@ -159,6 +159,20 @@
     # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
     lio.observe.trust_corr_max: 0.5
     lio.observe.trust_corr_rot_max: 10.0
+    # 信息量门：默认关闭。实测启用后会在 cond>200 的健康帧（home3 占 15%）
+    # 上整帧置零，丢掉其余方向的约束并导致发散——与 Trust 的整帧否决同构。
+    # 仅保留代码作为极端无信息场景（lam1<100 且 cond>1e4）的实验开关。
+    lio.observe.info_gate_en: false
+    lio.observe.lam_min: 100.0
+    lio.observe.cond_max: 10000.0
+    # 重力观测：加速度计方向约束 roll/pitch（yaw 不可观）。始终启用，权重远低于激光。
+    # acc_max 为权重半衰点，按平台配置；acc_lpf_tau 压震动尖峰。
+    # 说明：本 yaml 同时用于 home 手持回放，故 acc_max 取手持值 2.5 / tau 0.08。
+    # 无人机部署请另用平台 yaml（a_max≈3.5 / tau≈0.04）。
+    lio.imu.gravity_obs_en: true
+    lio.imu.acc_max: 2.5
+    lio.imu.acc_lpf_tau: 0.08
+    lio.imu.gravity_sigma: 0.5
     lio.observe.lost_recover_frames: 5
     # LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉 0.1m / 1deg。
     # 断档后先验与真实位姿可能差米级，直接接受配准会一次跳变、完全否决又会永久停死，
