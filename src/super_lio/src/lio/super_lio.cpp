@@ -1482,6 +1482,11 @@ void SuperLIO::Observe(){
   ivox_->reset_max_group();
   int iter_num = 0;
 
+  // 诊断（PR3）：更新前的预测状态与协方差，仅记录
+  const SE3 diag_pose_pre = kf_->GetSE3();
+  const V6  diag_cov_pv_pre = kf_->GetCovDiagPV();
+  const V3  diag_cov_rot_pre = kf_->GetCovDiagRot();
+
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
     const bool need_converge = kf_state.need_converge;
@@ -1650,6 +1655,50 @@ void SuperLIO::Observe(){
       for (int r = 0; r < 6; ++r) obs_csv_ << ',' << (ok ? eso.eigenvectors()(r, c) : 0.0);
     obs_csv_ << '\n';
     obs_csv_.flush();
+  }
+
+  // ===== 诊断：预测/后验一致性 innovation.csv（level>=2），仅记录 =====
+  // 位姿创新 = 后验 - 预测（旋转取相对旋转 log，避免欧氏相减在 ±pi 处伪影）；
+  // nim = r^T S^-1 r 以预测协方差为分母（帧级归一化创新指标，非严格卡方检验）。
+  if (g_debug_level >= 2) {
+    if (!innov_csv_.is_open()) {
+      const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      innov_csv_.open(dir + "/innovation.csv", std::ios::out | std::ios::trunc);
+      innov_csv_ << std::setprecision(12);
+      innov_csv_ << "t,dpos,drot_deg,nim,"
+                    "pre_cov_p,pre_cov_r,post_cov_p,post_cov_r,post_cov_v,"
+                    "bg_x,bg_y,bg_z,ba_x,ba_y,ba_z,vx,vy,vz\n";
+    }
+    const SE3 pose_post = kf_->GetSE3();
+    const V3d d_p = (pose_post.t_ - diag_pose_pre.t_).cast<double>();
+    const M3d dRm = (diag_pose_pre.R_.transpose() * pose_post.R_).cast<double>();
+    const Eigen::AngleAxisd aa(dRm);
+    const V3d d_r = aa.axis() * aa.angle();
+    const double dpos = d_p.norm();
+    const double drot_deg = aa.angle() * 180.0 / 3.14159265358979323846;
+    double nim = 0.0;
+    for (int k = 0; k < 3; ++k) {
+      const double vp = static_cast<double>(diag_cov_pv_pre(k));
+      const double vr = static_cast<double>(diag_cov_rot_pre(k));
+      if (vp > 1e-12) nim += d_p(k) * d_p(k) / vp;
+      if (vr > 1e-12) nim += d_r(k) * d_r(k) / vr;
+    }
+    const V6 post_pv = kf_->GetCovDiagPV();
+    const V3 post_rot = kf_->GetCovDiagRot();
+    const auto ss = kf_->GetSysState();
+    const auto ns = kf_->GetNavState();
+    innov_csv_ << ns.timestamp << ',' << dpos << ',' << drot_deg << ',' << nim << ','
+               << static_cast<double>(diag_cov_pv_pre.head<3>().sum()) << ','
+               << static_cast<double>(diag_cov_rot_pre.sum()) << ','
+               << static_cast<double>(post_pv.head<3>().sum()) << ','
+               << static_cast<double>(post_rot.sum()) << ','
+               << static_cast<double>(post_pv.tail<3>().sum()) << ','
+               << ss.bg(0) << ',' << ss.bg(1) << ',' << ss.bg(2) << ','
+               << ss.ba(0) << ',' << ss.ba(1) << ',' << ss.ba(2) << ','
+               << ns.v(0) << ',' << ns.v(1) << ',' << ns.v(2) << '\n';
+    innov_csv_.flush();
   }
 
   frame_num_++;
