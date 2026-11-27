@@ -201,6 +201,13 @@ namespace LI2Sup{
   extern int    g_debug_level;
   /// 归一化扰动 δq=[δt, Lδθ] 的特征长度 L（m）：旋转列换算到米制
   extern double g_debug_feature_length;
+
+  /// ===== 影子模式（默认关闭）：只计算并记录方向权重，不接入滤波 =====
+  extern bool   g_shadow_en;
+  extern double g_shadow_lambda_ref;
+  extern double g_shadow_w_min;
+  extern double g_shadow_alpha;
+  extern double g_shadow_max_dw;
   /// LOST 退出所需的连续合格帧数
   extern int    g_lost_recover_frames;
   /// LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉多少

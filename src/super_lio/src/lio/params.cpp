@@ -136,6 +136,12 @@ namespace LI2Sup{
 
   int    g_debug_level = 0;
   double g_debug_feature_length = 1.0;
+
+  bool   g_shadow_en = false;
+  double g_shadow_lambda_ref = 1.0e4;
+  double g_shadow_w_min = 0.05;
+  double g_shadow_alpha = 0.3;
+  double g_shadow_max_dw = 0.25;
   int    g_lost_recover_frames = 5;
   double g_lost_slew_p = 0.10;
   double g_lost_slew_r = 1.0;

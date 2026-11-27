@@ -1701,6 +1701,72 @@ void SuperLIO::Observe(){
     innov_csv_.flush();
   }
 
+  // ===== 影子模式：方向权重序列（只记录，不接入滤波）=====
+  // w_i = lam_i/(lam_i+lambda_ref)，经下限限幅、帧间低通与速率限制后落盘。
+  // 用于在真实数据上验证权重序列的数值稳定性；接入观测协方差是后续阶段。
+  if (g_shadow_en && obs_n_eff_ > 0) {
+    if (!shadow_csv_.is_open()) {
+      const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      shadow_csv_.open(dir + "/shadow_weights.csv", std::ios::out | std::ios::trunc);
+      shadow_csv_ << std::setprecision(10);
+      shadow_csv_ << "t,L,n_effect,lambda_ref,"
+                     "lam1,lam2,lam3,lam4,lam5,lam6,"
+                     "w1,w2,w3,w4,w5,w6,"
+                     "ws1,ws2,ws3,ws4,ws5,ws6,"
+                     "dw_max,clamp_cnt,v1_dot_prev\n";
+    }
+    M6d Hm;
+    for (int r = 0; r < 6; ++r)
+      for (int c = 0; c < 6; ++c) Hm(r, c) = obs_h_[r * 6 + c];
+    const double Lf = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+    V6d sc;
+    sc << Lf, Lf, Lf, 1.0, 1.0, 1.0;
+    const M6d Hn = sc.asDiagonal() * Hm * sc.asDiagonal();
+    Eigen::SelfAdjointEigenSolver<M6d> eso(Hn);
+    if (eso.info() == Eigen::Success) {
+      const auto cl = [](double v, double lo, double hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+      };
+      const double lam_ref = std::max(1e-9, g_shadow_lambda_ref);
+      const double wmin = cl(g_shadow_w_min, 0.0, 1.0);
+      const double alpha = cl(g_shadow_alpha, 0.0, 1.0);
+      const double maxdw = std::max(1e-6, g_shadow_max_dw);
+      V6d lam, w, ws;
+      int clamp_cnt = 0;
+      double dw_max = 0.0;
+      for (int i = 0; i < 6; ++i) {
+        lam(i) = eso.eigenvalues()(i);
+        w(i) = lam(i) / (lam(i) + lam_ref);
+        if (w(i) < wmin) {
+          w(i) = wmin;
+          ++clamp_cnt;
+        }
+        const double prev = shadow_has_prev_ ? shadow_w_prev_[i] : w(i);
+        double cand = alpha * w(i) + (1.0 - alpha) * prev;
+        const double d = cand - prev;
+        if (std::abs(d) > maxdw) cand = prev + (d > 0 ? maxdw : -maxdw);
+        ws(i) = cand;
+        dw_max = std::max(dw_max, std::abs(cand - prev));
+        shadow_w_prev_[i] = cand;
+      }
+      const V6d v1 = eso.eigenvectors().col(0);
+      double dot = 0.0;
+      for (int k = 0; k < 6; ++k) dot += v1(k) * shadow_v1_prev_[k];
+      const double dot_prev = shadow_has_prev_ ? std::abs(dot) : 1.0;
+      shadow_csv_ << kf_->GetNavState().timestamp << ',' << Lf << ',' << obs_n_eff_ << ','
+                   << lam_ref;
+      for (int i = 0; i < 6; ++i) shadow_csv_ << ',' << lam(i);
+      for (int i = 0; i < 6; ++i) shadow_csv_ << ',' << w(i);
+      for (int i = 0; i < 6; ++i) shadow_csv_ << ',' << ws(i);
+      shadow_csv_ << ',' << dw_max << ',' << clamp_cnt << ',' << dot_prev << '\n';
+      shadow_csv_.flush();
+      for (int k = 0; k < 6; ++k) shadow_v1_prev_[k] = v1(k);
+      shadow_has_prev_ = true;
+    }
+  }
+
   frame_num_++;
 }
 
