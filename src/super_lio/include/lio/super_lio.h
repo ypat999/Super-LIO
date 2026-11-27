@@ -256,6 +256,12 @@ protected:
   std::ofstream obs_csv_;
   /// P0.2 动态一致性诊断：预测/后验创新与协方差（lio.debug.level >= 2 时输出）
   std::ofstream innov_csv_;
+  /// 影子模式：方向权重序列（lio.shadow.enable 时输出，不接入滤波）
+  std::ofstream shadow_csv_;
+  /// 影子模式帧间状态（低通与方向翻转检测），仅诊断用
+  double shadow_w_prev_[6] = {0, 0, 0, 0, 0, 0};
+  double shadow_v1_prev_[6] = {0, 0, 0, 0, 0, 0};
+  bool shadow_has_prev_ = false;
   /// 本帧平均角速度模（rad/s），2.D 阈值随运动幅度自适应用
   double frame_omega_ = 0.0;
   /// 2.E：实时点云的逐点时刻（offset_time，s），与 scan_undistort_full_/ds_undistort_ 对齐

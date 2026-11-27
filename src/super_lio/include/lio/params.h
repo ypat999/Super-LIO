@@ -317,6 +317,13 @@ namespace LI2Sup{
   /// 使信息矩阵六个特征值统一到"米"量纲。仅 level>=2 的 observability.csv 使用。
   extern double g_debug_feature_length;
 
+  /// 影子模式：按归一化信息谱计算方向权重并落盘，**不接入滤波**（阶段 2 前置验证）
+  extern bool   g_shadow_en;
+  extern double g_shadow_lambda_ref;  // 权重函数 λ/(λ+λ_ref) 的参考值
+  extern double g_shadow_w_min;       // 权重下限
+  extern double g_shadow_alpha;       // 帧间低通系数 [0,1]
+  extern double g_shadow_max_dw;      // 每帧权重最大变化量（速率限制）
+
   /// 法向质量加权（实验 1）：按平面拟合残差 max|dist| 降权
   extern bool   g_normal_weight_en;
   extern double g_normal_sigma;

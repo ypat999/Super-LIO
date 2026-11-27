@@ -180,6 +180,12 @@ namespace LI2Sup{
   /// 实验埋点 / 代码级实验开关（默认全部保持原行为）
   int    g_debug_level = 0;
   double g_debug_feature_length = 1.0;
+
+  bool   g_shadow_en = false;
+  double g_shadow_lambda_ref = 1.0e4;
+  double g_shadow_w_min = 0.05;
+  double g_shadow_alpha = 0.3;
+  double g_shadow_max_dw = 0.25;
   bool   g_normal_weight_en = false;
   double g_normal_sigma = 0.05;
   int    g_map_rep_mode = 0;

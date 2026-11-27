@@ -476,6 +476,17 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.debug.feature_length", 1.0);
   node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
 
+  node.declare_parameter<bool>("lio.shadow.enable", false);
+  node.get_parameter("lio.shadow.enable", g_shadow_en);
+  node.declare_parameter<double>("lio.shadow.lambda_ref", 1.0e4);
+  node.get_parameter("lio.shadow.lambda_ref", g_shadow_lambda_ref);
+  node.declare_parameter<double>("lio.shadow.w_min", 0.05);
+  node.get_parameter("lio.shadow.w_min", g_shadow_w_min);
+  node.declare_parameter<double>("lio.shadow.alpha", 0.3);
+  node.get_parameter("lio.shadow.alpha", g_shadow_alpha);
+  node.declare_parameter<double>("lio.shadow.max_dw", 0.25);
+  node.get_parameter("lio.shadow.max_dw", g_shadow_max_dw);
+
   node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
   node.get_parameter("lio.observe.normal_weight_en", g_normal_weight_en);
 
@@ -997,6 +1008,11 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.observe.dept_err") g_dept_err = p.as_double();
         else if (name == "lio.debug.level") g_debug_level = p.as_int();
         else if (name == "lio.debug.feature_length") g_debug_feature_length = p.as_double();
+        else if (name == "lio.shadow.enable") g_shadow_en = p.as_bool();
+        else if (name == "lio.shadow.lambda_ref") g_shadow_lambda_ref = p.as_double();
+        else if (name == "lio.shadow.w_min") g_shadow_w_min = p.as_double();
+        else if (name == "lio.shadow.alpha") g_shadow_alpha = p.as_double();
+        else if (name == "lio.shadow.max_dw") g_shadow_max_dw = p.as_double();
         else if (name == "lio.observe.normal_weight_en") g_normal_weight_en = p.as_bool();
         else if (name == "lio.observe.normal_sigma") g_normal_sigma = p.as_double();
         else if (name == "lio.hash_map.rep_mode") g_map_rep_mode = p.as_int();
