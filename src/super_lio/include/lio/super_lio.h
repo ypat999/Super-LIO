@@ -254,6 +254,8 @@ protected:
   std::ofstream debug_csv_;
   /// P0.1 可观测性诊断：每帧归一化信息矩阵全谱（lio.debug.level >= 2 时输出）
   std::ofstream obs_csv_;
+  /// P0.2 动态一致性诊断：预测/后验创新与协方差（lio.debug.level >= 2 时输出）
+  std::ofstream innov_csv_;
   /// 本帧平均角速度模（rad/s），2.D 阈值随运动幅度自适应用
   double frame_omega_ = 0.0;
   /// 2.E：实时点云的逐点时刻（offset_time，s），与 scan_undistort_full_/ds_undistort_ 对齐

@@ -2836,6 +2836,9 @@ void SuperLIO::Observe(){
   int n_knn_fail = 0, n_plane_fail = 0, n_res_fail = 0, n_effect = 0;
   M6d last_HTVH = M6d::Zero();
   double last_sum_w = 0.0;   // 最后一轮的平面点权重和（仅 P0.1 埋点，不参与估计）
+  // P0.2：更新前的预测协方差对角（仅埋点；用于帧级归一化创新指标的 S 近似）
+  const V6 pre_cov_pv = kf_->GetCovDiagPV();
+  const V3 pre_cov_rot = kf_->GetCovDiagRot();
 
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
@@ -3384,6 +3387,50 @@ void SuperLIO::Observe(){
       else
         obs_csv_ << ",0,0,0\n";
       obs_csv_.flush();
+    }
+
+    // ===== P0.2 动态一致性诊断（level>=2）：预测/后验创新、协方差，仅记录 =====
+    if (g_debug_level >= 2) {
+      if (!innov_csv_.is_open()) {
+        namespace fs = std::filesystem;
+        const std::string dir = g_save_map_dir.empty() ? std::string(".") : g_save_map_dir;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        innov_csv_.open(dir + "/innovation.csv", std::ios::out | std::ios::trunc);
+        innov_csv_ << std::setprecision(12);
+        innov_csv_ << "t,dpos,drot_deg,nim,need_converge,"
+                      "pred_cov_p_trace,pred_cov_r_trace,"
+                      "post_cov_p_trace,post_cov_r_trace,post_cov_v_trace,"
+                      "bg_x,bg_y,bg_z,ba_x,ba_y,ba_z,vx,vy,vz\n";
+      }
+      // 位姿创新：后验 - 预测。旋转用相对旋转 log（角度 ∈ [0,π]），
+      // 避免直接对两次 log_vee 相减在 ±π 处发生分支翻转（会伪造成 360°）。
+      const V3d d_p = (state.p - T_predicted_end_.t_).cast<double>();
+      const M3f dR_rel = T_predicted_end_.R_.transpose() * state.R.matrix();
+      const V3d d_r = SO3(dR_rel).log_vee().cast<double>();
+      const double dpos = d_p.norm();
+      const double drot_deg = d_r.norm() * 180.0 / 3.14159265358979323846;
+      // 帧级归一化创新指标：r^T S^{-1} r 的对角近似（S ≈ 预测协方差对角）
+      double nim = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        const double vp = static_cast<double>(pre_cov_pv(k));
+        const double vr = static_cast<double>(pre_cov_rot(k));
+        if (vp > 1e-12) nim += d_p(k) * d_p(k) / vp;
+        if (vr > 1e-12) nim += d_r(k) * d_r(k) / vr;
+      }
+      const V6 post_pv = kf_->GetCovDiagPV();
+      const V3 post_rot = kf_->GetCovDiagRot();
+      innov_csv_ << state.timestamp << ',' << dpos << ',' << drot_deg << ',' << nim << ','
+                 << (kf_->NeedConverge() ? 1 : 0) << ','
+                 << static_cast<double>(pre_cov_pv.head<3>().sum()) << ','
+                 << static_cast<double>(pre_cov_rot.sum()) << ','
+                 << static_cast<double>(post_pv.head<3>().sum()) << ','
+                 << static_cast<double>(post_rot.sum()) << ','
+                 << static_cast<double>(post_pv.tail<3>().sum()) << ','
+                 << sys_state.bg(0) << ',' << sys_state.bg(1) << ',' << sys_state.bg(2) << ','
+                 << sys_state.ba(0) << ',' << sys_state.ba(1) << ',' << sys_state.ba(2) << ','
+                 << state.v(0) << ',' << state.v(1) << ',' << state.v(2) << '\n';
+      innov_csv_.flush();
     }
 
     // ===== M.30 场景判别埋点：雷达 Hessian 平移块的最弱方向 =====
