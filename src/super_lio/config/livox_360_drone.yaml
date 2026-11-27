@@ -35,7 +35,10 @@
     # 实测 0.15 / 0.20 相对 0.25 在本场景无收益（精度持平、耗时上升），不要再调小。
     lio.sensor.voxel_fliter_size: 0.25
 
-    lio.sensor.intensity_filter_en: true
+    # 关闭强度过滤：home3 941 s 实测，开启时有效点 787→562（-29%），走廊快速
+    # 转向段产生约 1 m / 9° 的系统偏差；关闭后全程无漂移、终点与基准一致
+    # （max 差 0.117 m）。与 livox_360_drone_build.yaml 保持一致。
+    lio.sensor.intensity_filter_en: false
     lio.sensor.intensity_min: 5.0
     # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
     lio.sensor.lidar_channels: 0
