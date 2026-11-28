@@ -91,7 +91,9 @@
     # 556 s 被 Trust 前兆判据误触发后级联发散。关闭后 main 与 no-de-check
     # 逐位一致（941 s max dpos = 0）。
     lio.sensor.intensity_filter_en: false
-    lio.sensor.intensity_min: 5.0
+    # 与 no-de-check 最佳配置对齐：实测飞行验证 5.0→10.0（提交 d4a7ef0）。
+    # 注意开关关闭时该阈值不生效，保留仅为开启时的一致性。
+    lio.sensor.intensity_min: 10.0
     # 多线雷达线数（固态雷达设为0），full_column_interval 需要此参数
     lio.sensor.lidar_channels: 0
     # 每隔多少列保留完整一列（0=禁用），用于多线雷达保纵向信息
@@ -141,10 +143,11 @@
     lio.output.map_body: true
     lio.output.pub_step: 1
     lio.output.footprint_pub_en: true
-    # odom 协方差开关（默认关）：关闭后 /lio/odom 与 /lio/robo/odom 的 covariance
-    # 全为 0，不再逐 IMU 帧计算后验方差；PX4 ev_pos_control 有
-    # max(EKF2_EVP_NOISE^2, 0.01^2) 地板，0 会被抬回名义噪声。
-    lio.output.odom_cov_en: false
+    # odom 协方差开关：与 no-de-check 最佳配置对齐，保持开启。
+    # 生产已验证（提交 808a8f0）：/lio/odom 按 n_eff 做失效膨胀，正常段
+    # 仍 1e-4，失效段 p50 5.35e-2，让 PX4 的 EKF2 gate 能拒绝接管。
+    # 关闭后 covariance 全 0，PX4 在故障前 30 s 完全不会拒绝接管。
+    lio.output.odom_cov_en: true
     lio.output.tf_base_footprint_frame: "base_footprint"
     # 世界坐标系的TF帧名
     lio.output.world_frame: "world"
@@ -270,7 +273,9 @@
     # 旋转块稀释，先只对平移 3x3 块分解并把阈值降到 60，观察 cond 的走势。
     # home3 555 s 复测：平移 cond 仅 2.6~4（axes=0），说明该时刻平移并不退化，
     # 发散不是几何约束缺失导致的，因此暂不开启截断，避免在正常场景误改观测。
-    lio.observe.degeneracy_detect_en: true
+    # 【已禁用】该 cond 判据无物理意义（混合单位裸条件数），且已被
+    # observability.csv 的归一化特征值取代；参数与代码保留作对照，不删除。
+    lio.observe.degeneracy_detect_en: false
     lio.observe.degeneracy_threshold: 60.0
     lio.observe.degen_trans_only: 1
     lio.observe.degeneracy_hysteresis: 1.5
@@ -280,7 +285,7 @@
     # LOST 期间影子配准：修正量连续 N 帧都小于该值才重新接受观测
     lio.observe.trust_corr_max: 0.5
     lio.observe.trust_corr_rot_max: 10.0
-    lio.observe.lost_recover_frames: 10
+    lio.observe.lost_recover_frames: 5
     # LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉 0.1m / 1deg。
     # 断档后先验与真实位姿可能差米级，直接接受配准会一次跳变、完全否决又会永久停死，
     # 因此逐帧小步靠近。0.1m/帧@10Hz ≈ 1m/s 的位姿收敛速度，约 1~3s 可拉回。
@@ -320,6 +325,27 @@
     # 实测把 24.4m 单帧跳变直接吃进 ESKF 后速度冲到 125m/s、轨迹彻底发散。
     lio.observe.trust_force_accept_max_p: 3.0
     lio.observe.trust_force_accept_max_r: 20.0
+    # ======================== 重力观测（与 no-de-check 最佳配置对齐） ========================
+    # 加速度计方向约束 roll/pitch（yaw 不可观），始终启用、权重远低于激光，
+    # 按激光归一化最小特征值 lam1 连续调制（lam1/1e4）。
+    # acc_max 为权重半衰点，按平台配置；acc_lpf_tau 压震动尖峰。
+    # 说明：本 yaml 同时用于 home 手持回放，取手持值 2.5 / 0.08；
+    # 无人机部署另用平台 yaml（a_max≈3.5 / tau≈0.04）。
+    # 注意：exp 分支代码尚未合入该实现（生产提交 e525f06），当前这些键不生效，
+    # 保留以保证代码同步后立即拿到同一套参数。
+    lio.imu.gravity_obs_en: true
+    lio.imu.acc_max: 2.5
+    lio.imu.acc_lpf_tau: 0.08
+    lio.imu.gravity_sigma: 0.5
+
+    # ======================== 信息量门（已确认有害，禁用） ========================
+    # 实测启用后会在 cond>200 的健康帧（home3 占 15%）上整帧置零，丢掉其余
+    # 方向的约束并导致发散——与 Trust 的整帧否决同构。阈值改到极端值，
+    # 仅保留代码作为"lam1 极低且严重病态"场景的实验开关，默认不用。
+    lio.observe.info_gate_en: false
+    lio.observe.lam_min: 100.0
+    lio.observe.cond_max: 10000.0
+
     # ===== P0.1 可观测性诊断（仅记录，不改估计行为）=====
     # 开启：回放时 DIAG=1 或 --ros-args -p lio.debug.level:=2。
     #   level 1 → debug.csv；level 2 → 额外写 observability.csv
