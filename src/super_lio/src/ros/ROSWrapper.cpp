@@ -1205,7 +1205,8 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
                                        const BASIC::M3& R_world_body,
                                        const BASIC::V6& cov_diag_pv,
                                        const BASIC::V3& cov_diag_rot,
-                                       bool need_converge)
+                                       bool need_converge,
+                                       double lidar_n_eff)
 {
   // ---- 地板值（不可省）----
   // 信息式更新在退化方向（长走廊、单面墙、单向特征）上会让 P 收敛到极小，
@@ -1219,7 +1220,15 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
   // 只需让该帧在 EKF2_EVP_GATE=5 / EVV_GATE=3 下超门即可，不必给极大值：
   // 保留数值有限还能继续约束姿态，同时不满足 §4.4 第5条"test_ratio<0.1"的
   // 速度接管条件 —— 即退化帧会自动拒绝速度接管，但仍贡献位置/姿态信息。
-  const double infl = need_converge ? 4.0 : 1.0;
+  // 失效帧膨胀：P 是滤波器"自认为"的不确定度，激光稀疏但仍被接受时 P 会被
+  // 持续压低，报给飞控的仍是 1e-4（1cm），PX4 的 EVP_GATE 不会拒绝。实测
+  // home1 270-300s 真实速度已 10 m/s，cov_px 中位仍恒为 1e-4，属过度自信。
+  // 用外部可观测性（有效点数）强制膨胀：n_eff>=200 时不膨胀，越稀疏越接近 1e4。
+  const double h_neff = std::min(1.0, std::max(0.0, lidar_n_eff / 400.0));
+  const double gap = std::max(0.0, (0.5 - h_neff) / 0.5);
+  const double deg_infl = 1.0 + 9999.0 * gap * gap;
+
+  const double infl = (need_converge ? 4.0 : 1.0) * deg_infl;
 
   // 非有限值的兜底（必须显式判）：std::max(a,b) 等价于 (a<b)?b:a，NaN 参与
   // 比较恒为 false，于是会原样返回 NaN —— 地板值对 NaN 完全无效。而 P_ 是
@@ -1512,7 +1521,8 @@ void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   // 与 state.timestamp 同属最近一次观测更新后的后验。高频路协方差恒为 0。
   if (eskf_) {
     fillOdometryCovariance(odom, robo_rotation, eskf_->GetCovDiagPV(),
-                           eskf_->GetCovDiagRot(), eskf_->NeedConverge());
+                           eskf_->GetCovDiagRot(), eskf_->NeedConverge(),
+                           eskf_->GetLidarNEff());
   }
   pub_odom_->publish(odom);    // base_link frame -> lidar frequency
 

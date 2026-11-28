@@ -1620,9 +1620,10 @@ void SuperLIO::Observe(){
     obs_sum_w_ = sum_obs_w;
     obs_n_eff_ = n_eff_diag;
 
-    // 重力观测调制：把激光归一化最小特征值传给 ESKF。
-    // 激光信息充足时重力观测几乎关闭，激光退化时全力接管（连续调制，无切换）。
-    if (g_gravity_obs_en) {
+    // 把激光信息量（归一化最小特征值 + 有效点数）交给 ESKF。
+    // 重力观测强度与 odom 协方差失效膨胀都依赖它，因此无条件更新
+    // （每帧一次 6x6 特征分解，开销可忽略）。
+    {
       const double Lg = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
       V6d scg;
       scg << Lg, Lg, Lg, 1.0, 1.0, 1.0;

@@ -136,7 +136,8 @@ public:
                                      const BASIC::M3& R_world_body,
                                      const BASIC::V6& cov_diag_pv,
                                      const BASIC::V3& cov_diag_rot,
-                                     bool need_converge);
+                                     bool need_converge,
+                                     double lidar_n_eff);
 
   /// 高频 odom（/lio/imu/odom、/lio/robo/odom）协方差恒置 0：
   /// 实测 200Hz 协方差输出对 PX4 造成巨大计算负担并带来不可预计行为，

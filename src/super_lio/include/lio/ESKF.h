@@ -79,6 +79,9 @@ public:
     options_.gravity_sigma_ = sigma;
   }
 
+  /// 最近一帧激光有效点数（供协方差发布侧做失效膨胀）
+  double GetLidarNEff() const { return lidar_n_eff_; }
+
   /// 激光信息量：归一化最小特征值 + 有效点数，用于连续调制重力观测强度
   void setLidarInfo(double lam1, double n_eff) {
     lidar_lam1_ = lam1;
