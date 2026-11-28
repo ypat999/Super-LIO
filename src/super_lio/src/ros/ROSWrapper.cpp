@@ -733,6 +733,11 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<bool>("lio.output.footprint_pub_en", true);
   node.get_parameter("lio.output.footprint_pub_en", g_footprint_pub_en);
 
+  // 该键原先只在 on-set 回调里读取、从未 declare，params-file 里的值不会生效
+  // （实测 yaml 写 true，日志仍打印 false）。补齐 declare/get。
+  node.declare_parameter<bool>("lio.output.odom_cov_en", false);
+  node.get_parameter("lio.output.odom_cov_en", g_odom_cov_en);
+
   node.declare_parameter<std::string>("lio.output.tf_base_footprint_frame", "base_footprint");
   node.get_parameter("lio.output.tf_base_footprint_frame", g_tf_base_footprint_frame);
 
