@@ -39,7 +39,7 @@ def generate_launch_description():
         MANUAL_BUILD_MAP = False
         BUILD_TOOL = 'octomap_server'
         RECORD_ONLY = False
-        NAV2_DEFAULT_PARAMS_FILE = '/home/cat/git/xtd2_ws/XTDrone2_ego_planner/lio/nav2_dog_slam/config/nav2_params_sim.yaml'
+        NAV2_DEFAULT_PARAMS_FILE = '/home/cat/git/xtd2_ws/XTDrone2_ego_planner/rkdrone_third_party_pkgs/lio/nav2_dog_slam/config/nav2_params_sim.yaml'
         LIVOX_MID360_CONFIG = ''
     
     pkg_super_lio = get_package_share_directory('super_lio')

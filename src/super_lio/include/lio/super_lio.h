@@ -332,6 +332,7 @@ protected:
   bool   lost_ = false;                            // LOST：不信任激光修正，只做影子配准
   int    lost_recover_streak_ = 0;
   int    last_n_effect_ = 0;                       // 本帧有效平面残差点数（首轮统计）
+  int    info_gate_reject_cnt_ = 0;                // 信息量门累计拒帧数（仅日志限频）
   long   trust_reject_total_ = 0;                  // 累计否决次数
   long   reanchor_total_ = 0;                      // 累计清图重锚次数（超时兜底残差过大）
   std::deque<std::pair<double, BASIC::V3>> rot_corr_hist_;  // (dt, 姿态修正旋转矢量) 速率窗
@@ -500,6 +501,10 @@ protected:
   float sc_pgo_rot_accum_ = 0.0f;
   bool sc_pgo_first_ = true;
   std::ofstream sc_pgo_odom_file_;
+  /// ===== 诊断（lio.debug.level>=2）：仅记录，不参与估计 =====
+  double obs_h_[36] = {0};    // 上一帧纯平面 H（行主序）
+  double obs_sum_w_ = 0.0;    // Huber 后权重和
+  int    obs_n_eff_ = 0;      // 有效平面点数
 
   std::atomic<bool> paused_{false};
 };

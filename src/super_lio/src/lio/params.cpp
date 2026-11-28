@@ -60,6 +60,13 @@ namespace LI2Sup{
   std::size_t g_ivox_capacity = 100000;
   float       g_ivox_resolution = 0.5;
 
+  /// M.29 地图哈希尖峰治理（默认开：只改桶数量，不改行为）
+  bool   g_map_hash_reserve_en = true;
+  int    g_map_hash_reserve_size = 0;
+
+  /// 平面拟合邻域大小（默认 8 = 当前量产行为，装载时钳到 [4, 8]）
+  int    g_plane_knn_k = 8;
+
   /// kf
   int g_kf_type = 1;                // 1: ESKF, 2: InESKF
   int g_kf_max_iterations = 4;
@@ -135,8 +142,13 @@ namespace LI2Sup{
   bool   g_degen_motion_dir_en = false;
   double g_degen_motion_dir_ratio = 0.15;
   double g_degen_motion_dir_vmin = 0.30;
-  /// 坏帧护栏
-  bool   g_frame_gap_guard_en = false;
+
+  /// 法向质量加权（默认关 = 原行为；sigma 是残差参考尺度，单位 m）
+  bool   g_normal_weight_en = false;
+  double g_normal_sigma = 0.05;
+
+  /// 坏帧护栏（默认开启 skip 模式，与 no-de-check 最佳配置一致）
+  bool   g_frame_gap_guard_en = true;
   double g_frame_gap_max = 0.2;
   double g_imu_cover_max = 0.03;
   bool   g_adaptive_normal_weight_en = true;
@@ -152,8 +164,6 @@ namespace LI2Sup{
   double g_fine_channel_min_gain = 1.5;
 
   /// M.29 地图哈希尖峰治理（默认开：只改桶数量，不改行为）
-  bool   g_map_hash_reserve_en = true;
-  int    g_map_hash_reserve_size = 0;
 
   /// M.31 场景自动档（默认关；关时行为完全不变）
   bool   g_auto_scene_en = false;
@@ -186,8 +196,6 @@ namespace LI2Sup{
   double g_shadow_w_min = 0.05;
   double g_shadow_alpha = 0.3;
   double g_shadow_max_dw = 0.25;
-  bool   g_normal_weight_en = false;
-  double g_normal_sigma = 0.05;
   int    g_map_rep_mode = 0;
   bool   g_map_clamp_mu = false;
   int    g_map_max_points = 20;
@@ -196,7 +204,6 @@ namespace LI2Sup{
   double g_hknn_order_scale = 1.0;
 
   /// 平面拟合邻域 K（M.35）。默认 8 = 67c0acd 迁入的现行为，保持默认即不改行为。
-  int    g_plane_knn_k = 8;
 
   /// 实验 C：固定地图 / 冻结地图更新
   bool   g_map_freeze = false;
@@ -224,7 +231,16 @@ namespace LI2Sup{
   double g_open_guard_z_span = 0.0;
   double g_trust_corr_max = 0.5;
   double g_trust_corr_rot_max = 10.0;
-  int    g_lost_recover_frames = 10;
+  bool   g_info_gate_en = false;
+  double g_lam_min = 100.0;
+  double g_cond_max = 10000.0;
+
+  bool   g_gravity_obs_en = false;
+  double g_acc_max = 2.5;
+  double g_acc_lpf_tau = 0.08;
+  double g_gravity_sigma = 0.5;
+
+  int    g_lost_recover_frames = 5;
   double g_lost_slew_p = 0.10;
   double g_lost_slew_r = 1.0;
   bool   g_lost_map_en = false;

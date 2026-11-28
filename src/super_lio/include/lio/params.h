@@ -85,7 +85,20 @@ namespace LI2Sup{
   /// hash_map
   extern std::size_t g_ivox_capacity;
   extern float       g_ivox_resolution;
-  
+
+  /// ===== M.29 地图哈希尖峰治理 =====
+  /// 构造时对 grids_ 做 reserve：只改桶数量、不改键集与 LRU 淘汰顺序，
+  /// 因此位姿输出应逐字节不变；作用是消除扩容期整表重哈希造成的偶发尖峰
+  /// （实测 1f UpdateMap 单窗口 max 92 ms，其中 MapInsert 独占 92.07 ms）。
+  extern bool   g_map_hash_reserve_en;
+  /// reserve 的目标桶数；<=0 表示直接用 g_ivox_capacity
+  extern int    g_map_hash_reserve_size;
+
+  /// 平面拟合邻域大小 K（4..8，默认 8）。
+  /// KNNHeap 的容量仍是模板参数 8（数组尺寸），这里只控制"填到几个算满"
+  /// 以及 getTopK 的提前退出判据，因此 K<8 时数组尾部保持 0 不参与。
+  extern int    g_plane_knn_k;
+
   /// kf
   extern int g_kf_type;            // 1: ESKF, 2: InESKF.
   extern int g_kf_max_iterations;
@@ -217,6 +230,13 @@ namespace LI2Sup{
   extern bool   g_degen_motion_dir_en;
   extern double g_degen_motion_dir_ratio;
   extern double g_degen_motion_dir_vmin;
+
+  /// ===== 法向质量加权（实验 1，默认关 = 原行为）=====
+  /// 平面拟合残差 max|dist| 越大（平面越"脏"），该点观测权重越低：
+  ///   w *= 1 / (1 + (fit_res / g_normal_sigma)^2)
+  /// 权重按点缓存在帧内，首轮拟合算出，后续迭代沿用。
+  extern bool   g_normal_weight_en;
+  extern double g_normal_sigma;
 
   /// ===== 坏帧护栏 =====
   /// 实测（楼梯 bag 悬停崩塌）：处理停顿会让 imu_buffer_ 欠载，一帧 100 ms 的雷达
@@ -398,6 +418,30 @@ namespace LI2Sup{
   /// LOST 期间重新接受观测所需的单帧修正量上限（影子配准）
   extern double g_trust_corr_max;
   extern double g_trust_corr_rot_max;
+
+  /// ===== 信息量门：H 近奇异时放弃本帧激光更新（只不融合，不冻结位姿）=====
+  extern bool   g_info_gate_en;
+  extern double g_lam_min;    // 归一化最小特征值下限
+  extern double g_cond_max;   // 归一化条件数上限
+
+  /// ===== 重力观测（加速度计约束 roll/pitch，始终启用）=====
+  extern bool   g_gravity_obs_en;
+  extern double g_acc_max;        // 权重半衰点 m/s^2（按平台配置）
+  extern double g_acc_lpf_tau;    // 加速度低通时间常数 s
+  extern double g_gravity_sigma;  // 等效观测噪声 m/s^2
+
+  /// ===== 诊断（默认关闭；仅记录，不参与估计）=====
+  /// 0=关闭; 2=每帧写 observability.csv（归一化信息矩阵全谱）
+  extern int    g_debug_level;
+  /// 归一化扰动 δq=[δt, Lδθ] 的特征长度 L（m）：旋转列换算到米制
+  extern double g_debug_feature_length;
+
+  /// ===== 影子模式（默认关闭）：只计算并记录方向权重，不接入滤波 =====
+  extern bool   g_shadow_en;
+  extern double g_shadow_lambda_ref;
+  extern double g_shadow_w_min;
+  extern double g_shadow_alpha;
+  extern double g_shadow_max_dw;
   /// LOST 退出所需的连续合格帧数
   extern int    g_lost_recover_frames;
   /// LOST 期间的限速再锚定步长：每帧最多把位姿往配准结果拉多少

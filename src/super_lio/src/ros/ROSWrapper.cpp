@@ -85,7 +85,6 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<std::string>("lio.map.save_map_dir", "");
   node.get_parameter("lio.map.save_map_dir", g_save_map_dir);
-  // g_save_map_dir = g_root_dir + g_save_map_dir;
   // 支持 "~/..." 与 "$HOME/..."：配置随机器走，不再写死 /home/<user>
   if (!g_save_map_dir.empty()) {
     const char* home = std::getenv("HOME");
@@ -237,6 +236,38 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<int>("lio.sensor.filter_rate", 1);
   node.get_parameter("lio.sensor.filter_rate", g_filter_rate);
+
+  node.declare_parameter<int>("lio.debug.level", 0);
+  node.get_parameter("lio.debug.level", g_debug_level);
+  node.declare_parameter<double>("lio.debug.feature_length", 1.0);
+  node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
+
+  node.declare_parameter<bool>("lio.observe.info_gate_en", false);
+  node.get_parameter("lio.observe.info_gate_en", g_info_gate_en);
+  node.declare_parameter<double>("lio.observe.lam_min", 1.0e3);
+  node.get_parameter("lio.observe.lam_min", g_lam_min);
+  node.declare_parameter<double>("lio.observe.cond_max", 10000.0);
+  node.get_parameter("lio.observe.cond_max", g_cond_max);
+
+  node.declare_parameter<bool>("lio.imu.gravity_obs_en", false);
+  node.get_parameter("lio.imu.gravity_obs_en", g_gravity_obs_en);
+  node.declare_parameter<double>("lio.imu.acc_max", 2.5);
+  node.get_parameter("lio.imu.acc_max", g_acc_max);
+  node.declare_parameter<double>("lio.imu.acc_lpf_tau", 0.08);
+  node.get_parameter("lio.imu.acc_lpf_tau", g_acc_lpf_tau);
+  node.declare_parameter<double>("lio.imu.gravity_sigma", 0.5);
+  node.get_parameter("lio.imu.gravity_sigma", g_gravity_sigma);
+
+  node.declare_parameter<bool>("lio.shadow.enable", false);
+  node.get_parameter("lio.shadow.enable", g_shadow_en);
+  node.declare_parameter<double>("lio.shadow.lambda_ref", 1.0e4);
+  node.get_parameter("lio.shadow.lambda_ref", g_shadow_lambda_ref);
+  node.declare_parameter<double>("lio.shadow.w_min", 0.05);
+  node.get_parameter("lio.shadow.w_min", g_shadow_w_min);
+  node.declare_parameter<double>("lio.shadow.alpha", 0.3);
+  node.get_parameter("lio.shadow.alpha", g_shadow_alpha);
+  node.declare_parameter<double>("lio.shadow.max_dw", 0.25);
+  node.get_parameter("lio.shadow.max_dw", g_shadow_max_dw);
 
   node.declare_parameter<bool>("lio.sensor.enable_filter_offset", true);
   node.get_parameter("lio.sensor.enable_filter_offset", g_enable_filter_offset);
@@ -448,6 +479,7 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.observe.dept_err", 0.02);
   node.get_parameter("lio.observe.dept_err", g_dept_err);
 
+
   LOG(INFO) << GREEN << " ---> [Param] observe/obs_weight: " << g_obs_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/rot_weight: " << g_obs_rot_weight << RESET;
   LOG(INFO) << GREEN << " ---> [Param] observe/huber_delta_base: " << g_huber_delta_base << RESET;
@@ -468,24 +500,6 @@ void LoadParamFromRos(rclcpp::Node& node)
             << " obs_dist_k: " << g_obs_dist_k
             << " thresh_motion_k: " << g_thresh_motion_k
             << " delta_interp_en: " << g_delta_interp_en << RESET;
-
-  // ================= debug / experiment switches =================
-  node.declare_parameter<int>("lio.debug.level", 0);
-  node.get_parameter("lio.debug.level", g_debug_level);
-
-  node.declare_parameter<double>("lio.debug.feature_length", 1.0);
-  node.get_parameter("lio.debug.feature_length", g_debug_feature_length);
-
-  node.declare_parameter<bool>("lio.shadow.enable", false);
-  node.get_parameter("lio.shadow.enable", g_shadow_en);
-  node.declare_parameter<double>("lio.shadow.lambda_ref", 1.0e4);
-  node.get_parameter("lio.shadow.lambda_ref", g_shadow_lambda_ref);
-  node.declare_parameter<double>("lio.shadow.w_min", 0.05);
-  node.get_parameter("lio.shadow.w_min", g_shadow_w_min);
-  node.declare_parameter<double>("lio.shadow.alpha", 0.3);
-  node.get_parameter("lio.shadow.alpha", g_shadow_alpha);
-  node.declare_parameter<double>("lio.shadow.max_dw", 0.25);
-  node.get_parameter("lio.shadow.max_dw", g_shadow_max_dw);
 
   node.declare_parameter<bool>("lio.observe.normal_weight_en", false);
   node.get_parameter("lio.observe.normal_weight_en", g_normal_weight_en);
@@ -974,6 +988,20 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
         else if (name == "lio.map.ds_size") g_map_ds_size = p.as_double();
         else if (name == "lio.map.save_interval") g_pcd_save_interval = p.as_int();
         else if (name == "lio.sensor.filter_rate") g_filter_rate = p.as_int();
+        else if (name == "lio.debug.level") g_debug_level = p.as_int();
+        else if (name == "lio.debug.feature_length") g_debug_feature_length = p.as_double();
+        else if (name == "lio.observe.info_gate_en") g_info_gate_en = p.as_bool();
+        else if (name == "lio.observe.lam_min") g_lam_min = p.as_double();
+        else if (name == "lio.observe.cond_max") g_cond_max = p.as_double();
+        else if (name == "lio.imu.gravity_obs_en") g_gravity_obs_en = p.as_bool();
+        else if (name == "lio.imu.acc_max") g_acc_max = p.as_double();
+        else if (name == "lio.imu.acc_lpf_tau") g_acc_lpf_tau = p.as_double();
+        else if (name == "lio.imu.gravity_sigma") g_gravity_sigma = p.as_double();
+        else if (name == "lio.shadow.enable") g_shadow_en = p.as_bool();
+        else if (name == "lio.shadow.lambda_ref") g_shadow_lambda_ref = p.as_double();
+        else if (name == "lio.shadow.w_min") g_shadow_w_min = p.as_double();
+        else if (name == "lio.shadow.alpha") g_shadow_alpha = p.as_double();
+        else if (name == "lio.shadow.max_dw") g_shadow_max_dw = p.as_double();
         else if (name == "lio.sensor.enable_filter_offset") g_enable_filter_offset = p.as_bool();
         else if (name == "lio.sensor.enable_downsample") g_enable_downsample = p.as_bool();
         else if (name == "lio.sensor.voxel_fliter_size") g_voxel_fliter_size = p.as_double();
@@ -1639,7 +1667,8 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
                                        const BASIC::M3& R_world_body,
                                        const BASIC::V6& cov_diag_pv,
                                        const BASIC::V3& cov_diag_rot,
-                                       bool need_converge)
+                                       bool need_converge,
+                                       double lidar_n_eff)
 {
   if (!g_odom_cov_en) {
     // 协方差输出关闭（默认）：保持全 0，不做任何后验方差计算。
@@ -1662,7 +1691,15 @@ void ROSWrapper::fillOdometryCovariance(nav_msgs::msg::Odometry& odom,
   // 只需让该帧在 EKF2_EVP_GATE=5 / EVV_GATE=3 下超门即可，不必给极大值：
   // 保留数值有限还能继续约束姿态，同时不满足 §4.4 第5条"test_ratio<0.1"的
   // 速度接管条件 —— 即退化帧会自动拒绝速度接管，但仍贡献位置/姿态信息。
-  const double infl = need_converge ? 4.0 : 1.0;
+  // 失效帧膨胀：P 是滤波器"自认为"的不确定度，激光稀疏但仍被接受时 P 会被
+  // 持续压低，报给飞控的仍是 1e-4（1cm），PX4 的 EVP_GATE 不会拒绝。实测
+  // home1 270-300s 真实速度已 10 m/s，cov_px 中位仍恒为 1e-4，属过度自信。
+  // 用外部可观测性（有效点数）强制膨胀：n_eff>=200 时不膨胀，越稀疏越接近 1e4。
+  const double h_neff = std::min(1.0, std::max(0.0, lidar_n_eff / 400.0));
+  const double gap = std::max(0.0, (0.5 - h_neff) / 0.5);
+  const double deg_infl = 1.0 + 9999.0 * gap * gap;
+
+  const double infl = (need_converge ? 4.0 : 1.0) * deg_infl;
 
   // 非有限值的兜底（必须显式判）：std::max(a,b) 等价于 (a<b)?b:a，NaN 参与
   // 比较恒为 false，于是会原样返回 NaN —— 地板值对 NaN 完全无效。而 P_ 是
@@ -1970,7 +2007,8 @@ void ROSWrapper::pub_odom(const NavState& state, const V3& body_omega){
   // 与 state.timestamp 同属最近一次观测更新后的后验。高频路协方差恒为 0。
   if (eskf_) {
     fillOdometryCovariance(odom, robo_rotation, eskf_->GetCovDiagPV(),
-                           eskf_->GetCovDiagRot(), eskf_->NeedConverge());
+                           eskf_->GetCovDiagRot(), eskf_->NeedConverge(),
+                           eskf_->GetLidarNEff());
   }
   pub_odom_->publish(odom);    // base_link frame -> lidar frequency
 

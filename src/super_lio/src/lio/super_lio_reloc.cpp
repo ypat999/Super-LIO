@@ -260,6 +260,10 @@ bool SuperLIOReLoc::kf_init(){
   options.bias_acce_var_ = g_imu_nba;
   options.num_iterations_ = g_kf_max_iterations;
   options.quit_eps_ = g_kf_quit_eps;
+  options.gravity_obs_en_ = g_gravity_obs_en;
+  options.acc_max_ = g_acc_max;
+  options.acc_lpf_tau_ = g_acc_lpf_tau;
+  options.gravity_sigma_ = g_gravity_sigma;
 
   float imu_scale = g_gravity_norm / mean_acce.norm();
   kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);

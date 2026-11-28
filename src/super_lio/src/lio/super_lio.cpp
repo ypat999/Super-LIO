@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 #include <algorithm>
 
 #include <Eigen/Eigenvalues>
@@ -161,6 +162,7 @@ namespace LI2Sup{
 /// 平面拟合：用 N 个点拟合平面 ax+by+cz+1=0，返回法向量系数 abcd
 /// 若给出 max_abs_dist，则输出参与拟合点中的最大 |dist|（作为平面质量指标）
 /// 若给出 resid_var，则输出平面残差方差 Σd²/N（m²），供观测权重做软降权
+/// （与 no-de-check 的 fit_res 语义一致：都是平面"脏不脏"的指标）
 inline bool calc_plane_coeff(const int N, const std::array<V3, 8>& points, std::array<double, 4>& abcd,
                              double* max_abs_dist = nullptr, double* resid_var = nullptr)
 {
@@ -360,7 +362,7 @@ void SuperLIO::init(){
           try{
             fs::remove(entry.path());
             deleted_count++;
-            LOG(INFO) << GREEN << " ---> Deleted old PCD fragment: " << filename << RESET;
+            // 启动清理时可能删除上千个历史分片，逐文件打印会刷屏，末尾已有汇总
           } catch(const std::exception& e){
             LOG(WARNING) << RED << " ---> Failed to delete " << filename 
                         << ": " << e.what() << RESET;
@@ -371,7 +373,7 @@ void SuperLIO::init(){
           try{
             fs::remove(entry.path());
             deleted_count++;
-            LOG(INFO) << GREEN << " ---> Deleted old pose file: " << filename << RESET;
+            // 启动清理时可能删除上千个历史位姿文件，逐文件打印会刷屏，末尾已有汇总
           } catch(const std::exception& e){
             LOG(WARNING) << RED << " ---> Failed to delete " << filename 
                         << ": " << e.what() << RESET;
@@ -831,8 +833,20 @@ void SuperLIO::SaveThread(){
       }
       std::string map_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
                                  std::string(".pcd"));
-      LOG(INFO) << GREEN << " ---> current scan saved to /PCD/" << g_pcd_prefix << "scans_" << data.pcd_index 
-                << "  size:  " << data.cloud_to_save->size() << RESET;
+      // 分片保存是逐帧触发的，逐条打印会刷屏；限频 5s 一条并汇总被压制的条数
+      static auto last_save_log = std::chrono::steady_clock::time_point{};
+      static int suppressed_save_logs = 0;
+      const auto now_log = std::chrono::steady_clock::now();
+      if (std::chrono::duration<double>(now_log - last_save_log).count() >= 5.0) {
+        LOG(INFO) << GREEN << " ---> current scan saved to /PCD/" << g_pcd_prefix << "scans_" << data.pcd_index 
+                  << "  size:  " << data.cloud_to_save->size()
+                  << (suppressed_save_logs > 0 ? " (期间抑制 " + std::to_string(suppressed_save_logs) + " 条)" : "")
+                  << RESET;
+        last_save_log = now_log;
+        suppressed_save_logs = 0;
+      } else {
+        ++suppressed_save_logs;
+      }
       pcl::io::savePCDFileBinary(map_name, *data.cloud_to_save);
       
       std::string odom_name(std::string(save_map_dir + "/PCD/" + g_pcd_prefix + "scans_") + std::to_string(data.pcd_index) +
@@ -2743,15 +2757,16 @@ void SuperLIO::DownSampleOnly(){
 /// ESKF 观测更新：对每个点查询 IVox 邻域、拟合平面、构建雅可比，
 /// 迭代更新状态；首次迭代直接顺序访问，后续迭代使用紧凑索引
 void SuperLIO::Observe(){
+  kf_->setGravityParams(g_gravity_obs_en, g_acc_max, g_acc_lpf_tau, g_gravity_sigma);
   size_t ptsize = ds_undistort_->size();
 
-  // P0-1：effect_mask_ / abcd_vec_ 等为定长数组，超限会越界；宁少不越界
+  // P0-1：effect_mask_ / abcd_vec_ 等为定长数组，超限会越界；宁可少也不越界。
+  // DownSample() 已在出口封顶，这里防止 enable_downsample 关闭等路径绕过该保护。
   if (ptsize > kMaxEffectPoints) {
     LOG(WARNING) << "[Observe] ptsize " << ptsize << " exceeds " << kMaxEffectPoints
                  << ", truncated (tune lio.sensor.filter_rate / enable_downsample)";
     ptsize = kMaxEffectPoints;
   }
-
   const bool debug = g_debug_level > 0;
   kf_->SetDebug(debug);
 
@@ -2840,6 +2855,11 @@ void SuperLIO::Observe(){
   const V6 pre_cov_pv = kf_->GetCovDiagPV();
   const V3 pre_cov_rot = kf_->GetCovDiagRot();
 
+  // 诊断（PR3）：更新前的预测状态与协方差，仅记录
+  const SE3 diag_pose_pre = kf_->GetSE3();
+  const V6  diag_cov_pv_pre = kf_->GetCovDiagPV();
+  const V3  diag_cov_rot_pre = kf_->GetCovDiagRot();
+
   kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
     const bool need_converge = kf_state.need_converge;
@@ -2847,7 +2867,8 @@ void SuperLIO::Observe(){
 
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
-    double sum_obs_w = 0.0;   // 本轮平面点 Huber 后权重和（仅埋点）
+    double sum_obs_w = 0.0;   // 仅诊断：Huber 后权重和
+    int    n_eff_diag = 0;    // 仅诊断：有效平面点数
     KNNHeapType top_K;
 
     if (iter_num == 0) {
@@ -2938,6 +2959,7 @@ void SuperLIO::Observe(){
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
         sum_obs_w += static_cast<double>(w);
+        ++n_eff_diag;
         // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
         if (g_ground_weight > 0.0) {
           const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
@@ -3039,6 +3061,7 @@ void SuperLIO::Observe(){
         sum_HTVH += J * w * J.transpose();
         sum_HTVr -= J * w * error;
         sum_obs_w += static_cast<double>(w);
+        ++n_eff_diag;
         // 2.A：地面/天花板点追加"法向对齐重力"的旋转残差（独立权重）
         if (g_ground_weight > 0.0) {
           const double s_up = (normvec.dot(up_world) >= 0.0) ? 1.0 : -1.0;
@@ -3172,6 +3195,48 @@ void SuperLIO::Observe(){
 
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
+
+    // 诊断：保存本轮纯平面 H 与统计量（不参与估计）
+    for (int r = 0; r < 6; ++r)
+      for (int c = 0; c < 6; ++c) obs_h_[r * 6 + c] = sum_HTVH(r, c);
+    obs_sum_w_ = sum_obs_w;
+    obs_n_eff_ = n_eff_diag;
+
+    // 把激光信息量（归一化最小特征值 + 有效点数）交给 ESKF。
+    // 重力观测强度与 odom 协方差失效膨胀都依赖它，因此无条件更新
+    // （每帧一次 6x6 特征分解，开销可忽略）。
+    {
+      const double Lg = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+      V6d scg;
+      scg << Lg, Lg, Lg, 1.0, 1.0, 1.0;
+      const M6d Hng = scg.asDiagonal() * sum_HTVH.cast<double>() * scg.asDiagonal();
+      Eigen::SelfAdjointEigenSolver<M6d> egg(Hng);
+      kf_->setLidarInfo(egg.info() == Eigen::Success ? egg.eigenvalues()(0) : 0.0,
+                        static_cast<double>(n_eff_diag));
+    }
+
+    // 信息量门：H 近奇异时放弃本帧激光更新。只本帧不融合，不冻结位姿、
+    // 不切换观测源；IMU 正常传播，下一帧 lam1 恢复即立即正常融合。
+    if (g_info_gate_en) {
+      const double Lf = (g_debug_feature_length > 1e-6) ? g_debug_feature_length : 1.0;
+      V6d sc;
+      sc << Lf, Lf, Lf, 1.0, 1.0, 1.0;
+      const M6d Hn = sc.asDiagonal() * sum_HTVH.cast<double>() * sc.asDiagonal();
+      Eigen::SelfAdjointEigenSolver<M6d> eg(Hn);
+      if (eg.info() == Eigen::Success) {
+        const double l1 = eg.eigenvalues()(0);
+        const double l6 = eg.eigenvalues()(5);
+        const bool low_info = (l1 < g_lam_min) ||
+            (g_cond_max > 0.0 && l6 > g_cond_max * std::max(l1, 1e-12));
+        if (low_info) {
+          HTVH.setZero();
+          HTVr.setZero();
+          if (++info_gate_reject_cnt_ % 20 == 1)
+            LOG(WARNING) << "[InfoGate] 信息量不足 lam1=" << l1 << " lam6=" << l6
+                         << " n_eff=" << n_eff_diag << " -> 跳过本帧激光更新";
+        }
+      }
+    }
 
     iter_num++;
   });
